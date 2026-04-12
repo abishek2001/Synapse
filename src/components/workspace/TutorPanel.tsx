@@ -156,48 +156,6 @@ export default function TutorPanel() {
             content: m.content,
           }));
 
-        let strategyHint: string | undefined;
-        if (sessionContext) {
-          try {
-            const stratRes = await fetch("/api/strategy", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                action: "decide",
-                userMessage: text.trim(),
-                sessionContext,
-                studyPlan,
-                recentHistory: history.slice(-6),
-              }),
-            });
-            if (stratRes.ok) {
-              const stratData = await stratRes.json();
-              const d = stratData.decision;
-              if (d) {
-                strategyHint = `Action: ${d.action}. ${d.reasoning} ${d.suggestedPrompt}`;
-                if (d.conceptsToTrack?.length) {
-                  updateContext({
-                    ...sessionContext,
-                    questionsAsked: sessionContext.questionsAsked + 1,
-                    lastActivityAt: Date.now(),
-                  });
-                }
-                if (d.shouldAdvanceModule) {
-                  updateContext({
-                    ...sessionContext,
-                    currentModuleIndex: Math.min(
-                      sessionContext.currentModuleIndex + 1,
-                      sessionContext.totalModules - 1,
-                    ),
-                  });
-                }
-              }
-            }
-          } catch {
-            // strategy is best-effort
-          }
-        }
-
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -210,8 +168,8 @@ export default function TutorPanel() {
               (files.length > 0
                 ? `Documents: ${files.map((f) => f.name).join(", ")}`
                 : undefined),
-            mode: "tutor",
-            strategyHint,
+            sessionContext,
+            studyPlan,
           }),
         });
 
@@ -222,28 +180,25 @@ export default function TutorPanel() {
 
         const data = await res.json();
 
-        if (data.tutor) {
+        // Display the explanation (works for both tutor and friend responses)
+        if (data.explanation) {
           addMessage({
             id: crypto.randomUUID(),
             role: "tutor",
-            content: data.tutor.explanation,
+            content: data.type === "friend"
+              ? `💡 ${data.explanation}`
+              : data.explanation,
             timestamp: Date.now(),
           });
 
           if (autoSpeak && !isMuted) {
             setSpeaking(true);
-            speak(data.tutor.explanation, () => setSpeaking(false));
+            speak(data.explanation, () => setSpeaking(false));
           }
         }
 
         if (data.artifacts?.length > 0) {
           processArtifacts(data.artifacts, text.trim());
-          if (sessionContext) {
-            updateContext({
-              ...sessionContext,
-              artifactsGenerated: sessionContext.artifactsGenerated + data.artifacts.length,
-            });
-          }
         }
 
         if (data.canvasAnnotations?.length > 0) {
@@ -257,6 +212,32 @@ export default function TutorPanel() {
             };
             addAnnotation(annotation);
           }
+        }
+
+        // Apply context patch from the orchestrator's observer
+        if (data.contextPatch && sessionContext) {
+          const { conceptUpdates, ...directPatch } = data.contextPatch;
+          let updated = { ...sessionContext, ...directPatch };
+
+          // Apply concept-level updates
+          if (conceptUpdates) {
+            const states = { ...updated.conceptStates };
+            for (const [name, level] of Object.entries(conceptUpdates)) {
+              states[name] = {
+                ...(states[name] ?? {
+                  name,
+                  confusionCount: 0,
+                  lastMentioned: Date.now(),
+                }),
+                name,
+                level: level as "not_started" | "introduced" | "practiced" | "mastered",
+                lastMentioned: Date.now(),
+              };
+            }
+            updated = { ...updated, conceptStates: states };
+          }
+
+          updateContext(updated);
         }
       } catch {
         addMessage({

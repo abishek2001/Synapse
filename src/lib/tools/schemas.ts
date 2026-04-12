@@ -1,4 +1,5 @@
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
+import type { TeachingDecision } from "@/lib/agents/strategy";
 
 export const CANVAS_TOOLS: ChatCompletionTool[] = [
   {
@@ -203,3 +204,39 @@ export const CANVAS_TOOLS: ChatCompletionTool[] = [
     },
   },
 ];
+
+const TOOL_NAMES_BY_ACTION: Record<
+  TeachingDecision["action"],
+  { names: string[] | null; toolChoice: "auto" | "required" }
+> = {
+  visualize: {
+    names: ["canvas_generate_visual", "canvas_generate_graph", "canvas_generate_notation", "canvas_delegate_task"],
+    toolChoice: "required",
+  },
+  quiz: {
+    names: ["flashcard_create", "knowledge_lookup"],
+    toolChoice: "required",
+  },
+  deep_dive: {
+    names: null, // all tools
+    toolChoice: "required",
+  },
+  explain: { names: null, toolChoice: "auto" },
+  simplify: { names: null, toolChoice: "auto" },
+  summarize: {
+    names: ["canvas_generate_notation", "canvas_delegate_task"],
+    toolChoice: "auto",
+  },
+  advance: { names: null, toolChoice: "auto" },
+};
+
+export function getToolsForAction(action: TeachingDecision["action"]): {
+  tools: ChatCompletionTool[];
+  toolChoice: "auto" | "required";
+} {
+  const config = TOOL_NAMES_BY_ACTION[action] ?? { names: null, toolChoice: "auto" as const };
+  const tools = config.names
+    ? CANVAS_TOOLS.filter((t) => t.type === "function" && config.names!.includes(t.function.name))
+    : CANVAS_TOOLS;
+  return { tools, toolChoice: config.toolChoice };
+}
