@@ -13,18 +13,18 @@ export default function LookupCard({ artifact }: { artifact: LookupArtifact }) {
 
   return (
     <div className="space-y-3 max-w-sm">
-      <h3 className="font-[family-name:var(--font-caveat)] text-xl text-black/70 font-semibold tracking-wide">
+      <h3 className="font-[family-name:var(--font-caveat)] text-xl font-semibold tracking-wide" style={{ color: "rgba(0,0,0,0.55)" }}>
         {artifact.title}
       </h3>
       {artifact.results.map((result, i) => (
         <div
           key={i}
-          className="bg-white rounded-xl p-4 border-l-3 border-purple-400/40 shadow-sm"
+          className="pl-3 border-l-2 border-purple-400/35"
         >
-          <p className="text-[12px] text-black/55 leading-relaxed line-clamp-5 italic">
+          <p className="text-[12px] leading-relaxed line-clamp-5 italic" style={{ color: "rgba(0,0,0,0.5)" }}>
             &ldquo;{result.text}&rdquo;
           </p>
-          <p className="font-[family-name:var(--font-caveat)] text-sm text-black/30 mt-2">
+          <p className="font-[family-name:var(--font-caveat)] text-sm mt-1" style={{ color: "rgba(0,0,0,0.28)" }}>
             from {result.source}
           </p>
         </div>

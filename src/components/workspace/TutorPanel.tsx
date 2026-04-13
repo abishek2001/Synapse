@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSessionStore } from "@/store/session";
-import { useCanvasStore, type CanvasAnnotation } from "@/store/canvas";
+import { useCanvasStore, ELEM_WIDTHS } from "@/store/canvas";
 import type { CanvasArtifact } from "@/lib/tools/types";
 import { speak, stopSpeaking } from "@/lib/voice/speech";
 import { useGroundingStore } from "@/store/grounding";
@@ -57,7 +57,7 @@ export default function TutorPanel() {
     setPendingVoiceText,
   } = useSessionStore();
 
-  const { addModule, addAnnotation, addToast, updateToast, removeToast } = useCanvasStore();
+  const { addModule, addElement, addToast, updateToast, removeToast, elements } = useCanvasStore();
   const { studyPlan, sessionContext, updateContext } = useGroundingStore();
 
   const [input, setInput] = useState("");
@@ -248,14 +248,19 @@ export default function TutorPanel() {
 
         if (data.canvasAnnotations?.length > 0) {
           for (const ann of data.canvasAnnotations) {
-            const annotation: CanvasAnnotation = {
-              id: `ann-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
-              type: ann.type === "arrow_label" ? "text" : ann.type,
-              content: ann.content,
-              position: ann.position ?? { x: 80, y: 400 },
-              color: ann.color ?? (ann.type === "sticky" ? "#fef08a" : "#1a1a2e"),
-            };
-            addAnnotation(annotation);
+            const isSticky = ann.type === "sticky";
+            const pos = ann.position ?? { x: 80, y: 400 };
+            addElement({
+              id: `el-ann-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+              type: isSticky ? "sticky" : "text",
+              x: pos.x, y: pos.y,
+              w: isSticky ? ELEM_WIDTHS.sticky : ELEM_WIDTHS.text,
+              zIndex: elements.length + 20,
+              createdAt: Date.now(),
+              ...(isSticky
+                ? { sticky: { content: ann.content, color: ann.color ?? "#fef08a" } }
+                : { text: { content: ann.content, style: "body" as const, color: ann.color } }),
+            });
           }
         }
       } catch {
@@ -284,7 +289,8 @@ export default function TutorPanel() {
       sessionContext,
       studyPlan,
       updateContext,
-      addAnnotation,
+      addElement,
+      elements,
     ],
   );
 

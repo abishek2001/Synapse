@@ -17,7 +17,13 @@ function renderBlock(container: HTMLElement, latex: string) {
   }
 }
 
-export default function NotationCard({ artifact }: { artifact: NotationArtifact }) {
+export default function NotationCard({
+  artifact,
+  dark = false,
+}: {
+  artifact: NotationArtifact;
+  dark?: boolean;
+}) {
   const mainRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -26,24 +32,32 @@ export default function NotationCard({ artifact }: { artifact: NotationArtifact 
   }, [artifact.latex]);
 
   return (
-    <div className="space-y-3">
-      {/* Title in handwritten style */}
-      <h3 className="font-[family-name:var(--font-caveat)] text-xl text-black/70 font-semibold tracking-wide">
+    <div className="space-y-2">
+      <h3
+        className="font-[family-name:var(--font-caveat)] text-[22px] font-semibold tracking-wide"
+        style={{ color: dark ? "rgba(255,255,255,0.65)" : "rgba(0,0,0,0.55)" }}
+      >
         {artifact.title}
       </h3>
 
-      {/* Main equation */}
-      <div className="relative">
-        <div className="absolute -left-0 top-0 bottom-0 w-[3px] rounded-full bg-purple-400/30" />
-        <div
-          ref={mainRef}
-          className="bg-white rounded-xl p-6 overflow-x-auto border border-black/[0.06] shadow-sm
-            [&_.katex]:text-[#1a1a2e] [&_.katex-html]:text-[#1a1a2e] [&_.katex]:text-lg"
-        />
-      </div>
+      {/* Equation rendered directly — no box */}
+      <div
+        ref={mainRef}
+        className="overflow-x-auto py-1
+          [&_.katex]:text-[1.45em]
+          [&_.katex-html]:leading-relaxed"
+        style={{
+          color: dark ? "rgba(255,255,255,0.85)" : "rgba(20,20,40,0.9)",
+          // KaTeX injects colour via currentColor
+          ["--katex-color" as string]: dark ? "rgba(255,255,255,0.85)" : "rgba(20,20,40,0.9)",
+        }}
+      />
 
       {artifact.annotation && (
-        <p className="font-[family-name:var(--font-caveat)] text-base text-black/45 leading-relaxed px-1 italic">
+        <p
+          className="font-[family-name:var(--font-caveat)] text-[15px] leading-relaxed italic"
+          style={{ color: dark ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.38)" }}
+        >
           {artifact.annotation}
         </p>
       )}

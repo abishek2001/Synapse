@@ -15,15 +15,13 @@ export default function VisualCard({ artifact }: { artifact: VisualArtifact }) {
 
   return (
     <div className="space-y-2">
-      <h3 className="font-[family-name:var(--font-caveat)] text-xl text-black/70 font-semibold tracking-wide">
+      <h3 className="font-[family-name:var(--font-caveat)] text-xl font-semibold tracking-wide" style={{ color: "rgba(0,0,0,0.55)" }}>
         {artifact.title}
       </h3>
-      <div className="bg-white rounded-xl overflow-hidden border border-black/[0.06] shadow-sm">
-        <div
-          dangerouslySetInnerHTML={{ __html: artifact.svgContent }}
-          className="[&_svg]:w-full [&_svg]:h-auto [&_svg]:max-h-[320px] p-3"
-        />
-      </div>
+      <div
+        dangerouslySetInnerHTML={{ __html: artifact.svgContent }}
+        className="[&_svg]:w-full [&_svg]:h-auto [&_svg]:max-h-[320px]"
+      />
     </div>
   );
 }

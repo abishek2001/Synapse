@@ -2,13 +2,15 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
-import { AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import WorkspaceNavbar from "./WorkspaceNavbar";
-import TutorPanel from "./TutorPanel";
 import ArtifactCanvas from "./ArtifactCanvas";
 import SourcesPanel from "./SourcesPanel";
 import CallFriendModal from "./CallFriendModal";
-import VoiceIsland from "./VoiceIsland";
+import CanvasInputBar from "./CanvasInputBar";
+import LeftSidebar from "./LeftSidebar";
+import RightSidebar from "./RightSidebar";
+import MockButton from "./MockButton";
 import BridgeScreen, {
   buildStages,
   type BridgeStage,
@@ -16,6 +18,8 @@ import BridgeScreen, {
 } from "./BridgeScreen";
 import { useSessionStore } from "@/store/session";
 import { useGroundingStore } from "@/store/grounding";
+import { useUIStore } from "@/store/ui";
+import { useCanvasStore } from "@/store/canvas";
 import { createSessionContext } from "@/lib/grounding/session-context";
 
 export default function WorkspaceView() {
@@ -40,11 +44,9 @@ export default function WorkspaceView() {
     initSession,
   } = useSessionStore();
 
-  const {
-    setStudyPlan,
-    setSessionContext,
-    setRetrievalIndexed,
-  } = useGroundingStore();
+  const { setStudyPlan, setSessionContext, setRetrievalIndexed } = useGroundingStore();
+  const { darkMode, leftSidebarOpen, setLeftSidebarOpen, rightSidebarOpen, setRightSidebarOpen } = useUIStore();
+  const { addUpdate } = useCanvasStore();
 
   /* ── Bridge state ── */
   const [showBridge, setShowBridge] = useState(true);
@@ -64,10 +66,7 @@ export default function WorkspaceView() {
     (text: string, type: BridgeLog["type"] = "info") => {
       logCounter.current += 1;
       const uid = `${Date.now()}-${logCounter.current}-${Math.random().toString(36).slice(2, 6)}`;
-      setLogs((prev) => [
-        ...prev,
-        { id: uid, text, type, timestamp: Date.now() },
-      ]);
+      setLogs((prev) => [...prev, { id: uid, text, type, timestamp: Date.now() }]);
     },
     [],
   );
@@ -75,18 +74,14 @@ export default function WorkspaceView() {
   const updateStage = useCallback(
     (id: string, status: BridgeStage["status"], detail?: string) => {
       setStages((prev) =>
-        prev.map((s) =>
-          s.id === id ? { ...s, status, detail: detail ?? s.detail } : s,
-        ),
+        prev.map((s) => (s.id === id ? { ...s, status, detail: detail ?? s.detail } : s)),
       );
     },
     [],
   );
 
   useEffect(() => {
-    if (!query) {
-      initSession(urlQuery, urlPersona, []);
-    }
+    if (!query) initSession(urlQuery, urlPersona, []);
   }, [query, urlQuery, urlPersona, initSession]);
 
   useEffect(() => {
@@ -102,7 +97,7 @@ export default function WorkspaceView() {
     setContextCard({
       title: displayQ.length > 55 ? displayQ.slice(0, 55) + "..." : displayQ,
       description: hasFiles
-        ? `Synapse is parsing ${files.length} source${files.length > 1 ? "s" : ""} and building a grounded workspace for your topic.`
+        ? `Synapse is parsing ${files.length} source${files.length > 1 ? "s" : ""} and building a grounded workspace.`
         : `Synapse is analyzing "${displayQ}" and constructing a personalized learning environment.`,
       tags: [
         { label: displayP, color: "#7c3aed" },
@@ -113,9 +108,16 @@ export default function WorkspaceView() {
     });
 
     addLog(`Session initialized — ${displayP} mode`, "info");
-    if (hasFiles) {
-      addLog(`${files.length} file${files.length > 1 ? "s" : ""} queued for parsing`, "info");
-    }
+    if (hasFiles) addLog(`${files.length} file${files.length > 1 ? "s" : ""} queued for parsing`, "info");
+
+    // Seed activity feed with the initial topic
+    addUpdate({
+      id: `upd-session-start`,
+      type: "ai_note",
+      title: `Started: ${displayQ.length > 40 ? displayQ.slice(0, 40) + "…" : displayQ}`,
+      detail: `Persona: ${displayP}${hasFiles ? ` · ${files.length} file(s)` : ""}`,
+      timestamp: Date.now(),
+    });
 
     runBridgeSequence(initial, hasFiles, displayQ, displayP);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -138,35 +140,25 @@ export default function WorkspaceView() {
           updateStage(id, "active", `Parsing ${f.name}...`);
           addLog(`Extracting text from ${f.name}`, "info");
         }
-
         const t0 = performance.now();
         try {
           const res = await fetch("/api/parse-doc", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              files: files.map((f) => ({ name: f.name, type: f.type, dataUrl: f.dataUrl })),
-            }),
+            body: JSON.stringify({ files: files.map((f) => ({ name: f.name, type: f.type, dataUrl: f.dataUrl })) }),
           });
           const elapsed = Math.round(performance.now() - t0);
           setLatencyMs(elapsed);
-
           if (res.ok) {
             const data = await res.json();
             if (data.documents) {
               setDocuments(data.documents);
-              const totalWords = data.documents.reduce(
-                (sum: number, d: { text: string }) => sum + d.text.split(/\s+/).length, 0,
-              );
+              const totalWords = data.documents.reduce((sum: number, d: { text: string }) => sum + d.text.split(/\s+/).length, 0);
               addLog(`Extracted ${totalWords.toLocaleString()} words in ${elapsed}ms`, "success");
               for (const doc of data.documents as { name: string; text: string }[]) {
                 addLog(`${doc.name} → ${doc.text.split(/\s+/).length.toLocaleString()} words`, "data");
               }
-              setContextCard((prev) => ({
-                ...prev,
-                description: `Grounded in ${data.documents.length} source${data.documents.length > 1 ? "s" : ""} (${totalWords.toLocaleString()} words).`,
-                status: "Grounded",
-              }));
+              setContextCard((prev) => ({ ...prev, description: `Grounded in ${data.documents.length} source${data.documents.length > 1 ? "s" : ""} (${totalWords.toLocaleString()} words).`, status: "Grounded" }));
 
               const firstDocText = data.documents[0]?.text || "";
               const hasRealContent = firstDocText.length > 50 && !firstDocText.startsWith("[Failed");
@@ -176,12 +168,7 @@ export default function WorkspaceView() {
                 const titleRes = await fetch("/api/chat", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    query: `Based on the following document content, extract a short, clear topic title (3-8 words max). Reply with ONLY the title, nothing else.\n\nContent preview: "${docPreview}"`,
-                    persona: "professor",
-                    history: [],
-                    mode: "tutor",
-                  }),
+                  body: JSON.stringify({ query: `Based on the following document content, extract a short, clear topic title (3-8 words max). Reply with ONLY the title, nothing else.\n\nContent preview: "${docPreview}"`, persona: "professor", history: [], mode: "tutor" }),
                 });
                 if (titleRes.ok) {
                   const titleData = await titleRes.json();
@@ -191,23 +178,18 @@ export default function WorkspaceView() {
                     addLog(`Topic: "${extracted}"`, "success");
                   }
                 }
-              } catch {
-                // title extraction is best-effort
-              }
+              } catch { /* title extraction is best-effort */ }
             }
           }
-        } catch {
-          addLog("Document parsing failed", "info");
-        }
+        } catch { addLog("Document parsing failed", "info"); }
         updateStage(id, "done", `${files.length} source${files.length > 1 ? "s" : ""} indexed`);
 
       } else if (id === "tutor") {
         updateStage(id, "active", `Warming up ${displayP}...`);
         addLog(`Initializing ${displayP} persona`, "info");
-
         const t0 = performance.now();
-
         const docCtx = useSessionStore.getState().documentContext;
+
         const studyPlanPromise = fetch("/api/study-plan", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -237,20 +219,13 @@ export default function WorkspaceView() {
                 setRetrievalIndexed(true, d.chunks);
                 addLog(`Retrieval index: ${d.chunks} chunks embedded`, "success");
               }
-            }).catch(() => {
-              addLog("Embedding index skipped (keyword fallback active)", "info");
-            })
+            }).catch(() => addLog("Embedding index skipped (keyword fallback active)", "info"))
           : Promise.resolve();
 
         const tutorWarmup = fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            query: `Briefly summarize the key concepts in "${displayQ}" in one sentence. Reply in under 20 words.`,
-            persona: displayP,
-            history: [],
-            mode: "tutor",
-          }),
+          body: JSON.stringify({ query: `Briefly summarize the key concepts in "${displayQ}" in one sentence. Reply in under 20 words.`, persona: displayP, history: [], mode: "tutor" }),
         });
 
         const [, , tutorRes] = await Promise.all([studyPlanPromise, embedPromise, tutorWarmup]);
@@ -261,24 +236,15 @@ export default function WorkspaceView() {
           if (tutorRes.ok) {
             const data = await tutorRes.json();
             const preview = data.tutor?.explanation || data.rawResponse || "";
-            if (preview) {
-              addLog(`AI ready — "${preview.slice(0, 80)}${preview.length > 80 ? "..." : ""}"`, "success");
-            } else {
-              addLog(`AI connected in ${elapsed}ms`, "success");
-            }
+            if (preview) addLog(`AI ready — "${preview.slice(0, 80)}${preview.length > 80 ? "..." : ""}"`, "success");
+            else addLog(`AI connected in ${elapsed}ms`, "success");
             setContextCard((prev) => ({
               ...prev,
-              tags: [
-                { label: displayP, color: "#7c3aed" },
-                { label: `${elapsed}ms`, color: "#06b6d4" },
-                { label: "Ready", color: "#10b981" },
-              ],
+              tags: [{ label: displayP, color: "#7c3aed" }, { label: `${elapsed}ms`, color: "#06b6d4" }, { label: "Ready", color: "#10b981" }],
               status: "AI Ready",
             }));
           }
-        } catch {
-          addLog("AI warmup skipped", "info");
-        }
+        } catch { addLog("AI warmup skipped", "info"); }
         updateStage(id, "done", `${displayP} online`);
 
       } else if (id === "canvas") {
@@ -312,9 +278,7 @@ export default function WorkspaceView() {
           const res = await fetch("/api/parse-doc", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              files: files.map((f) => ({ name: f.name, type: f.type, dataUrl: f.dataUrl })),
-            }),
+            body: JSON.stringify({ files: files.map((f) => ({ name: f.name, type: f.type, dataUrl: f.dataUrl })) }),
           });
           if (res.ok) {
             const data = await res.json();
@@ -346,47 +310,66 @@ export default function WorkspaceView() {
         )}
       </AnimatePresence>
 
-      <div
-        className={`h-screen w-screen bg-[#f8f8fa] flex flex-col overflow-hidden transition-opacity duration-500 ${
-          showBridge ? "opacity-0" : "opacity-100"
-        }`}
-      >
-        {/* Voice Island at top center */}
-        <div className="flex-shrink-0 flex justify-center z-50 relative">
-          <VoiceIsland />
-        </div>
+      <AnimatePresence>
+        {!showBridge && (
+          <motion.div
+            key="workspace"
+            initial={{ opacity: 0, scale: 1.015 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+            className="h-screen w-screen flex flex-col overflow-hidden"
+            style={{ backgroundColor: darkMode ? "#06060f" : "#f4f4f6" }}
+          >
+            {/* Navbar */}
+            <WorkspaceNavbar
+              title={displayQuery}
+              onCallFriend={() => setShowCallFriend(true)}
+              hasFiles={files.length > 0}
+              showSources={showSources}
+              onToggleSources={() => setShowSources(!showSources)}
+              onToggleSidebar={() => setLeftSidebarOpen(!leftSidebarOpen)}
+              sidebarOpen={leftSidebarOpen}
+            />
 
-        {/* Minimal navbar */}
-        <WorkspaceNavbar
-          title={displayQuery}
-          onCallFriend={() => setShowCallFriend(true)}
-          hasFiles={files.length > 0}
-          showSources={showSources}
-          onToggleSources={() => setShowSources(!showSources)}
-        />
+            {/* Main area: sidebar + canvas */}
+            <div className="flex-1 flex min-h-0 relative">
+              {/* Left sidebar — Table of Contents */}
+              <LeftSidebar
+                open={leftSidebarOpen}
+                onToggle={() => setLeftSidebarOpen(!leftSidebarOpen)}
+              />
 
-        {/* Main workspace area */}
-        <div className="flex-1 flex min-h-0 relative">
-          {/* Infinite canvas */}
-          <div className="flex-1 min-w-0 relative">
-            <ArtifactCanvas topic={displayTitle} />
-          </div>
+              {/* Canvas area */}
+              <div className="flex-1 min-w-0 relative">
+                <ArtifactCanvas topic={displayTitle} />
 
-          {/* Sources panel (floating) */}
-          {showSources && files.length > 0 && (
-            <div className="absolute top-3 right-3 z-30 pointer-events-auto">
-              <SourcesPanel files={files} onClose={() => setShowSources(false)} />
+                {/* Sources panel (floating, top-right) */}
+                {showSources && files.length > 0 && (
+                  <div className="absolute top-3 right-3 z-30 pointer-events-auto">
+                    <SourcesPanel files={files} onClose={() => setShowSources(false)} />
+                  </div>
+                )}
+
+                {/* Mock button */}
+                <MockButton />
+
+                {/* Canvas input bar */}
+                <CanvasInputBar />
+              </div>
+
+              {/* Right sidebar — Transcript & Updates */}
+              <RightSidebar
+                open={rightSidebarOpen}
+                onToggle={() => setRightSidebarOpen(!rightSidebarOpen)}
+              />
             </div>
-          )}
 
-          {/* Bottom-center floating tutor conversation */}
-          <TutorPanel />
-        </div>
-
-        {showCallFriend && (
-          <CallFriendModal onClose={() => setShowCallFriend(false)} />
+            {showCallFriend && (
+              <CallFriendModal onClose={() => setShowCallFriend(false)} />
+            )}
+          </motion.div>
         )}
-      </div>
+      </AnimatePresence>
     </>
   );
 }

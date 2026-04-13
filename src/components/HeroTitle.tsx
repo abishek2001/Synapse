@@ -14,7 +14,7 @@ export default function HeroTitle() {
         className="text-6xl md:text-8xl font-bold tracking-tight"
         style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
       >
-        <span className="bg-gradient-to-b from-white via-white to-text-muted bg-clip-text text-transparent">
+        <span className="bg-gradient-to-br from-violet-700 via-violet-600 to-purple-500 bg-clip-text text-transparent">
           Synapse
         </span>
       </h1>

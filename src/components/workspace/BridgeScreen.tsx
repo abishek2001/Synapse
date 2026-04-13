@@ -1,16 +1,7 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  BookOpen,
-  Cpu,
-  Box,
-  Sparkles,
-  MessageSquare,
-  Check,
-  Loader2,
-  FileText,
-} from "lucide-react";
+import { useEffect, useState } from "react";
 
 export type StageStatus = "waiting" | "active" | "done";
 
@@ -44,401 +35,289 @@ interface BridgeScreenProps {
   fileNames: string[];
 }
 
-const ACCENT = "#7c3aed";
+// Whiteboard "group" shapes that animate drawing in
+const GROUPS = [
+  { x: 80,  y: 120, w: 220, h: 140, title: "Introduction",     delay: 0.0 },
+  { x: 380, y: 80,  w: 240, h: 120, title: "Core Concepts",    delay: 0.7 },
+  { x: 700, y: 110, w: 200, h: 150, title: "Deep Dive",        delay: 1.4 },
+  { x: 160, y: 330, w: 260, h: 130, title: "Examples",         delay: 2.1 },
+  { x: 520, y: 310, w: 220, h: 160, title: "Applications",     delay: 2.8 },
+];
 
-function LatencyBars({ active }: { active: boolean }) {
+const ARROWS = [
+  { from: 0, to: 1, delay: 1.2 },
+  { from: 1, to: 2, delay: 1.9 },
+  { from: 0, to: 3, delay: 2.6 },
+  { from: 2, to: 4, delay: 3.3 },
+];
+
+function getRectPerimeter(w: number, h: number) {
+  return 2 * (w + h);
+}
+
+function getCenterX(g: typeof GROUPS[0]) { return g.x + g.w / 2; }
+function getCenterY(g: typeof GROUPS[0]) { return g.y + g.h / 2; }
+
+// Compute a curved arrow path between two group rects
+function arrowPath(from: typeof GROUPS[0], to: typeof GROUPS[0]) {
+  const sx = getCenterX(from), sy = from.y + from.h; // bottom center of from
+  const ex = getCenterX(to),   ey = to.y;             // top center of to
+  const midY = (sy + ey) / 2;
+  return `M ${sx} ${sy} C ${sx} ${midY}, ${ex} ${midY}, ${ex} ${ey}`;
+}
+
+function ArrowDef() {
   return (
-    <div className="flex items-end gap-[3px] h-10">
-      {[...Array(14)].map((_, i) => {
-        const h = 6 + Math.random() * 34;
-        const bright = Math.random() > 0.6;
-        return (
-          <motion.div
-            key={i}
-            className="w-[6px] rounded-sm"
-            style={{
-              backgroundColor: bright
-                ? "rgba(124,58,237,0.7)"
-                : "rgba(124,58,237,0.2)",
-            }}
-            animate={
-              active
-                ? { height: [h * 0.3, h, h * 0.5] }
-                : { height: h * 0.15 }
-            }
-            transition={{
-              duration: 0.8 + Math.random() * 0.6,
-              repeat: active ? Infinity : 0,
-              repeatType: "reverse",
-              delay: i * 0.06,
-              ease: "easeInOut",
-            }}
-          />
-        );
-      })}
-    </div>
+    <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+        <path d="M 0 2 L 10 5 L 0 8 z" fill="rgba(124,58,237,0.45)" />
+      </marker>
+    </defs>
   );
 }
 
-function StatusIcon({ status }: { status: StageStatus }) {
-  if (status === "done")
-    return (
-      <motion.div
-        initial={{ scale: 0 }}
-        animate={{ scale: 1 }}
-        className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center"
-      >
-        <Check className="w-3 h-3 text-emerald-400" />
-      </motion.div>
-    );
-  if (status === "active")
-    return (
-      <div className="w-5 h-5 flex items-center justify-center">
-        <Loader2 className="w-3.5 h-3.5 text-purple-400 animate-spin" />
-      </div>
-    );
+// Content-line "skeleton" inside each group box
+function ContentLines({ groupX, groupY, groupW, delay }: { groupX: number; groupY: number; groupW: number; delay: number }) {
+  const lines = [
+    { y: 52, w: groupW * 0.75 },
+    { y: 68, w: groupW * 0.55 },
+    { y: 84, w: groupW * 0.65 },
+    { y: 100, w: groupW * 0.45 },
+  ];
   return (
-    <div className="w-5 h-5 rounded-full border border-white/[0.08] flex items-center justify-center">
-      <div className="w-1.5 h-1.5 rounded-full bg-white/10" />
-    </div>
-  );
-}
-
-function ProgressBar({ stages }: { stages: BridgeStage[] }) {
-  const done = stages.filter((s) => s.status === "done").length;
-  const active = stages.find((s) => s.status === "active") ? 0.5 : 0;
-  const pct = ((done + active) / stages.length) * 100;
-
-  return (
-    <div className="w-full h-[3px] bg-white/[0.06] rounded-full overflow-hidden">
-      <motion.div
-        className="h-full rounded-full"
-        style={{ background: `linear-gradient(90deg, ${ACCENT}, #a78bfa)` }}
-        animate={{ width: `${pct}%` }}
-        transition={{ duration: 0.6, ease: "easeOut" }}
-      />
-    </div>
+    <>
+      {lines.map((l, i) => (
+        <motion.rect
+          key={i}
+          x={groupX + 16}
+          y={groupY + l.y}
+          width={l.w}
+          height={4}
+          rx={2}
+          fill="rgba(124,58,237,0.10)"
+          initial={{ scaleX: 0, opacity: 0 }}
+          animate={{ scaleX: 1, opacity: 1 }}
+          style={{ originX: `${groupX + 16}px`, transformBox: "fill-box" }}
+          transition={{ delay: delay + 0.55 + i * 0.08, duration: 0.35, ease: "easeOut" }}
+        />
+      ))}
+    </>
   );
 }
 
 export default function BridgeScreen({
   query,
-  persona,
   stages,
-  logs,
-  contextCard,
-  latencyMs,
-  fileNames,
 }: BridgeScreenProps) {
   const doneCount = stages.filter((s) => s.status === "done").length;
-  const seq = String(doneCount + 1).padStart(2, "0");
-  const isActive = stages.some((s) => s.status === "active");
-  const visibleLogs = logs.slice(-5);
+  const activeStage = stages.find((s) => s.status === "active");
+  const pct = Math.round(((doneCount + (activeStage ? 0.5 : 0)) / Math.max(stages.length, 1)) * 100);
+
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 600);
+    return () => clearInterval(id);
+  }, []);
+  const dots = ".".repeat((tick % 3) + 1).padEnd(3, " ");
 
   return (
     <motion.div
-      className="fixed inset-0 z-[100] bg-[#06060f] flex items-center justify-center overflow-hidden"
-      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[100] bg-[#fafafa] flex flex-col items-center justify-center overflow-hidden"
+      exit={{ opacity: 0, scale: 0.98 }}
       transition={{ duration: 0.5 }}
     >
-      <div className="absolute inset-0 grid-bg opacity-40" />
-      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[#06060f]/50 to-[#06060f]" />
+      {/* Subtle dot grid */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          backgroundImage: "radial-gradient(circle, rgba(124,58,237,0.07) 1px, transparent 1px)",
+          backgroundSize: "28px 28px",
+        }}
+      />
 
-      {[...Array(20)].map((_, i) => (
-        <motion.div
-          key={i}
-          className="absolute w-1 h-1 rounded-full bg-purple-400/20"
-          style={{
-            left: `${10 + Math.random() * 80}%`,
-            top: `${10 + Math.random() * 80}%`,
-          }}
-          animate={{ y: [-20, 20, -20], opacity: [0.1, 0.5, 0.1] }}
-          transition={{
-            duration: 3 + Math.random() * 4,
-            repeat: Infinity,
-            delay: Math.random() * 3,
-            ease: "easeInOut",
-          }}
-        />
-      ))}
+      {/* Whiteboard canvas animation */}
+      <div className="relative w-full max-w-[980px] h-[520px] mx-auto">
+        <svg
+          className="absolute inset-0 w-full h-full"
+          viewBox="0 0 980 520"
+          preserveAspectRatio="xMidYMid meet"
+          style={{ overflow: "visible" }}
+        >
+          <ArrowDef />
 
-      <div className="relative z-10 flex gap-16 items-start max-w-4xl w-full px-8">
-        {/* Left: Title + Stages + Live Log */}
-        <div className="flex-1 min-w-0">
+          {/* Curved connection arrows */}
+          {ARROWS.map((arrow, i) => {
+            const from = GROUPS[arrow.from], to = GROUPS[arrow.to];
+            const d = arrowPath(from, to);
+            // Rough path length estimate
+            const pathLen = 160;
+            return (
+              <motion.path
+                key={i}
+                d={d}
+                fill="none"
+                stroke="rgba(124,58,237,0.35)"
+                strokeWidth={1.5}
+                strokeDasharray={pathLen}
+                initial={{ strokeDashoffset: pathLen }}
+                animate={{ strokeDashoffset: 0 }}
+                transition={{ delay: arrow.delay, duration: 0.55, ease: "easeInOut" }}
+                markerEnd="url(#arrow)"
+              />
+            );
+          })}
+
+          {/* Group boxes */}
+          {GROUPS.map((g, i) => {
+            const perim = getRectPerimeter(g.w, g.h);
+            return (
+              <g key={i}>
+                {/* Box outline draws in */}
+                <motion.rect
+                  x={g.x}
+                  y={g.y}
+                  width={g.w}
+                  height={g.h}
+                  rx={12}
+                  fill="rgba(124,58,237,0.025)"
+                  stroke="rgba(124,58,237,0.30)"
+                  strokeWidth={1.5}
+                  strokeDasharray={perim}
+                  initial={{ strokeDashoffset: perim, opacity: 0 }}
+                  animate={{ strokeDashoffset: 0, opacity: 1 }}
+                  transition={{ delay: g.delay, duration: 0.7, ease: "easeInOut" }}
+                />
+
+                {/* Title bar */}
+                <motion.rect
+                  x={g.x}
+                  y={g.y}
+                  width={g.w}
+                  height={32}
+                  rx={12}
+                  fill="rgba(124,58,237,0.06)"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: g.delay + 0.4, duration: 0.3 }}
+                />
+                {/* Bottom of title bar (covers bottom radius) */}
+                <motion.rect
+                  x={g.x}
+                  y={g.y + 20}
+                  width={g.w}
+                  height={12}
+                  fill="rgba(124,58,237,0.06)"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: g.delay + 0.4, duration: 0.3 }}
+                />
+
+                {/* Title text */}
+                <motion.text
+                  x={g.x + 12}
+                  y={g.y + 20}
+                  fontSize={11}
+                  fontWeight={600}
+                  fill="rgba(124,58,237,0.65)"
+                  fontFamily="Inter, system-ui, sans-serif"
+                  letterSpacing={0.3}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: g.delay + 0.45, duration: 0.3 }}
+                >
+                  {g.title}
+                </motion.text>
+
+                {/* Content skeleton lines */}
+                <ContentLines groupX={g.x} groupY={g.y} groupW={g.w} delay={g.delay} />
+              </g>
+            );
+          })}
+
+          {/* Floating "cursor" — a small pen that moves around */}
+          <motion.circle
+            r={4}
+            fill="#7c3aed"
+            opacity={0.6}
+            animate={{
+              cx: [180, 500, 800, 290, 630],
+              cy: [190, 140, 185, 395, 390],
+            }}
+            transition={{
+              duration: 5,
+              times: [0, 0.2, 0.45, 0.65, 0.9],
+              ease: "easeInOut",
+              repeat: Infinity,
+              repeatType: "reverse",
+            }}
+          />
+        </svg>
+      </div>
+
+      {/* Bottom status strip */}
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.3, duration: 0.5 }}
+        className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center gap-3"
+      >
+        {/* Progress bar */}
+        <div className="w-48 h-[2px] rounded-full bg-black/[0.06] overflow-hidden">
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-          >
-            <div className="flex items-center gap-2 mb-4">
-              <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-white/20">
-                System Sequence
-              </span>
-              <span className="text-[10px] font-mono text-purple-400/60">
-                // {seq}
-              </span>
-            </div>
+            className="h-full rounded-full bg-violet-500"
+            animate={{ width: `${pct}%` }}
+            transition={{ duration: 0.6, ease: "easeOut" }}
+          />
+        </div>
 
-            <h1 className="text-[42px] font-bold leading-[1.05] tracking-tight mb-6">
-              <span className="text-white/90">Synthesizing</span>
-              <br />
-              <span className="text-white/90">Neural</span>
-              <br />
-              <span
-                className="bg-clip-text text-transparent"
-                style={{
-                  backgroundImage: `linear-gradient(135deg, ${ACCENT}, #a78bfa, #38bdf8)`,
-                }}
-              >
-                Workspace...
-              </span>
-            </h1>
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.3 }}
-            className="mb-6"
-          >
-            <ProgressBar stages={stages} />
-          </motion.div>
-
-          {/* Stages */}
-          <div className="space-y-1 mb-5">
-            {stages.map((stage, i) => (
+        <div className="flex items-center gap-2.5">
+          <div className="flex gap-[4px]">
+            {[0, 1, 2].map((i) => (
               <motion.div
-                key={stage.id}
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.2 + i * 0.1 }}
-                className={`flex items-center gap-3 py-2.5 px-3 rounded-xl transition-all ${
-                  stage.status === "active" ? "bg-white/[0.03]" : ""
-                }`}
-              >
-                <div className="flex-shrink-0 text-white/20">{stage.icon}</div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between">
-                    <span
-                      className={`text-[13px] font-medium ${
-                        stage.status === "done"
-                          ? "text-white/60"
-                          : stage.status === "active"
-                            ? "text-white/90"
-                            : "text-white/25"
-                      }`}
-                    >
-                      {stage.label}
-                    </span>
-                    <span
-                      className={`text-[10px] font-mono ${
-                        stage.status === "done"
-                          ? "text-emerald-400/70"
-                          : stage.status === "active"
-                            ? "text-purple-400/70"
-                            : "text-white/15"
-                      }`}
-                    >
-                      {stage.status === "done"
-                        ? stage.detail
-                        : stage.status === "active"
-                          ? stage.detail
-                          : "Queued"}
-                    </span>
-                  </div>
-                </div>
-                <StatusIcon status={stage.status} />
-              </motion.div>
+                key={i}
+                className="w-1 h-1 rounded-full bg-violet-400"
+                animate={{ opacity: [0.25, 1, 0.25], scale: [0.8, 1.2, 0.8] }}
+                transition={{
+                  duration: 1.2,
+                  repeat: Infinity,
+                  delay: i * 0.18,
+                  ease: "easeInOut",
+                }}
+              />
             ))}
           </div>
-
-          {/* Live log feed */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.5 }}
-            className="space-y-1 pl-3 border-l border-white/[0.04]"
-          >
-            <AnimatePresence mode="popLayout">
-              {visibleLogs.map((log) => (
-                <motion.div
-                  key={log.id}
-                  initial={{ opacity: 0, y: 8, height: 0 }}
-                  animate={{ opacity: 1, y: 0, height: "auto" }}
-                  exit={{ opacity: 0 }}
-                  className="flex items-center gap-2"
-                >
-                  <div
-                    className={`w-1 h-1 rounded-full flex-shrink-0 ${
-                      log.type === "success"
-                        ? "bg-emerald-400"
-                        : log.type === "data"
-                          ? "bg-cyan-400"
-                          : "bg-white/20"
-                    }`}
-                  />
-                  <span
-                    className={`text-[10px] font-mono ${
-                      log.type === "success"
-                        ? "text-emerald-400/60"
-                        : log.type === "data"
-                          ? "text-cyan-400/50"
-                          : "text-white/20"
-                    }`}
-                  >
-                    {log.text}
-                  </span>
-                </motion.div>
-              ))}
-            </AnimatePresence>
-          </motion.div>
+          <span className="text-[12px] text-black/40 font-medium">
+            {activeStage ? activeStage.label : "Building your workspace"}
+            <span className="font-mono">{dots}</span>
+          </span>
         </div>
 
-        {/* Right: Context card + Latency */}
-        <div className="w-[280px] flex-shrink-0 space-y-4">
-          {/* Context card */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.4 }}
-            className="bg-white/[0.03] border border-white/[0.06] rounded-2xl p-5 backdrop-blur-sm"
-          >
-            <div className="flex items-center gap-2 mb-3">
-              <div className="px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-400 text-[9px] font-semibold uppercase tracking-wider flex items-center gap-1">
-                <Sparkles className="w-2.5 h-2.5" />
-                Context Lock
-              </div>
-            </div>
-            <h3 className="text-[15px] font-semibold text-white/85 mb-2 leading-snug">
-              {contextCard.title}
-            </h3>
-            <p className="text-[11px] text-white/30 leading-relaxed mb-4">
-              {contextCard.description}
-            </p>
-            <div className="flex flex-wrap items-center gap-2">
-              {contextCard.tags.map((tag, i) => (
-                <div
-                  key={i}
-                  className="px-2 py-1 rounded text-[9px] font-mono"
-                  style={{
-                    backgroundColor: `${tag.color}15`,
-                    color: `${tag.color}cc`,
-                  }}
-                >
-                  {tag.label}
-                </div>
-              ))}
-              <span className="text-[9px] text-white/15 ml-1 uppercase tracking-wider">
-                {contextCard.status}
-              </span>
-            </div>
-          </motion.div>
-
-          {/* Files card (if any) */}
-          {fileNames.length > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.5 }}
-              className="bg-white/[0.03] border border-white/[0.06] rounded-2xl p-4 backdrop-blur-sm"
+        {query && (
+          <AnimatePresence>
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.6 }}
+              className="text-[11px] text-black/25 max-w-[300px] text-center truncate"
             >
-              <span className="text-[9px] font-mono uppercase tracking-[0.15em] text-white/25 mb-2 block">
-                Source Materials
-              </span>
-              <div className="space-y-1.5">
-                {fileNames.map((name, i) => (
-                  <div key={i} className="flex items-center gap-2">
-                    <FileText className="w-3 h-3 text-purple-400/40 flex-shrink-0" />
-                    <span className="text-[10px] text-white/40 truncate">
-                      {name}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </motion.div>
-          )}
-
-          {/* Latency */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.6 }}
-            className="bg-white/[0.03] border border-white/[0.06] rounded-2xl p-5 backdrop-blur-sm"
-          >
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-[9px] font-mono uppercase tracking-[0.15em] text-white/25">
-                Neural Latency
-              </span>
-              <AnimatePresence mode="wait">
-                {latencyMs !== null && (
-                  <motion.span
-                    key={latencyMs}
-                    initial={{ opacity: 0, y: -4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 4 }}
-                    className="text-[10px] font-mono text-cyan-400/60"
-                  >
-                    {latencyMs}ms
-                  </motion.span>
-                )}
-              </AnimatePresence>
-            </div>
-            <LatencyBars active={isActive} />
-          </motion.div>
-
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.8 }}
-            className="flex items-center gap-2 px-2"
-          >
-            <MessageSquare className="w-3 h-3 text-white/15" />
-            <span className="text-[10px] text-white/20 capitalize">
-              {persona} mode
-            </span>
-          </motion.div>
-        </div>
-      </div>
+              {query}
+            </motion.p>
+          </AnimatePresence>
+        )}
+      </motion.div>
     </motion.div>
   );
 }
 
+import { BookOpen, Cpu, Box, Sparkles } from "lucide-react";
+
 export function buildStages(hasFiles: boolean): BridgeStage[] {
   const stages: BridgeStage[] = [];
-
   if (hasFiles) {
-    stages.push({
-      id: "source",
-      label: "Source Grounding",
-      detail: "Queued",
-      status: "waiting",
-      icon: <BookOpen className="w-4 h-4" />,
-    });
+    stages.push({ id: "source", label: "Source Grounding", detail: "Queued", status: "waiting", icon: <BookOpen className="w-4 h-4" /> });
   }
-
-  stages.push({
-    id: "tutor",
-    label: "Tutor Intelligence",
-    detail: "Queued",
-    status: "waiting",
-    icon: <Cpu className="w-4 h-4" />,
-  });
-
-  stages.push({
-    id: "canvas",
-    label: "Visual Architecture",
-    detail: "Queued",
-    status: "waiting",
-    icon: <Sparkles className="w-4 h-4" />,
-  });
-
-  stages.push({
-    id: "simulation",
-    label: "Simulation Engines",
-    detail: "Queued",
-    status: "waiting",
-    icon: <Box className="w-4 h-4" />,
-  });
-
+  stages.push({ id: "tutor",    label: "Tutor Intelligence",  detail: "Queued", status: "waiting", icon: <Cpu className="w-4 h-4" /> });
+  stages.push({ id: "canvas",   label: "Visual Architecture", detail: "Queued", status: "waiting", icon: <Sparkles className="w-4 h-4" /> });
+  stages.push({ id: "simulation", label: "Simulation Engines", detail: "Queued", status: "waiting", icon: <Box className="w-4 h-4" /> });
   return stages;
 }
