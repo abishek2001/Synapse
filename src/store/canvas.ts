@@ -20,6 +20,7 @@ export const ELEM_WIDTHS: Record<string, number> = {
   lookup:     360,
   simulation: 400,
   render3d:   380,
+  diagram:    520,
   text:       480,
   sticky:     220,
 };
@@ -33,6 +34,7 @@ const ELEM_H_EST: Record<string, number> = {
   lookup:     210,
   simulation: 400,
   render3d:   440,
+  diagram:    320,
   text:        52,
   sticky:     170,
 };
@@ -56,7 +58,7 @@ const GROUP_COLORS = [
 
 export type ElementType =
   | "flashcard" | "graph" | "notation" | "visual"
-  | "lookup" | "simulation" | "render3d" | "text" | "sticky" | "stroke";
+  | "lookup" | "simulation" | "render3d" | "diagram" | "text" | "sticky" | "stroke";
 
 export interface TextData {
   content: string;

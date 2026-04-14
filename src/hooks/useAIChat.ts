@@ -32,7 +32,7 @@ export function useAIChat() {
   } = useSessionStore();
 
   const { addModule, addElement, addToast, updateToast, removeToast, elements } = useCanvasStore();
-  const { sessionContext, studyPlan, updateContext } = useGroundingStore();
+  const { sessionContext, studyPlan, applyPatch } = useGroundingStore();
 
   const autoSpeak = useRef(true);
 
@@ -84,41 +84,6 @@ export function useAIChat() {
             content: m.content,
           }));
 
-        let strategyHint: string | undefined;
-        if (sessionContext) {
-          try {
-            const stratRes = await fetch("/api/strategy", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                action: "decide",
-                userMessage: text.trim(),
-                sessionContext,
-                studyPlan,
-                recentHistory: history.slice(-6),
-              }),
-            });
-            if (stratRes.ok) {
-              const stratData = await stratRes.json();
-              const d = stratData.decision;
-              if (d) {
-                strategyHint = `Action: ${d.action}. ${d.reasoning} ${d.suggestedPrompt}`;
-                if (d.conceptsToTrack?.length) {
-                  updateContext({ ...sessionContext, questionsAsked: sessionContext.questionsAsked + 1, lastActivityAt: Date.now() });
-                }
-                if (d.shouldAdvanceModule) {
-                  updateContext({
-                    ...sessionContext,
-                    currentModuleIndex: Math.min(sessionContext.currentModuleIndex + 1, sessionContext.totalModules - 1),
-                  });
-                }
-              }
-            }
-          } catch {
-            // strategy is best-effort
-          }
-        }
-
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -128,8 +93,8 @@ export function useAIChat() {
             history,
             documentContext:
               documentContext || (files.length > 0 ? `Documents: ${files.map((f) => f.name).join(", ")}` : undefined),
-            mode: "tutor",
-            strategyHint,
+            sessionContext,
+            studyPlan,
           }),
         });
 
@@ -140,20 +105,26 @@ export function useAIChat() {
 
         const data = await res.json();
 
-        if (data.tutor) {
-          addMessage({ id: crypto.randomUUID(), role: "tutor", content: data.tutor.explanation, timestamp: Date.now() });
+        const explanation: string =
+          data.tutor?.explanation || data.friend?.analogy || data.rawResponse || "";
+
+        if (explanation) {
+          const isFriend = data.type === "friend";
+          addMessage({
+            id: crypto.randomUUID(),
+            role: "tutor",
+            content: isFriend ? `💡 ${explanation}` : explanation,
+            timestamp: Date.now(),
+          });
 
           if (autoSpeak.current && !isMuted) {
             setSpeaking(true);
-            speak(data.tutor.explanation, () => setSpeaking(false));
+            speak(explanation, () => setSpeaking(false));
           }
         }
 
         if (data.artifacts?.length > 0) {
           processArtifacts(data.artifacts, text.trim());
-          if (sessionContext) {
-            updateContext({ ...sessionContext, artifactsGenerated: sessionContext.artifactsGenerated + data.artifacts.length });
-          }
         }
 
         if (data.canvasAnnotations?.length > 0) {
@@ -173,6 +144,10 @@ export function useAIChat() {
             });
           }
         }
+
+        if (data.contextPatch && sessionContext) {
+          applyPatch(data.contextPatch);
+        }
       } catch {
         addMessage({ id: crypto.randomUUID(), role: "tutor", content: "Something went wrong. Let me try again...", timestamp: Date.now() });
       } finally {
@@ -181,7 +156,7 @@ export function useAIChat() {
     },
     [
       isStreaming, isSpeaking, isMuted, messages, persona, files, documentContext,
-      addMessage, setStreaming, setSpeaking, processArtifacts, sessionContext, studyPlan, updateContext, addElement, elements,
+      addMessage, setStreaming, setSpeaking, processArtifacts, sessionContext, studyPlan, applyPatch, addElement, elements,
     ],
   );
 
