@@ -62,12 +62,14 @@ app/workspace/page.tsx (Suspense wrapper)
 
 ### `Render3DCard` (`src/components/canvas/Render3DCard.tsx`)
 - **Props**: `artifact: Render3DArtifact`
-- **Renders**: sandboxed `<iframe srcdoc>` with Three.js r160 + OrbitControls pre-booted
-- **Interactions**: drag to rotate, scroll to zoom, right-drag to pan (all via OrbitControls)
+- **Two render modes**:
+  - **`embed_url` mode**: if `artifact.embed_url` is set, renders it directly as `<iframe src>` with `allow-scripts allow-same-origin allow-popups` — used for Sketchfab and other hosted viewers
+  - **`code` mode** (default): sandboxed `<iframe srcdoc>` with Three.js r160 + OrbitControls pre-booted; AI writes plain JS adding objects to `scene`. May also use `import { OBJLoader } from 'three/addons/...'` etc. to load external `.obj`/`.glb` files from CORS-enabled URLs (e.g. `raw.githubusercontent.com`)
+- **Interactions**: drag to rotate, scroll to zoom, right-drag to pan (OrbitControls)
 - **Height**: fixed `420px`
-- **AI contract**: AI writes plain JS that adds objects to `scene`; may define `function update(t)` (t in seconds) for animation. Globals: `scene`, `camera`, `THREE`, `controls`, `renderer`. Pre-added: ambient + directional sun + blue fill + violet accent lights.
+- **AI contract** (code mode): Globals: `scene`, `camera`, `THREE`, `controls`, `renderer`. Pre-added: ambient + directional sun + blue fill + violet accent lights. Define `function update(t)` (t in seconds) for per-frame animation.
 - **Error handling**: `window.onerror` in iframe posts `render3d_error` via `postMessage`; React state renders an error overlay
-- **`bg_color`** / **`camera_distance`**: optional fields on the artifact control scene background and initial camera Z distance
+- **`bg_color`** / **`camera_distance`**: optional fields controlling scene background and initial camera Z distance (code mode only)
 
 ### `GraphCard` (`src/components/canvas/GraphCard.tsx`)
 - **Props**: `artifact: GraphArtifact`
@@ -142,12 +144,13 @@ app/workspace/page.tsx (Suspense wrapper)
 - **Mock canvas layout** (3 rows):
   - **Row 1** — 6 groups exercising all visual styles + complementary artifact types (concept map + flashcard, notation + graph-line, timeline + area graph, comparison + lookup, diagram + simulation, flowchart + hierarchy)
   - **Row 2** — Chart Gallery: 12 single-element groups, one per graph type (line, area, scatter, trend, forecast, parametric, bar, pie, polar, box, violin, density)
-  - **Row 3** — 3D Render Gallery: 5 single-element groups showcasing `render3d` across disciplines:
-    - **Human Heart** — anatomy (ellipsoidal body + atria + vessels, beating 72 BPM animation)
+  - **Row 3** — 3D Render Gallery: 6 single-element groups showcasing `render3d` across disciplines:
+    - **Human Heart** — Sketchfab embed (`embed_url` mode); anatomically correct model with all chambers, arteries, and veins
     - **DNA Double Helix** — biology (28 base pairs, color-coded rungs, backbone segments)
     - **H₂O Molecule** — chemistry (CPK spheres, 104.5° bond angle, electron cloud, angle arc)
     - **Projectile Motion** — physics (animated ball + live velocity arrow + drop lines, loops)
     - **NaCl Crystal Lattice** — crystallography (InstancedMesh Na⁺/Cl⁻, LineSegments bonds)
+    - **Animal Cell** — biology; loads `CellAnatomy.obj` + `.mtl` from `raw.githubusercontent.com/erick1439/3d-Cell-Model` via `OBJLoader` + `MTLLoader`; auto-centers and scales
 
 ### `CanvasContextMenu` (`src/components/workspace/CanvasContextMenu.tsx`)
 - **Props**: `screenX, screenY, worldX, worldY, targetModuleId?, onClose, onSetTool, onExpandModule`

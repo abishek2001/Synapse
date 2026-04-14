@@ -298,6 +298,7 @@ function buildMockCanvas(topic: string): {
     { id: "grp-r2", name: "Water Molecule",     color: GROUP_COLORS[0], orderIndex: 20, createdAt: Date.now() + 20 },
     { id: "grp-r3", name: "Projectile Motion",  color: GROUP_COLORS[1], orderIndex: 21, createdAt: Date.now() + 21 },
     { id: "grp-r4", name: "NaCl Crystal",       color: GROUP_COLORS[2], orderIndex: 22, createdAt: Date.now() + 22 },
+    { id: "grp-r5", name: "Animal Cell",         color: GROUP_COLORS[3], orderIndex: 23, createdAt: Date.now() + 23 },
   ];
 
   // ─── Artifacts: one of each type, all 6 visual styles ───────────────────
@@ -684,211 +685,10 @@ draw();
   // ─── Row 3: 3D render demos ──────────────────────────────────────────────
 
   const render3dHeart: Render3DArtifact = {
-    id: "a-r3d-heart", type: "render3d", title: "Human Heart (Dissected)", status: "rendered",
-    topic: "Human Heart — Dissected 4-Chamber View",
-    camera_distance: 6,
-    bg_color: "#080a10",
-    code: `
-const hg = new THREE.Group();
-
-// ── Materials ────────────────────────────────────────────────────────────────
-// Outer pericardium — transparent shell, DoubleSide so it never blocks interior
-const periMat  = new THREE.MeshPhongMaterial({color:0xc84050,transparent:true,opacity:0.1,side:THREE.DoubleSide,depthWrite:false});
-// Myocardium muscle (dark maroon)
-const myoMat   = new THREE.MeshPhongMaterial({color:0x8a1512,shininess:28,specular:0x3a0808});
-// Left-side blood (oxygenated) — bright red, glossy
-const lvMat    = new THREE.MeshPhongMaterial({color:0xcc1020,shininess:80,emissive:0x380008,specular:0xff5555});
-// Right-side blood (deoxygenated) — deep blue
-const rvMat    = new THREE.MeshPhongMaterial({color:0x1e3daa,shininess:75,emissive:0x080820,specular:0x4466ff});
-const laMat    = new THREE.MeshPhongMaterial({color:0xdd2030,shininess:70,emissive:0x2a0008,specular:0xff4444});
-const raMat    = new THREE.MeshPhongMaterial({color:0x2244bb,shininess:70,emissive:0x06081a,specular:0x4466ff});
-const septMat  = new THREE.MeshPhongMaterial({color:0x6b1010,shininess:22});
-const valveMat = new THREE.MeshPhongMaterial({color:0xffd0b8,shininess:92,specular:0xffffff,transparent:true,opacity:0.93});
-const chorMat  = new THREE.MeshPhongMaterial({color:0xffddcc,shininess:28});
-const papMat   = new THREE.MeshPhongMaterial({color:0xa02020,shininess:22});
-const aoMat    = new THREE.MeshPhongMaterial({color:0xdd1a2a,shininess:48,specular:0xff5555});
-const paMat    = new THREE.MeshPhongMaterial({color:0x1a3dbb,shininess:48,specular:0x4466ff});
-
-// ── Outer pericardial shell (transparent — reveals interior from all angles) ─
-const periGeo = new THREE.SphereGeometry(1.82,32,24);
-periGeo.applyMatrix4(new THREE.Matrix4().makeScale(1,1.28,0.88));
-const peri = new THREE.Mesh(periGeo,periMat);
-peri.rotation.z=-0.17; peri.position.set(0.04,-0.12,0); peri.renderOrder=99;
-hg.add(peri);
-
-// ── LV myocardium wall (thick — left ventricle has the thickest walls) ───────
-const lvWGeo = new THREE.SphereGeometry(0.96,24,20);
-lvWGeo.applyMatrix4(new THREE.Matrix4().makeScale(0.85,1.52,0.76));
-const lvW = new THREE.Mesh(lvWGeo,myoMat);
-lvW.rotation.z=-0.1; lvW.position.set(-0.28,-0.38,-0.06); hg.add(lvW);
-
-// ── LV blood cavity (bright red — oxygenated blood) ─────────────────────────
-const lvGeo = new THREE.SphereGeometry(0.62,22,18);
-lvGeo.applyMatrix4(new THREE.Matrix4().makeScale(0.7,1.58,0.6));
-const lv = new THREE.Mesh(lvGeo,lvMat);
-lv.rotation.z=-0.1; lv.position.set(-0.28,-0.38,-0.06); hg.add(lv);
-
-// ── RV myocardium wall (thinner, wraps anteriorly around LV) ─────────────────
-const rvWGeo = new THREE.SphereGeometry(0.84,20,18);
-rvWGeo.applyMatrix4(new THREE.Matrix4().makeScale(1.0,1.22,0.72));
-const rvW = new THREE.Mesh(rvWGeo,myoMat);
-rvW.position.set(0.42,-0.24,0.32); hg.add(rvW);
-
-// ── RV blood cavity (deep blue — deoxygenated blood) ─────────────────────────
-const rvGeo = new THREE.SphereGeometry(0.56,18,16);
-rvGeo.applyMatrix4(new THREE.Matrix4().makeScale(0.88,1.1,0.62));
-const rv = new THREE.Mesh(rvGeo,rvMat);
-rv.position.set(0.42,-0.24,0.32); hg.add(rv);
-
-// ── Interventricular septum ───────────────────────────────────────────────────
-const ivGeo = new THREE.SphereGeometry(0.19,14,12);
-ivGeo.applyMatrix4(new THREE.Matrix4().makeScale(0.42,2.1,0.68));
-const iv = new THREE.Mesh(ivGeo,septMat);
-iv.rotation.z=0.08; iv.position.set(0.08,-0.3,0.1); hg.add(iv);
-
-// ── LA myocardium surround (posterior — NOT sitting on top like ears) ─────────
-const laWGeo = new THREE.SphereGeometry(0.62,16,14);
-laWGeo.applyMatrix4(new THREE.Matrix4().makeScale(1.06,0.82,1.04));
-const laW = new THREE.Mesh(laWGeo,myoMat);
-laW.position.set(-0.34,0.68,-0.3); hg.add(laW);
-
-// ── LA blood cavity ───────────────────────────────────────────────────────────
-const laGeo = new THREE.SphereGeometry(0.48,18,16);
-laGeo.applyMatrix4(new THREE.Matrix4().makeScale(1.04,0.8,1.0));
-const la = new THREE.Mesh(laGeo,laMat);
-la.position.set(-0.34,0.68,-0.3); hg.add(la);
-
-// ── RA myocardium surround ────────────────────────────────────────────────────
-const raWGeo = new THREE.SphereGeometry(0.64,16,14);
-raWGeo.applyMatrix4(new THREE.Matrix4().makeScale(1.0,0.82,0.96));
-const raW = new THREE.Mesh(raWGeo,myoMat);
-raW.position.set(0.5,0.68,0.12); hg.add(raW);
-
-// ── RA blood cavity ───────────────────────────────────────────────────────────
-const raGeo = new THREE.SphereGeometry(0.5,18,16);
-raGeo.applyMatrix4(new THREE.Matrix4().makeScale(0.98,0.8,0.9));
-const ra = new THREE.Mesh(raGeo,raMat);
-ra.position.set(0.5,0.68,0.12); hg.add(ra);
-
-// ── Atrial septum ─────────────────────────────────────────────────────────────
-const asGeo = new THREE.SphereGeometry(0.1,10,10);
-asGeo.applyMatrix4(new THREE.Matrix4().makeScale(0.38,1.15,0.85));
-const atrSept = new THREE.Mesh(asGeo,septMat);
-atrSept.position.set(0.07,0.68,-0.08); hg.add(atrSept);
-
-// ── Valves as torus rings ─────────────────────────────────────────────────────
-// Mitral (bicuspid) — LA → LV
-const mitral = new THREE.Mesh(new THREE.TorusGeometry(0.27,0.056,8,22),valveMat);
-mitral.rotation.x=Math.PI/2; mitral.position.set(-0.3,0.2,-0.06); hg.add(mitral);
-// Tricuspid — RA → RV
-const tricusp = new THREE.Mesh(new THREE.TorusGeometry(0.23,0.05,8,20),valveMat);
-tricusp.rotation.x=Math.PI/2; tricusp.position.set(0.44,0.2,0.2); hg.add(tricusp);
-// Aortic — LV outflow
-const aorticV = new THREE.Mesh(new THREE.TorusGeometry(0.17,0.044,8,18),valveMat);
-aorticV.rotation.x=Math.PI/2; aorticV.position.set(-0.1,0.88,0.0); hg.add(aorticV);
-// Pulmonary — RV outflow
-const pulmonV = new THREE.Mesh(new THREE.TorusGeometry(0.15,0.04,8,16),valveMat);
-pulmonV.rotation.x=Math.PI/2; pulmonV.position.set(0.38,0.88,0.3); hg.add(pulmonV);
-
-// ── Papillary muscles + chordae tendineae inside LV ─────────────────────────
-[[-0.18,0.18],[-0.44,-0.12],[-0.22,-0.2]].forEach(function(pair){
-  var px=pair[0], pz=pair[1];
-  var pap=new THREE.Mesh(new THREE.CylinderGeometry(0.055,0.088,0.52,8),papMat);
-  pap.position.set(px,-0.72,pz); hg.add(pap);
-  var cPath=new THREE.CatmullRomCurve3([
-    new THREE.Vector3(px,-0.46,pz),
-    new THREE.Vector3(px*0.75,-0.05,pz*0.7),
-    new THREE.Vector3(-0.3,0.16,-0.06),
-  ]);
-  hg.add(new THREE.Mesh(new THREE.TubeGeometry(cPath,6,0.016,4,false),chorMat));
-});
-
-// ── Aorta — signature leftward arch ──────────────────────────────────────────
-var aoPath=new THREE.CatmullRomCurve3([
-  new THREE.Vector3(-0.1,0.94,0.0),
-  new THREE.Vector3(-0.2,1.64,0.2),
-  new THREE.Vector3(0.08,1.9,0.16),
-  new THREE.Vector3(0.74,1.72,-0.08),
-  new THREE.Vector3(0.92,1.04,-0.18),
-]);
-hg.add(new THREE.Mesh(new THREE.TubeGeometry(aoPath,20,0.22,10,false),aoMat));
-
-// ── Coronary arteries (run along epicardial surface, supply myocardium) ───────
-var corL=new THREE.CatmullRomCurve3([
-  new THREE.Vector3(-0.1,0.88,0.1),
-  new THREE.Vector3(-0.56,0.44,0.3),
-  new THREE.Vector3(-0.9,-0.02,0.22),
-  new THREE.Vector3(-1.06,-0.58,0.1),
-]);
-hg.add(new THREE.Mesh(new THREE.TubeGeometry(corL,12,0.056,6,false),aoMat));
-var corR=new THREE.CatmullRomCurve3([
-  new THREE.Vector3(-0.1,0.88,0.1),
-  new THREE.Vector3(0.24,0.6,0.44),
-  new THREE.Vector3(0.68,0.22,0.4),
-  new THREE.Vector3(0.88,-0.32,0.24),
-]);
-hg.add(new THREE.Mesh(new THREE.TubeGeometry(corR,12,0.05,6,false),aoMat));
-
-// ── Pulmonary artery — exits RV, splits into left & right branches ────────────
-var paMain=new THREE.CatmullRomCurve3([
-  new THREE.Vector3(0.38,0.94,0.32),
-  new THREE.Vector3(0.3,1.52,0.44),
-  new THREE.Vector3(0.05,1.7,0.46),
-]);
-hg.add(new THREE.Mesh(new THREE.TubeGeometry(paMain,14,0.18,8,false),paMat));
-[[-1],[1]].forEach(function(pair){
-  var sx=pair[0];
-  var br=new THREE.CatmullRomCurve3([
-    new THREE.Vector3(0.05,1.7,0.46),
-    new THREE.Vector3(sx*0.48,1.74,0.38),
-    new THREE.Vector3(sx*0.9,1.64,0.22),
-  ]);
-  hg.add(new THREE.Mesh(new THREE.TubeGeometry(br,8,0.1,6,false),paMat));
-});
-
-// ── SVC (superior vena cava) ──────────────────────────────────────────────────
-hg.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
-  new THREE.Vector3(0.5,0.68,0.12),new THREE.Vector3(0.54,1.35,0.1),new THREE.Vector3(0.54,2.02,0.08),
-]),8,0.13,8,false),paMat));
-
-// ── IVC (inferior vena cava) ──────────────────────────────────────────────────
-hg.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
-  new THREE.Vector3(0.5,0.28,0.08),new THREE.Vector3(0.58,-0.62,0.05),new THREE.Vector3(0.55,-1.78,0.02),
-]),8,0.14,8,false),paMat));
-
-// ── 4 Pulmonary veins (enter LA posteriorly — oxygenated from lungs) ──────────
-[[-0.2,0.44],[-0.52,0.44],[-0.2,-0.3],[-0.52,-0.3]].forEach(function(pair){
-  var ox=pair[0], oz=pair[1];
-  hg.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
-    new THREE.Vector3(ox,0.96,oz-0.34),
-    new THREE.Vector3(ox*0.88,0.82,oz*0.55-0.1),
-    new THREE.Vector3(-0.34,0.68,-0.3),
-  ]),6,0.08,6,false),aoMat));
-});
-
-// ── Internal point lights — make chambers glow from within ───────────────────
-var lvLight=new THREE.PointLight(0xff1a2a,1.4,4.0);
-lvLight.position.set(-0.28,-0.38,-0.06); hg.add(lvLight);
-var rvLight=new THREE.PointLight(0x2244ff,0.9,3.5);
-rvLight.position.set(0.42,-0.24,0.32); hg.add(rvLight);
-
-scene.add(hg);
-camera.position.set(0,0.5,6.2);
-controls.target.set(0,0.15,0);
-
-function update(t) {
-  hg.rotation.y = t*0.14 + Math.sin(t*0.3)*0.28;
-  // Heartbeat 72 BPM — two-phase (systole + diastole)
-  var ph=(t*1.2)%1.0, s;
-  if      (ph<0.07) s=1+ph/0.07*0.07;
-  else if (ph<0.18) s=1.07-(ph-0.07)/0.11*0.09;
-  else if (ph<0.25) s=0.98+(ph-0.18)/0.07*0.04;
-  else              s=1.02-(ph-0.25)/0.75*0.02;
-  hg.scale.setScalar(s);
-  // Chamber glow pulses with beat
-  lvLight.intensity=(0.8+s*0.7)*1.4;
-  rvLight.intensity=(0.8+s*0.7)*0.9;
-}`,
+    id: "a-r3d-heart", type: "render3d", title: "Human Heart — Anatomical", status: "rendered",
+    topic: "Human Heart — 4-Chamber Anatomy",
+    embed_url: "https://sketchfab.com/models/54fa880728d14c11afff78be8721620a/embed?autostart=1&ui_theme=dark&ui_infos=0&ui_controls=1",
+    code: "",
   };
 
   const render3dDNA: Render3DArtifact = {
@@ -1160,6 +960,68 @@ function update(t) {
 }`,
   };
 
+  const render3dCell: Render3DArtifact = {
+    id: "a-r3d-cell", type: "render3d", title: "Animal Cell", status: "rendered",
+    topic: "Animal Cell — Organelle Anatomy",
+    camera_distance: 8,
+    bg_color: "#060810",
+    code: `
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
+
+const BASE = 'https://raw.githubusercontent.com/erick1439/3d-Cell-Model/master/public/cellModel/';
+
+const hint = document.createElement('div');
+hint.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);color:rgba(200,230,255,0.5);font:13px system-ui;letter-spacing:0.05em;pointer-events:none';
+hint.textContent = 'Loading cell model…';
+document.body.appendChild(hint);
+
+const cellGroup = new THREE.Group();
+scene.add(cellGroup);
+
+// Extra fill light to bring out the organelle colours
+const fillA = new THREE.PointLight(0x80c0ff, 0.7, 30);
+fillA.position.set(4, 5, 4); scene.add(fillA);
+const fillB = new THREE.PointLight(0xff80a0, 0.4, 20);
+fillB.position.set(-4, -3, -4); scene.add(fillB);
+
+const mtlLoader = new MTLLoader();
+mtlLoader.setResourcePath(BASE);
+
+function loadObj(materials) {
+  const objLoader = new OBJLoader();
+  if (materials) objLoader.setMaterials(materials);
+  objLoader.load(BASE + 'CellAnatomy.obj', function(object) {
+    // Auto-center then scale to fit comfortably
+    const box = new THREE.Box3().setFromObject(object);
+    const center = box.getCenter(new THREE.Vector3());
+    const size   = box.getSize(new THREE.Vector3());
+    const scale  = 5.5 / Math.max(size.x, size.y, size.z);
+    const wrapper = new THREE.Group();
+    object.position.set(-center.x, -center.y, -center.z);
+    wrapper.scale.setScalar(scale);
+    wrapper.add(object);
+    cellGroup.add(wrapper);
+    hint.remove();
+  }, undefined, function(err) {
+    hint.textContent = 'Model unavailable';
+    window.parent.postMessage({ type:'render3d_error', message:'OBJ load failed' }, '*');
+  });
+}
+
+mtlLoader.load(BASE + 'CellAnatomy.mtl', function(materials) {
+  materials.preload(); loadObj(materials);
+}, undefined, function() { loadObj(null); }); // fallback: load without materials
+
+camera.position.set(0, 2, 9);
+controls.target.set(0, 0, 0);
+
+function update(t) {
+  cellGroup.rotation.y = t * 0.12;
+  cellGroup.rotation.x = Math.sin(t * 0.09) * 0.1;
+}`,
+  };
+
   // ─── Layout ───────────────────────────────────────────────────────────────
   // 6 groups × 2 artifact elements + 1 standalone text + 1 standalone sticky
 
@@ -1259,6 +1121,7 @@ function update(t) {
     ["el-r2", "grp-r2", render3dWater],
     ["el-r3", "grp-r3", render3dProjectile],
     ["el-r4", "grp-r4", render3dNaCl],
+    ["el-r5", "grp-r5", render3dCell],
   ];
   let cursor3 = 80;
   const row3Els: CanvasElement[] = renderDemos.map(([elId, grpId, art], i) => {
@@ -1306,6 +1169,7 @@ function update(t) {
       { id: "c-r12", fromModuleId: "grp-r1", toModuleId: "grp-r2" },
       { id: "c-r23", fromModuleId: "grp-r2", toModuleId: "grp-r3" },
       { id: "c-r34", fromModuleId: "grp-r3", toModuleId: "grp-r4" },
+      { id: "c-r45", fromModuleId: "grp-r4", toModuleId: "grp-r5" },
     ],
   };
 }

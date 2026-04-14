@@ -130,6 +130,21 @@ export default function Render3DCard({ artifact }: { artifact: Render3DArtifact 
     return () => window.removeEventListener("message", handler);
   }, []);
 
+  // External embed (Sketchfab etc.) — bypass Three.js scaffold entirely
+  if (artifact.embed_url) {
+    return (
+      <div className="w-full rounded-xl overflow-hidden" style={{ height: RENDER_HEIGHT }}>
+        <iframe
+          src={artifact.embed_url}
+          sandbox="allow-scripts allow-same-origin allow-popups"
+          allow="autoplay; fullscreen; xr-spatial-tracking"
+          className="w-full h-full border-0"
+          title={`3D: ${artifact.title}`}
+        />
+      </div>
+    );
+  }
+
   if (!artifact.code) {
     return (
       <div

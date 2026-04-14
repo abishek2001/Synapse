@@ -91,6 +91,7 @@ export interface Render3DArtifact extends BaseArtifact {
   type: "render3d";
   topic: string;
   code: string;
+  embed_url?: string;        // if set, renders a Sketchfab/external embed instead of the Three.js scene
   camera_distance?: number;  // distance of camera from origin, default 5
   bg_color?: string;         // CSS hex background, default "#0a0b14"
 }
