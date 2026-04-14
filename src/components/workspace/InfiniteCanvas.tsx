@@ -8,7 +8,6 @@ import {
   useImperativeHandle,
   forwardRef,
   type ReactNode,
-  type WheelEvent as ReactWheelEvent,
 } from "react";
 import {
   ZoomIn,
@@ -33,7 +32,6 @@ const MAX_ZOOM  = 4;
 const ZOOM_STEP = 0.12;
 const DOT_SIZE  = 1;
 const DOT_GAP   = 24;
-// Minimum drag distance before panning is committed (select mode)
 const PAN_THRESHOLD = 8;
 
 interface InfiniteCanvasProps {
@@ -65,21 +63,6 @@ export interface InfiniteCanvasHandle {
   fitAll: (bounds: { x: number; y: number; w: number; h: number }) => void;
 }
 
-// ─── Bezier path from raw points ──────────────────────────────────────────────
-
-function pointsToPath(pts: [number, number][]): string {
-  if (pts.length < 2) return "";
-  let d = `M ${pts[0][0]} ${pts[0][1]}`;
-  for (let i = 1; i < pts.length - 1; i++) {
-    const mx = (pts[i][0] + pts[i + 1][0]) / 2;
-    const my = (pts[i][1] + pts[i + 1][1]) / 2;
-    d += ` Q ${pts[i][0]} ${pts[i][1]} ${mx} ${my}`;
-  }
-  const last = pts[pts.length - 1];
-  d += ` L ${last[0]} ${last[1]}`;
-  return d;
-}
-
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
@@ -104,42 +87,82 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
     },
     ref,
   ) {
-    const containerRef  = useRef<HTMLDivElement>(null);
-    const transformRef  = useRef<Transform>({ x: 0, y: 0, scale: 1 });
+    const containerRef = useRef<HTMLDivElement>(null);
+    const transformRef = useRef<Transform>({ x: 0, y: 0, scale: 1 });
     const [transform, setTransformState] = useState<Transform>({ x: 0, y: 0, scale: 1 });
-    const [smoothing,  setSmoothing]  = useState(false);
-    const [isPanning,  setIsPanning]  = useState(false);
+    const [smoothing, setSmoothing] = useState(false);
+    const [isPanning, setIsPanning] = useState(false);
     const [internalTool, setInternalTool] = useState<CanvasTool>("select");
 
-    // Active tool (external wins if provided)
     const tool    = externalTool ?? internalTool;
-    const setTool = onToolChange  ?? setInternalTool;
+    const setTool = onToolChange ?? setInternalTool;
 
-    // Keep a ref so native event handlers always see the latest value
+    // Ref so native handlers always see latest tool without re-registering
     const toolRef = useRef<CanvasTool>(tool);
     useEffect(() => { toolRef.current = tool; }, [tool]);
 
     // ── Pen stroke state ──────────────────────────────────────────────────────
-    const [currentStroke, setCurrentStroke] = useState<[number, number][] | null>(null);
-    const strokePtsRef = useRef<[number, number][]>([]);
-    const isDrawing    = useRef(false);
+    // Live strokes drawn imperatively on liveCanvasRef — no React state, no
+    // listener churn. Committed strokes drawn on committedCanvasRef in screen
+    // space (world→screen via transform), so CSS overflow:hidden never clips them.
+    const liveCanvasRef      = useRef<HTMLCanvasElement>(null);
+    const committedCanvasRef = useRef<HTMLCanvasElement>(null);
+    const livePtsRef         = useRef<[number, number][]>([]); // screen pts for commit
+    const isDrawing          = useRef(false);
 
-    // Stable refs so native handlers always see current prop values without re-registering
     const onStrokeCompleteRef = useRef(onStrokeComplete);
     useEffect(() => { onStrokeCompleteRef.current = onStrokeComplete; }, [onStrokeComplete]);
     const strokeColorRef = useRef(strokeColor);
     useEffect(() => { strokeColorRef.current = strokeColor; }, [strokeColor]);
 
-    // ── Pan state (refs only — no re-renders mid-drag) ────────────────────────
+    // Redraw committed strokes canvas whenever strokes or transform changes
+    useEffect(() => {
+      const cvs = committedCanvasRef.current;
+      const container = containerRef.current;
+      if (!cvs || !container) return;
+      const dpr = window.devicePixelRatio || 1;
+      const w = container.offsetWidth;
+      const h = container.offsetHeight;
+      cvs.width  = w * dpr;
+      cvs.height = h * dpr;
+      const ctx = cvs.getContext("2d");
+      if (!ctx) return;
+      ctx.scale(dpr, dpr);
+      if (strokes.length === 0) return;
+      const t = transform;
+      for (const stroke of strokes) {
+        if (stroke.points.length < 2) continue;
+        const pts: [number, number][] = stroke.points.map(([wx, wy]) => [
+          wx * t.scale + t.x,
+          wy * t.scale + t.y,
+        ]);
+        ctx.beginPath();
+        ctx.strokeStyle = stroke.color;
+        ctx.lineWidth   = stroke.width * t.scale;
+        ctx.lineCap     = "round";
+        ctx.lineJoin    = "round";
+        ctx.globalAlpha = 0.85;
+        ctx.moveTo(pts[0][0], pts[0][1]);
+        for (let i = 1; i < pts.length - 1; i++) {
+          const mx = (pts[i][0] + pts[i + 1][0]) / 2;
+          const my = (pts[i][1] + pts[i + 1][1]) / 2;
+          ctx.quadraticCurveTo(pts[i][0], pts[i][1], mx, my);
+        }
+        const last = pts[pts.length - 1];
+        ctx.lineTo(last[0], last[1]);
+        ctx.stroke();
+      }
+    }, [strokes, transform]);
+
+    // ── Pan state ─────────────────────────────────────────────────────────────
     const panState = useRef({
-      active:  false,
-      pending: false,
+      active: false, pending: false,
       startX: 0, startY: 0,
       originTx: 0, originTy: 0,
     });
 
     // ── Rubber-band selection state ───────────────────────────────────────────
-    const rbRef = useRef<HTMLDivElement>(null);
+    const rbRef   = useRef<HTMLDivElement>(null);
     const rbState = useRef<{ active: boolean; sx: number; sy: number; ex: number; ey: number } | null>(null);
 
     // ── Transform helpers ─────────────────────────────────────────────────────
@@ -153,14 +176,7 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
       [onTransformChange],
     );
 
-    const clientToWorld = useCallback((cx: number, cy: number): [number, number] => {
-      const rect = containerRef.current?.getBoundingClientRect();
-      if (!rect) return [0, 0];
-      const t = transformRef.current;
-      return [(cx - rect.left - t.x) / t.scale, (cy - rect.top - t.y) / t.scale];
-    }, []);
-
-    // ── Imperative handle ──────────────────────────────────────────────────────
+    // ── Imperative handle ─────────────────────────────────────────────────────
     useImperativeHandle(ref, () => ({
       getContainerRef: () => containerRef.current,
       getTransform: () => transformRef.current,
@@ -216,7 +232,7 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
       [setTransform],
     );
 
-    // Prevent browser-default scroll/pinch-zoom on the canvas element
+    // Prevent browser-default scroll/pinch-zoom
     useEffect(() => {
       const el = containerRef.current;
       if (!el) return;
@@ -225,17 +241,13 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
       return () => el.removeEventListener("wheel", prevent);
     }, []);
 
-    // ── Reset pan state whenever the tool changes ─────────────────────────────
-    // This is critical: clicking a toolbar button sets a pending-pan on the
-    // container; if the tool then changes, that stale state must be cleared.
+    // Reset pan state on tool change
     useEffect(() => {
       panState.current = { active: false, pending: false, startX: 0, startY: 0, originTx: 0, originTy: 0 };
       setIsPanning(false);
     }, [tool]);
 
-    // ── All canvas pointer logic via native events ─────────────────────────────
-    // Using native events (not React synthetic) so we bypass React's event
-    // delegation and stopPropagation from child components doesn't interfere.
+    // ── All pointer logic via native events ───────────────────────────────────
     useEffect(() => {
       const el = containerRef.current;
       if (!el) return;
@@ -244,24 +256,40 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
         const target = e.target as HTMLElement;
         const t = toolRef.current;
 
-        // ── Pen: handle first so it works even over element cards ────────────
+        // Never fire on toolbar / UI controls
+        if (target.closest("[data-canvas-ui]")) return;
+
+        // ── Pen ──────────────────────────────────────────────────────────────
         if (t === "pen") {
           if (e.button !== 0) return;
-          // Skip actual toolbar/control buttons
-          if (target.closest("[data-canvas-ui='control']")) return;
-          isDrawing.current = true;
-          const [wx, wy] = clientToWorld(e.clientX, e.clientY);
-          strokePtsRef.current = [[wx, wy]];
-          setCurrentStroke([[wx, wy]]);
+          e.preventDefault();
           el.setPointerCapture(e.pointerId);
+          isDrawing.current = true;
+          const rect = el.getBoundingClientRect();
+          const pt: [number, number] = [e.clientX - rect.left, e.clientY - rect.top];
+          livePtsRef.current = [pt];
+          // Set up canvas for drawing
+          const cvs = liveCanvasRef.current;
+          if (cvs) {
+            const dpr = window.devicePixelRatio || 1;
+            cvs.width  = rect.width  * dpr;
+            cvs.height = rect.height * dpr;
+            const ctx = cvs.getContext("2d");
+            if (ctx) {
+              ctx.scale(dpr, dpr);
+              ctx.strokeStyle = strokeColorRef.current;
+              ctx.lineWidth   = 2;
+              ctx.lineCap     = "round";
+              ctx.lineJoin    = "round";
+              ctx.globalAlpha = 0.9;
+              ctx.beginPath();
+              ctx.moveTo(pt[0], pt[1]);
+            }
+          }
           return;
         }
 
-        // For all other modes, skip clicks on UI elements (toolbars, cards, etc.)
-        if (target.closest("[data-canvas-ui]")) return;
-
         if (e.button === 1 || t === "hand") {
-          // Immediate pan (middle-click or hand tool)
           panState.current = {
             active: true, pending: false,
             startX: e.clientX, startY: e.clientY,
@@ -274,20 +302,18 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
 
         if (e.button === 0) {
           if (t === "select") {
-            // Start rubber-band selection
             rbState.current = { active: true, sx: e.clientX, sy: e.clientY, ex: e.clientX, ey: e.clientY };
             el.setPointerCapture(e.pointerId);
             const rect = el.getBoundingClientRect();
             const div = rbRef.current;
             if (div) {
-              div.style.left   = `${e.clientX - rect.left}px`;
-              div.style.top    = `${e.clientY - rect.top}px`;
-              div.style.width  = "0px";
-              div.style.height = "0px";
+              div.style.left    = `${e.clientX - rect.left}px`;
+              div.style.top     = `${e.clientY - rect.top}px`;
+              div.style.width   = "0px";
+              div.style.height  = "0px";
               div.style.display = "block";
             }
           } else {
-            // Pending pan for text / sticky tools
             panState.current = {
               active: false, pending: true,
               startX: e.clientX, startY: e.clientY,
@@ -298,17 +324,22 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
       };
 
       const onMove = (e: PointerEvent) => {
-        // ── Pen drawing ──────────────────────────────────────────────────────
-        if (isDrawing.current) {
-          const [wx, wy] = clientToWorld(e.clientX, e.clientY);
-          strokePtsRef.current.push([wx, wy]);
-          if (strokePtsRef.current.length % 3 === 0) {
-            setCurrentStroke([...strokePtsRef.current]);
+        // ── Pen ──────────────────────────────────────────────────────────────
+        if (toolRef.current === "pen") {
+          if (!isDrawing.current) return;
+          const rect = el.getBoundingClientRect();
+          const pt: [number, number] = [e.clientX - rect.left, e.clientY - rect.top];
+          livePtsRef.current = [...livePtsRef.current, pt];
+          const ctx = liveCanvasRef.current?.getContext("2d");
+          if (ctx) {
+            ctx.lineTo(pt[0], pt[1]);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(pt[0], pt[1]);
           }
           return;
         }
 
-        // Rubber-band update
         const rb = rbState.current;
         if (rb?.active) {
           rb.ex = e.clientX;
@@ -324,7 +355,6 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
           return;
         }
 
-        // Pan update
         const ps = panState.current;
         if (ps.active) {
           const dx = e.clientX - ps.startX;
@@ -345,24 +375,31 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
       };
 
       const onUp = (e: PointerEvent) => {
-        // ── Pen stroke commit ────────────────────────────────────────────────
-        if (isDrawing.current) {
+        // ── Pen ──────────────────────────────────────────────────────────────
+        if (toolRef.current === "pen") {
+          if (!isDrawing.current) return;
           isDrawing.current = false;
-          const pts = strokePtsRef.current;
-          if (pts.length > 1 && onStrokeCompleteRef.current) {
+          const screenPts = livePtsRef.current;
+          livePtsRef.current = [];
+          // Clear the live canvas
+          const cvs = liveCanvasRef.current;
+          if (cvs) cvs.getContext("2d")?.clearRect(0, 0, cvs.width, cvs.height);
+          if (screenPts.length >= 2 && onStrokeCompleteRef.current) {
+            const t = transformRef.current;
+            const worldPts: [number, number][] = screenPts.map(([px, py]) => [
+              (px - t.x) / t.scale,
+              (py - t.y) / t.scale,
+            ]);
             onStrokeCompleteRef.current({
               id: `stroke-${Date.now()}`,
-              points: pts,
+              points: worldPts,
               color: strokeColorRef.current,
               width: 2,
             });
           }
-          strokePtsRef.current = [];
-          setCurrentStroke(null);
           return;
         }
 
-        // Rubber-band end
         const rb = rbState.current;
         if (rb?.active) {
           rbState.current = null;
@@ -373,7 +410,6 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
           const dy = Math.abs(rb.ey - rb.sy);
 
           if (dx < 5 && dy < 5) {
-            // Tiny movement → treat as a plain click (clear selection etc.)
             const rect = el.getBoundingClientRect();
             const t = transformRef.current;
             if (e.shiftKey && onShiftClick) {
@@ -394,7 +430,6 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
           return;
         }
 
-        // Pan end
         const ps = panState.current;
         const wasActive = ps.active;
         panState.current = { active: false, pending: false, startX: 0, startY: 0, originTx: 0, originTy: 0 };
@@ -404,7 +439,6 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
           return;
         }
 
-        // Plain click (no drag committed)
         const rect = el.getBoundingClientRect();
         const t = transformRef.current;
         const worldX = (e.clientX - rect.left - t.x) / t.scale;
@@ -465,7 +499,6 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
         el.removeEventListener("dblclick",      onDblClick);
         el.removeEventListener("contextmenu",   onCtxMenu);
       };
-    // These are all stable refs/callbacks — no tool in deps (we use toolRef)
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [zoom, setTransform, onCanvasClick, onDoubleClick, onRightClick, onShiftClick, onBoxSelect]);
 
@@ -488,15 +521,19 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
     // ── Visual helpers ────────────────────────────────────────────────────────
     const zoomIn    = () => zoom(ZOOM_STEP * transformRef.current.scale);
     const zoomOut   = () => zoom(-ZOOM_STEP * transformRef.current.scale);
-    const zoomReset = () => { setSmoothing(true); setTransform({ x: 0, y: 0, scale: 1 }); setTimeout(() => setSmoothing(false), 700); };
-    const zoomPct   = Math.round(transform.scale * 100);
+    const zoomReset = () => {
+      setSmoothing(true);
+      setTransform({ x: 0, y: 0, scale: 1 });
+      setTimeout(() => setSmoothing(false), 700);
+    };
+    const zoomPct = Math.round(transform.scale * 100);
 
-    const cursorStyle = isPanning ? "grabbing"
-      : tool === "hand"    ? "grab"
-      : tool === "pen"     ? "crosshair"
-      : tool === "text"    ? "text"
-      : tool === "sticky"  ? "crosshair"
-      : "default"; // select
+    const cursorStyle = isPanning    ? "grabbing"
+      : tool === "hand"   ? "grab"
+      : tool === "pen"    ? "crosshair"
+      : tool === "text"   ? "text"
+      : tool === "sticky" ? "crosshair"
+      : "default";
 
     const toolbarBg     = darkMode ? "bg-[#1a1a2e]" : "bg-white";
     const toolbarBorder = darkMode ? "border-white/[0.08]" : "border-black/[0.06]";
@@ -507,11 +544,11 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
     const dotColor      = darkMode ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.07)";
 
     const TOOLS = [
-      { id: "select" as CanvasTool, icon: MousePointer2, label: "Select",    shortcut: "V" },
-      { id: "hand"   as CanvasTool, icon: Hand,          label: "Pan",       shortcut: "H" },
-      { id: "pen"    as CanvasTool, icon: Pencil,        label: "Draw",      shortcut: "P" },
-      { id: "text"   as CanvasTool, icon: Type,          label: "Text",      shortcut: "T" },
-      { id: "sticky" as CanvasTool, icon: StickyNote,    label: "Sticky",    shortcut: "N" },
+      { id: "select" as CanvasTool, icon: MousePointer2, label: "Select", shortcut: "V" },
+      { id: "hand"   as CanvasTool, icon: Hand,          label: "Pan",    shortcut: "H" },
+      { id: "pen"    as CanvasTool, icon: Pencil,        label: "Draw",   shortcut: "P" },
+      { id: "text"   as CanvasTool, icon: Type,          label: "Text",   shortcut: "T" },
+      { id: "sticky" as CanvasTool, icon: StickyNote,    label: "Sticky", shortcut: "N" },
     ];
 
     return (
@@ -519,7 +556,6 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
         ref={containerRef}
         className="w-full h-full relative overflow-hidden select-none"
         style={{ cursor: cursorStyle }}
-        // NOTE: no React onPointerDown/Move/Up here — all handled via native addEventListener above
       >
         {/* Dot-grid background */}
         <div
@@ -531,7 +567,7 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
           }}
         />
 
-        {/* Transformed canvas layer */}
+        {/* Transformed world layer */}
         <div
           className="absolute origin-top-left"
           style={{
@@ -542,43 +578,32 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
         >
           {children}
 
-          {/* Freehand strokes (world-space SVG) */}
-          {(strokes.length > 0 || currentStroke) && (
-            <svg
-              className="absolute pointer-events-none"
-              style={{ overflow: "visible", left: 0, top: 0, width: 0, height: 0 }}
-            >
-              {strokes.map((s) => {
-                const d = pointsToPath(s.points);
-                return d ? (
-                  <path
-                    key={s.id}
-                    d={d}
-                    fill="none"
-                    stroke={s.color}
-                    strokeWidth={s.width}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    opacity={0.8}
-                  />
-                ) : null;
-              })}
-              {currentStroke && currentStroke.length > 1 && (
-                <path
-                  d={pointsToPath(currentStroke)}
-                  fill="none"
-                  stroke={strokeColor}
-                  strokeWidth={2}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  opacity={0.8}
-                />
-              )}
-            </svg>
-          )}
         </div>
 
-        {/* ── Rubber-band selection rect (screen-space, hidden by default) ────── */}
+        {/* Pen-mode intercept overlay — sits above all world content so pointer
+            events always reach the container handler, even over artifact cards. */}
+        {tool === "pen" && (
+          <div
+            className="absolute inset-0"
+            style={{ zIndex: 15, cursor: "crosshair" }}
+          />
+        )}
+
+        {/* ── Committed strokes canvas (screen-space, redrawn on transform/stroke change) ── */}
+        <canvas
+          ref={committedCanvasRef}
+          className="absolute inset-0 pointer-events-none"
+          style={{ zIndex: 22, width: "100%", height: "100%" }}
+        />
+
+        {/* ── Live pen stroke canvas overlay (drawn imperatively, no React state) ── */}
+        <canvas
+          ref={liveCanvasRef}
+          className="absolute inset-0 pointer-events-none"
+          style={{ zIndex: 23, width: "100%", height: "100%" }}
+        />
+
+        {/* Rubber-band selection rect */}
         <div
           ref={rbRef}
           className="absolute pointer-events-none"
@@ -591,8 +616,7 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
           }}
         />
 
-        {/* ── Toolbars — data-canvas-ui blocks canvas pan logic ───────────────
-            z-50 keeps them above the drawing overlay.                        */}
+        {/* Toolbars */}
         {!hideTools && (
           <>
             {/* Bottom-left: tool switcher */}
