@@ -2,72 +2,198 @@
 
 import type { FlashcardArtifact } from "@/lib/tools/types";
 import { useState } from "react";
-import { motion } from "framer-motion";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { ChevronLeft, ChevronRight, RotateCcw } from "lucide-react";
 
 export default function FlashcardCard({ artifact }: { artifact: FlashcardArtifact }) {
   const [current, setCurrent] = useState(0);
   const [flipped, setFlipped] = useState(false);
+  const [known, setKnown] = useState<Set<number>>(new Set());
+  const [review, setReview] = useState<Set<number>>(new Set());
 
+  const total = artifact.cards.length;
   const card = artifact.cards[current];
   if (!card) return null;
 
+  const progress = known.size / total;
+  const isKnown = known.has(current);
+  const needsReview = review.has(current);
+
+  const goNext = () => {
+    setFlipped(false);
+    setTimeout(() => setCurrent((c) => Math.min(c + 1, total - 1)), flipped ? 120 : 0);
+  };
+  const goPrev = () => {
+    setFlipped(false);
+    setTimeout(() => setCurrent((c) => Math.max(c - 1, 0)), flipped ? 120 : 0);
+  };
+
+  const markKnown = () => {
+    setKnown((s) => new Set([...s, current]));
+    setReview((s) => { const n = new Set(s); n.delete(current); return n; });
+    if (current < total - 1) goNext();
+  };
+  const markReview = () => {
+    setReview((s) => new Set([...s, current]));
+    setKnown((s) => { const n = new Set(s); n.delete(current); return n; });
+    if (current < total - 1) goNext();
+  };
+
   return (
-    <div className="w-[300px] space-y-3">
-      <h3 className="font-[family-name:var(--font-caveat)] text-xl text-black/70 font-semibold tracking-wide">
-        {artifact.title}
-      </h3>
+    <div className="w-full select-none" style={{ fontFamily: "Inter, system-ui, sans-serif" }}>
+      {/* Progress bar */}
+      <div className="flex items-center gap-2 mb-3">
+        <div className="flex-1 h-1 rounded-full bg-black/[0.06] overflow-hidden">
+          <motion.div
+            className="h-full rounded-full bg-emerald-400"
+            animate={{ width: `${progress * 100}%` }}
+            transition={{ duration: 0.4, ease: "easeOut" }}
+          />
+        </div>
+        <span className="text-[10px] text-black/30 font-medium tabular-nums">{known.size}/{total}</span>
+      </div>
+
+      {/* Card flip area */}
       <div
-        className="relative h-40 cursor-pointer"
-        onClick={() => setFlipped(!flipped)}
-        style={{ perspective: 800 }}
+        className="relative cursor-pointer"
+        style={{ height: 180, perspective: 900 }}
+        onClick={() => setFlipped((f) => !f)}
       >
         <motion.div
           className="absolute inset-0"
           animate={{ rotateY: flipped ? 180 : 0 }}
-          transition={{ duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
+          transition={{ duration: 0.42, ease: [0.4, 0, 0.2, 1] }}
           style={{ transformStyle: "preserve-3d" }}
         >
           {/* Front */}
           <div
-            className="absolute inset-0 rounded-2xl bg-white border border-black/[0.06] shadow-sm flex items-center justify-center p-6"
-            style={{ backfaceVisibility: "hidden" }}
+            className="absolute inset-0 rounded-2xl flex flex-col items-center justify-center p-5 overflow-hidden"
+            style={{
+              backfaceVisibility: "hidden",
+              background: isKnown
+                ? "linear-gradient(135deg, #d1fae5, #ecfdf5)"
+                : needsReview
+                  ? "linear-gradient(135deg, #fef3c7, #fffbeb)"
+                  : "linear-gradient(135deg, #f5f3ff, #ede9fe)",
+              border: isKnown
+                ? "1px solid rgba(52,211,153,0.3)"
+                : needsReview
+                  ? "1px solid rgba(251,191,36,0.3)"
+                  : "1px solid rgba(139,92,246,0.18)",
+            }}
           >
-            <p className="font-[family-name:var(--font-caveat)] text-lg text-black/70 text-center font-medium leading-relaxed">
+            {/* Corner indicator */}
+            <div className="absolute top-3 right-3 text-[9px] font-semibold uppercase tracking-wider opacity-40"
+              style={{ color: isKnown ? "#059669" : needsReview ? "#d97706" : "#7c3aed" }}>
+              Q
+            </div>
+            <p className="text-center text-[15px] font-medium leading-relaxed text-black/75">
               {card.front}
             </p>
+            <p className="mt-3 text-[10px] text-black/25">tap to flip</p>
           </div>
+
           {/* Back */}
           <div
-            className="absolute inset-0 rounded-2xl bg-gradient-to-br from-green-50 to-white border border-green-500/15 shadow-sm flex items-center justify-center p-6"
-            style={{ backfaceVisibility: "hidden", transform: "rotateY(180deg)" }}
+            className="absolute inset-0 rounded-2xl flex flex-col items-center justify-center p-5 overflow-hidden"
+            style={{
+              backfaceVisibility: "hidden",
+              transform: "rotateY(180deg)",
+              background: "linear-gradient(135deg, #f0fdf4, #ecfdf5)",
+              border: "1px solid rgba(52,211,153,0.25)",
+            }}
           >
-            <p className="font-[family-name:var(--font-caveat)] text-lg text-black/60 text-center leading-relaxed">
+            <div className="absolute top-3 right-3 text-[9px] font-semibold uppercase tracking-wider text-emerald-500/50">A</div>
+            <p className="text-center text-[14px] text-black/65 leading-relaxed">
               {card.back}
             </p>
           </div>
         </motion.div>
       </div>
 
-      <div className="flex items-center justify-between px-1">
+      {/* Action buttons — show after flip */}
+      <AnimatePresence>
+        {flipped && (
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 4 }}
+            transition={{ duration: 0.2 }}
+            className="flex gap-2 mt-3"
+          >
+            <button
+              onClick={(e) => { e.stopPropagation(); markReview(); }}
+              className="flex-1 py-1.5 rounded-xl text-[11px] font-semibold text-amber-600 transition-all active:scale-95"
+              style={{ background: "rgba(251,191,36,0.12)", border: "1px solid rgba(251,191,36,0.25)" }}
+            >
+              Review again
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); markKnown(); }}
+              className="flex-1 py-1.5 rounded-xl text-[11px] font-semibold text-emerald-600 transition-all active:scale-95"
+              style={{ background: "rgba(52,211,153,0.12)", border: "1px solid rgba(52,211,153,0.25)" }}
+            >
+              Got it ✓
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Navigation */}
+      <div className="flex items-center justify-between mt-3 px-1">
         <button
-          onClick={() => { setFlipped(false); setCurrent((c) => Math.max(c - 1, 0)); }}
+          onClick={(e) => { e.stopPropagation(); goPrev(); }}
           disabled={current === 0}
-          className="text-black/25 hover:text-black/60 disabled:opacity-20 transition-all"
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-black/25 hover:text-black/60 hover:bg-black/[0.04] disabled:opacity-20 transition-all"
         >
           <ChevronLeft className="w-4 h-4" />
         </button>
-        <span className="text-[10px] text-black/25 font-medium">
-          {current + 1} / {artifact.cards.length} · tap to flip
-        </span>
+
+        {/* Dot navigation */}
+        <div className="flex items-center gap-1">
+          {artifact.cards.slice(0, Math.min(total, 8)).map((_, i) => (
+            <button
+              key={i}
+              onClick={(e) => { e.stopPropagation(); setFlipped(false); setCurrent(i); }}
+              className="rounded-full transition-all"
+              style={{
+                width: i === current ? 16 : 6,
+                height: 6,
+                backgroundColor: known.has(i)
+                  ? "rgba(52,211,153,0.7)"
+                  : review.has(i)
+                    ? "rgba(251,191,36,0.6)"
+                    : i === current
+                      ? "rgba(124,58,237,0.7)"
+                      : "rgba(0,0,0,0.12)",
+              }}
+            />
+          ))}
+          {total > 8 && <span className="text-[9px] text-black/30 ml-0.5">+{total - 8}</span>}
+        </div>
+
         <button
-          onClick={() => { setFlipped(false); setCurrent((c) => Math.min(c + 1, artifact.cards.length - 1)); }}
-          disabled={current === artifact.cards.length - 1}
-          className="text-black/25 hover:text-black/60 disabled:opacity-20 transition-all"
+          onClick={(e) => { e.stopPropagation(); goNext(); }}
+          disabled={current === total - 1}
+          className="w-7 h-7 rounded-lg flex items-center justify-center text-black/25 hover:text-black/60 hover:bg-black/[0.04] disabled:opacity-20 transition-all"
         >
           <ChevronRight className="w-4 h-4" />
         </button>
       </div>
+
+      {/* Reset button when all done */}
+      {known.size === total && (
+        <motion.button
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          onClick={(e) => { e.stopPropagation(); setKnown(new Set()); setReview(new Set()); setCurrent(0); setFlipped(false); }}
+          className="w-full mt-2 py-1.5 rounded-xl text-[11px] font-semibold text-violet-600 flex items-center justify-center gap-1.5 transition-all"
+          style={{ background: "rgba(124,58,237,0.08)", border: "1px solid rgba(124,58,237,0.15)" }}
+        >
+          <RotateCcw className="w-3 h-3" />
+          Review all again
+        </motion.button>
+      )}
     </div>
   );
 }

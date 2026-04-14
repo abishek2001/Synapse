@@ -43,6 +43,8 @@ interface SessionState {
   tutorCollapsed: boolean;
   showSources: boolean;
   showCallFriend: boolean;
+  voiceMode: boolean;
+  liveCaption: string;
 
   setBridgeDone: (v: boolean) => void;
   initSession: (query: string, persona: string, files: UploadedFile[]) => void;
@@ -58,6 +60,8 @@ interface SessionState {
   setTutorCollapsed: (v: boolean) => void;
   setShowSources: (v: boolean) => void;
   setShowCallFriend: (v: boolean) => void;
+  setVoiceMode: (v: boolean) => void;
+  setLiveCaption: (text: string) => void;
   reset: () => void;
 }
 
@@ -80,6 +84,8 @@ const initialState = {
   tutorCollapsed: false,
   showSources: false,
   showCallFriend: false,
+  voiceMode: false,
+  liveCaption: "",
 };
 
 export const useSessionStore = create<SessionState>((set) => ({
@@ -109,7 +115,14 @@ export const useSessionStore = create<SessionState>((set) => ({
   setCanvasTitle: (canvasTitle) => set({ canvasTitle }),
 
   addMessage: (msg) =>
-    set((s) => ({ messages: [...s.messages, msg] })),
+    set((s) => {
+      // Don't add if exact same ID already exists
+      if (s.messages.some((m) => m.id === msg.id)) return s;
+      // Don't add if same role + content as the very last message (retry spam guard)
+      const last = s.messages[s.messages.length - 1];
+      if (last && last.role === msg.role && last.content === msg.content) return s;
+      return { messages: [...s.messages, msg] };
+    }),
 
   setBridgeDone: (bridgeDone) => set({ bridgeDone }),
   setStreaming: (isStreaming) => set({ isStreaming }),
@@ -121,5 +134,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   setTutorCollapsed: (tutorCollapsed) => set({ tutorCollapsed }),
   setShowSources: (showSources) => set({ showSources }),
   setShowCallFriend: (showCallFriend) => set({ showCallFriend }),
+  setVoiceMode: (voiceMode) => set({ voiceMode }),
+  setLiveCaption: (liveCaption) => set({ liveCaption }),
   reset: () => set(initialState),
 }));
