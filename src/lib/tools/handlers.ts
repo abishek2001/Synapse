@@ -103,10 +103,11 @@ Requirements:
 function handleGenerateGraph(
   args: Record<string, unknown>,
 ): { artifact: GraphArtifact; result: string } {
-  const { title, graph_type, expressions, x_range, y_range, x_label, y_label } = args as {
+  const { title, graph_type, series, variables, x_range, y_range, x_label, y_label } = args as {
     title: string;
     graph_type: GraphArtifact["graph_type"];
-    expressions: GraphArtifact["expressions"];
+    series: GraphArtifact["series"];
+    variables?: GraphArtifact["variables"];
     x_range: [number, number];
     y_range?: [number, number];
     x_label?: string;
@@ -119,7 +120,8 @@ function handleGenerateGraph(
     title,
     status: "pending",
     graph_type,
-    expressions,
+    series,
+    variables,
     x_range,
     y_range,
     x_label,
@@ -128,7 +130,7 @@ function handleGenerateGraph(
 
   return {
     artifact,
-    result: `[Graph "${title}" generated and placed on canvas — ${expressions.length} expression(s) plotted]`,
+    result: `[Graph "${title}" generated and placed on canvas — ${series.length} series plotted]`,
   };
 }
 

@@ -34,7 +34,7 @@ export const CANVAS_TOOLS: ChatCompletionTool[] = [
     function: {
       name: "canvas_generate_graph",
       description:
-        "Generate a mathematical graph or plot on the canvas. Use for functions, data plots, distributions, curves. Outputs an interactive SVG graph.",
+        "Generate a mathematical graph or plot on the canvas. Supports many chart types including interactive parametric graphs with slider-controlled variables. Use for functions, data plots, distributions, and exploratory math.",
       parameters: {
         type: "object",
         properties: {
@@ -44,36 +44,67 @@ export const CANVAS_TOOLS: ChatCompletionTool[] = [
           },
           graph_type: {
             type: "string",
-            enum: ["line", "scatter", "bar", "parametric", "polar"],
-            description: "Type of graph to render",
+            enum: ["line", "area", "scatter", "bar", "pie", "polar", "parametric", "box", "violin", "density", "trend", "forecast"],
+            description: "Type of graph. line=connected curve, area=filled curve, scatter=dots, bar=vertical bars, pie=pie chart, polar=r=f(θ), parametric=x(t)/y(t), box=box-and-whisker, violin=mirrored KDE, density=KDE probability curves (x=value, y=density), trend=scatter+regression, forecast=solid past + dashed future",
           },
-          expressions: {
+          series: {
             type: "array",
             items: {
               type: "object",
               properties: {
-                fn: { type: "string", description: "Math expression (JS syntax), e.g. 'Math.sin(x)', 'x*x'" },
-                label: { type: "string", description: "Legend label" },
-                color: { type: "string", description: "CSS color, e.g. '#7c5cfc'" },
+                fn: { type: "string", description: "Math expression in JS syntax. Variables in scope: x (or t for parametric), Math, and any variable names from the 'variables' array. E.g. 'A * Math.sin(freq * x)'" },
+                fn_x: { type: "string", description: "Parametric x(t) expression — only for graph_type 'parametric'. If omitted, x(t)=t." },
+                data: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      x: { type: "number", description: "Category index (bar/pie) or data value (box/violin/scatter)" },
+                      y: { type: "number", description: "Value" },
+                    },
+                    required: ["x", "y"],
+                  },
+                  description: "Discrete data points — required for bar, pie, box, violin; optional for scatter",
+                },
+                label: { type: "string", description: "Legend label / series name" },
+                color: { type: "string", description: "CSS color, e.g. '#7c3aed'" },
+                style: { type: "string", enum: ["solid", "dashed", "dotted"], description: "Line style (line/area types only)" },
               },
-              required: ["fn", "label"],
+              required: ["label"],
             },
-            description: "Functions/data series to plot",
+            description: "Data series to plot. Each series is one curve, bar group, pie slice, etc.",
+          },
+          variables: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string", description: "Variable name used in fn expressions, e.g. 'A', 'freq'" },
+                label: { type: "string", description: "Human-readable label shown on the slider, e.g. 'Amplitude'" },
+                min: { type: "number", description: "Slider minimum value" },
+                max: { type: "number", description: "Slider maximum value" },
+                step: { type: "number", description: "Slider step size. When step_unit is 'π', this is multiples of π (e.g. 0.25 = π/4 per step)" },
+                step_unit: { type: "string", enum: ["π"], description: "Set to 'π' for trig-friendly sliders where the actual value passed to fn = slider_value × π. Great for sin/cos/polar plots." },
+                default: { type: "number", description: "Initial slider value" },
+              },
+              required: ["name", "label", "min", "max", "step", "default"],
+            },
+            description: "Interactive slider variables. When provided, the graph renders with sliders that modify the math expression in real time.",
           },
           x_range: {
             type: "array",
             items: { type: "number" },
-            description: "[min, max] for x-axis",
+            description: "[min, max] for x-axis. For polar, this is the θ range in radians (e.g. [0, 6.283]). For parametric, this is the t range.",
           },
           y_range: {
             type: "array",
             items: { type: "number" },
-            description: "[min, max] for y-axis (auto if omitted)",
+            description: "[min, max] for y-axis (auto-computed if omitted)",
           },
           x_label: { type: "string", description: "X-axis label" },
           y_label: { type: "string", description: "Y-axis label" },
         },
-        required: ["title", "graph_type", "expressions", "x_range"],
+        required: ["title", "graph_type", "series", "x_range"],
       },
     },
   },

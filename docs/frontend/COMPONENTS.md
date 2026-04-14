@@ -60,6 +60,18 @@ app/workspace/page.tsx (Suspense wrapper)
 - **Exit**: `AnimatePresence` with `exit={{ opacity:0, scale:0.98 }}`
 - **Arrow animation**: uses Framer Motion `pathLength` (0→1) instead of manual `strokeDasharray`/`strokeDashoffset` to ensure correct length calculation
 
+### `GraphCard` (`src/components/canvas/GraphCard.tsx`)
+- **Props**: `artifact: GraphArtifact`
+- **Chart types**: 12 types dispatched by `artifact.graph_type` — line, area, scatter, trend, forecast, parametric, bar, pie, polar, box, violin, density
+- **Sub-renderers** (in `src/components/canvas/graph/`):
+  - `LineChart.tsx` — line/area/scatter/trend/forecast/parametric families (canvas hook)
+  - `BarChart.tsx` — grouped vertical bars (canvas hook)
+  - `PieChart.tsx` — pie/donut (canvas hook)
+  - `PolarChart.tsx` — polar r=f(θ) (canvas hook)
+  - `DistributionChart.tsx` — box-and-whisker, violin KDE, and density KDE (canvas hook)
+- **Slider bank**: rendered when `artifact.variables` is set. Each `GraphVariable` maps to a range input. π-increment sliders (`step_unit: "π"`) display values as π fractions (π/4, π/2, π, ...) and pass `value × Math.PI` to expressions.
+- **Tooltip**: crosshair + floating tooltip on line-family charts only
+
 ### `ArtifactCanvas` (`src/components/workspace/ArtifactCanvas.tsx`)
 - **Reads**: `useCanvasStore` (elements, groups, connections, toasts, selectedElementIds), `useUIStore`
 - **State**: `tool`, `canvasScale`, `hoveredGroupId`

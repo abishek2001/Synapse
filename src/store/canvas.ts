@@ -270,12 +270,25 @@ function buildMockCanvas(topic: string): {
 
   // 6 groups — one per visual style, each paired with a complementary artifact type
   const groups: CanvasGroup[] = [
-    { id: "grp-0", name: `Introduction to ${t}`, color: GROUP_COLORS[0], orderIndex: 0, createdAt: Date.now() },
-    { id: "grp-1", name: "Math & Equations",      color: GROUP_COLORS[1], orderIndex: 1, createdAt: Date.now() + 1 },
-    { id: "grp-2", name: "Timeline",              color: GROUP_COLORS[2], orderIndex: 2, createdAt: Date.now() + 2 },
-    { id: "grp-3", name: "Comparison",            color: GROUP_COLORS[3], orderIndex: 3, createdAt: Date.now() + 3 },
-    { id: "grp-4", name: "System Diagram",        color: GROUP_COLORS[4], orderIndex: 4, createdAt: Date.now() + 4 },
-    { id: "grp-5", name: "Hierarchy",             color: GROUP_COLORS[0], orderIndex: 5, createdAt: Date.now() + 5 },
+    { id: "grp-0",  name: `Introduction to ${t}`, color: GROUP_COLORS[0], orderIndex: 0,  createdAt: Date.now() },
+    { id: "grp-1",  name: "Math & Equations",      color: GROUP_COLORS[1], orderIndex: 1,  createdAt: Date.now() + 1 },
+    { id: "grp-2",  name: "Timeline",              color: GROUP_COLORS[2], orderIndex: 2,  createdAt: Date.now() + 2 },
+    { id: "grp-3",  name: "Comparison",            color: GROUP_COLORS[3], orderIndex: 3,  createdAt: Date.now() + 3 },
+    { id: "grp-4",  name: "System Diagram",        color: GROUP_COLORS[4], orderIndex: 4,  createdAt: Date.now() + 4 },
+    { id: "grp-5",  name: "Hierarchy",             color: GROUP_COLORS[0], orderIndex: 5,  createdAt: Date.now() + 5 },
+    // Row 2: one group per chart type
+    { id: "grp-g0",  name: "Line",        color: GROUP_COLORS[1], orderIndex: 6,  createdAt: Date.now() + 6 },
+    { id: "grp-g1",  name: "Area",        color: GROUP_COLORS[2], orderIndex: 7,  createdAt: Date.now() + 7 },
+    { id: "grp-g2",  name: "Scatter",     color: GROUP_COLORS[3], orderIndex: 8,  createdAt: Date.now() + 8 },
+    { id: "grp-g3",  name: "Trend",       color: GROUP_COLORS[4], orderIndex: 9,  createdAt: Date.now() + 9 },
+    { id: "grp-g4",  name: "Forecast",    color: GROUP_COLORS[0], orderIndex: 10, createdAt: Date.now() + 10 },
+    { id: "grp-g5",  name: "Parametric",  color: GROUP_COLORS[1], orderIndex: 11, createdAt: Date.now() + 11 },
+    { id: "grp-g6",  name: "Bar",         color: GROUP_COLORS[2], orderIndex: 12, createdAt: Date.now() + 12 },
+    { id: "grp-g7",  name: "Pie",         color: GROUP_COLORS[3], orderIndex: 13, createdAt: Date.now() + 13 },
+    { id: "grp-g8",  name: "Polar",       color: GROUP_COLORS[4], orderIndex: 14, createdAt: Date.now() + 14 },
+    { id: "grp-g9",  name: "Box",         color: GROUP_COLORS[0], orderIndex: 15, createdAt: Date.now() + 15 },
+    { id: "grp-g10", name: "Violin",      color: GROUP_COLORS[1], orderIndex: 16, createdAt: Date.now() + 16 },
+    { id: "grp-g11", name: "Density",     color: GROUP_COLORS[2], orderIndex: 17, createdAt: Date.now() + 17 },
   ];
 
   // ─── Artifacts: one of each type, all 6 visual styles ───────────────────
@@ -316,13 +329,17 @@ function buildMockCanvas(topic: string): {
   };
 
   const artGraph: GraphArtifact = {
-    id: "a-gr", type: "graph", title: "Behavior Over Time", status: "rendered",
+    id: "a-gr", type: "graph", title: "Trig Explorer", status: "rendered",
     graph_type: "line",
-    expressions: [
-      { fn: "Math.sin(x)", label: "Primary", color: "#7c3aed" },
-      { fn: "Math.sin(x) * Math.exp(-x * 0.2)", label: "Damped", color: "#0ea5e9" },
+    series: [
+      { fn: "A * Math.sin(freq * x)", label: "sin", color: "#7c3aed" },
+      { fn: "A * Math.cos(freq * x)", label: "cos", color: "#0ea5e9", style: "dashed" },
     ],
-    x_range: [-1, 12], x_label: "Time", y_label: "Amplitude",
+    variables: [
+      { name: "A", label: "Amplitude", min: 0.5, max: 3, step: 0.5, default: 1 },
+      { name: "freq", label: "Frequency", min: 0.25, max: 4, step: 0.25, step_unit: "π", default: 1 },
+    ],
+    x_range: [-6.28, 6.28], x_label: "x", y_label: "y",
   };
 
   // grp-2: timeline visual + graph (comparative)
@@ -352,8 +369,8 @@ function buildMockCanvas(topic: string): {
 
   const artGraph2: GraphArtifact = {
     id: "a-gr2", type: "graph", title: "Comparative Growth", status: "rendered",
-    graph_type: "line",
-    expressions: [
+    graph_type: "area",
+    series: [
       { fn: "x * x * 0.5",          label: "Quadratic",   color: "#7c3aed" },
       { fn: "Math.log(x + 1) * 30", label: "Logarithmic", color: "#10b981" },
       { fn: "x * 6",                label: "Linear",      color: "#0ea5e9" },
@@ -527,6 +544,134 @@ draw();
     </svg>`,
   };
 
+  // ─── Row 2: one of each graph type ───────────────────────────────────────
+
+  const scatterPts = [1,2,3,4,5,6,7,8,9,10].map(x => ({
+    x, y: x * 0.7 + 1 + (Math.sin(x * 17) * 0.9),
+  }));
+
+  const grLine: GraphArtifact = {
+    id: "a-g-line", type: "graph", title: "Line", status: "rendered",
+    graph_type: "line",
+    series: [
+      { fn: "Math.sin(x)", label: "sin(x)", color: "#7c3aed" },
+      { fn: "Math.cos(x)", label: "cos(x)", color: "#0ea5e9", style: "dashed" },
+    ],
+    x_range: [-6.28, 6.28],
+  };
+
+  const grArea: GraphArtifact = {
+    id: "a-g-area", type: "graph", title: "Area", status: "rendered",
+    graph_type: "area",
+    series: [
+      { fn: "Math.exp(-x*0.3)*Math.sin(x)", label: "damped", color: "#7c3aed" },
+    ],
+    x_range: [0, 10],
+  };
+
+  const grScatter: GraphArtifact = {
+    id: "a-g-scatter", type: "graph", title: "Scatter", status: "rendered",
+    graph_type: "scatter",
+    series: [{ data: scatterPts, label: "observations", color: "#10b981" }],
+    x_range: [0, 11],
+  };
+
+  const grTrend: GraphArtifact = {
+    id: "a-g-trend", type: "graph", title: "Trend", status: "rendered",
+    graph_type: "trend",
+    series: [{ data: scatterPts, label: "data + fit", color: "#f97316" }],
+    x_range: [0, 11],
+  };
+
+  const grForecast: GraphArtifact = {
+    id: "a-g-forecast", type: "graph", title: "Forecast", status: "rendered",
+    graph_type: "forecast",
+    series: [
+      { fn: "Math.pow(1.18, x) * 100", label: "revenue", color: "#7c3aed" },
+    ],
+    x_range: [0, 12], x_label: "Quarter",
+  };
+
+  const grParametric: GraphArtifact = {
+    id: "a-g-param", type: "graph", title: "Parametric", status: "rendered",
+    graph_type: "parametric",
+    series: [
+      { fn: "Math.sin(2*x + 0.5)", fn_x: "Math.sin(3*x)", label: "Lissajous", color: "#ec4899" },
+    ],
+    x_range: [0, 6.28],
+  };
+
+  const grBar: GraphArtifact = {
+    id: "a-g-bar", type: "graph", title: "Bar", status: "rendered",
+    graph_type: "bar",
+    series: [
+      { data: [{x:1,y:28},{x:2,y:45},{x:3,y:62},{x:4,y:38},{x:5,y:51}], label: "Group A", color: "#7c3aed" },
+      { data: [{x:1,y:32},{x:2,y:38},{x:3,y:48},{x:4,y:55},{x:5,y:40}], label: "Group B", color: "#0ea5e9" },
+    ],
+    x_range: [1, 5],
+  };
+
+  const grPie: GraphArtifact = {
+    id: "a-g-pie", type: "graph", title: "Pie", status: "rendered",
+    graph_type: "pie",
+    series: [
+      { data: [{x:0,y:35}], label: "Alpha",   color: "#7c3aed" },
+      { data: [{x:0,y:25}], label: "Beta",    color: "#0ea5e9" },
+      { data: [{x:0,y:20}], label: "Gamma",   color: "#10b981" },
+      { data: [{x:0,y:12}], label: "Delta",   color: "#f97316" },
+      { data: [{x:0,y: 8}], label: "Epsilon", color: "#ec4899" },
+    ],
+    x_range: [0, 1],
+  };
+
+  const grPolar: GraphArtifact = {
+    id: "a-g-polar", type: "graph", title: "Polar", status: "rendered",
+    graph_type: "polar",
+    series: [{ fn: "Math.cos(k*x)", label: "rose r=cos(kθ)", color: "#7c3aed" }],
+    x_range: [0, 6.28],
+    variables: [
+      { name: "k", label: "Petals", min: 1, max: 7, step: 1, default: 3 },
+    ],
+  };
+
+  const boxData = (center: number, spread: number, n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      x: 0,
+      y: center + (Math.sin(i * 137.5) * spread),
+    }));
+
+  const grBox: GraphArtifact = {
+    id: "a-g-box", type: "graph", title: "Box", status: "rendered",
+    graph_type: "box",
+    series: [
+      { data: boxData(70, 10, 16), label: "Group A", color: "#7c3aed" },
+      { data: boxData(55, 18, 16), label: "Group B", color: "#0ea5e9" },
+      { data: boxData(80,  6, 16), label: "Group C", color: "#10b981" },
+    ],
+    x_range: [0, 3],
+  };
+
+  const grViolin: GraphArtifact = {
+    id: "a-g-violin", type: "graph", title: "Violin", status: "rendered",
+    graph_type: "violin",
+    series: [
+      { data: boxData(65, 12, 30), label: "Before", color: "#7c3aed" },
+      { data: boxData(78,  8, 30), label: "After",  color: "#10b981" },
+    ],
+    x_range: [0, 2],
+  };
+
+  const grDensity: GraphArtifact = {
+    id: "a-g-density", type: "graph", title: "Density", status: "rendered",
+    graph_type: "density",
+    series: [
+      { data: boxData(60, 10, 40), label: "Control",   color: "#7c3aed" },
+      { data: boxData(72,  8, 40), label: "Treatment", color: "#10b981" },
+      { data: boxData(55, 16, 40), label: "Placebo",   color: "#f97316" },
+    ],
+    x_range: [20, 110],
+  };
+
   // ─── Layout ───────────────────────────────────────────────────────────────
   // 6 groups × 2 artifact elements + 1 standalone text + 1 standalone sticky
 
@@ -577,15 +722,66 @@ draw();
     sticky: { content: "Double-click anywhere on the canvas to ask a doubt!", color: "#fef08a" },
   };
 
+  // ─── Row 2: chart gallery ─────────────────────────────────────────────────
+  const ROW2_Y = CANVAS_START_Y + 620;
+  const GW = ELEM_WIDTHS.graph; // 380
+  const GGAP = 64; // gap between chart groups
+  const chartArtifacts: [string, string, GraphArtifact][] = [
+    ["el-g0",  "grp-g0",  grLine],
+    ["el-g1",  "grp-g1",  grArea],
+    ["el-g2",  "grp-g2",  grScatter],
+    ["el-g3",  "grp-g3",  grTrend],
+    ["el-g4",  "grp-g4",  grForecast],
+    ["el-g5",  "grp-g5",  grParametric],
+    ["el-g6",  "grp-g6",  grBar],
+    ["el-g7",  "grp-g7",  grPie],
+    ["el-g8",  "grp-g8",  grPolar],
+    ["el-g9",  "grp-g9",  grBox],
+    ["el-g10", "grp-g10", grViolin],
+    ["el-g11", "grp-g11", grDensity],
+  ];
+  let cursor2 = 80;
+  const row2Els: CanvasElement[] = chartArtifacts.map(([elId, grpId, art], i) => {
+    const el: CanvasElement = {
+      id: elId, type: "graph",
+      x: cursor2, y: ROW2_Y, w: GW,
+      groupId: grpId, zIndex: 100 + i,
+      createdAt: Date.now() + 100 + i,
+      artifact: art,
+    };
+    cursor2 += GW + GGAP;
+    return el;
+  });
+
+  // Row 2 label
+  const elRow2Label: CanvasElement = {
+    id: "el-row2-label", type: "text",
+    x: 80, y: ROW2_Y - 60, w: 480,
+    zIndex: 0, createdAt: Date.now() + 99,
+    text: { content: "Chart Gallery", style: "heading" },
+  };
+
   return {
-    elements: [...els0, ...els1, ...els2, ...els3, ...els4, ...els5, elText, elSticky],
+    elements: [...els0, ...els1, ...els2, ...els3, ...els4, ...els5, elText, elSticky, elRow2Label, ...row2Els],
     groups,
     connections: [
-      { id: "c-01", fromModuleId: "grp-0", toModuleId: "grp-1" },
-      { id: "c-12", fromModuleId: "grp-1", toModuleId: "grp-2" },
-      { id: "c-23", fromModuleId: "grp-2", toModuleId: "grp-3" },
-      { id: "c-34", fromModuleId: "grp-3", toModuleId: "grp-4" },
-      { id: "c-45", fromModuleId: "grp-4", toModuleId: "grp-5" },
+      { id: "c-01",  fromModuleId: "grp-0",  toModuleId: "grp-1" },
+      { id: "c-12",  fromModuleId: "grp-1",  toModuleId: "grp-2" },
+      { id: "c-23",  fromModuleId: "grp-2",  toModuleId: "grp-3" },
+      { id: "c-34",  fromModuleId: "grp-3",  toModuleId: "grp-4" },
+      { id: "c-45",  fromModuleId: "grp-4",  toModuleId: "grp-5" },
+      // Row 2 chain
+      { id: "c-g01", fromModuleId: "grp-g0",  toModuleId: "grp-g1" },
+      { id: "c-g12", fromModuleId: "grp-g1",  toModuleId: "grp-g2" },
+      { id: "c-g23", fromModuleId: "grp-g2",  toModuleId: "grp-g3" },
+      { id: "c-g34", fromModuleId: "grp-g3",  toModuleId: "grp-g4" },
+      { id: "c-g45", fromModuleId: "grp-g4",  toModuleId: "grp-g5" },
+      { id: "c-g56", fromModuleId: "grp-g5",  toModuleId: "grp-g6" },
+      { id: "c-g67", fromModuleId: "grp-g6",  toModuleId: "grp-g7" },
+      { id: "c-g78", fromModuleId: "grp-g7",  toModuleId: "grp-g8" },
+      { id: "c-g89", fromModuleId: "grp-g8",  toModuleId: "grp-g9" },
+      { id: "c-g9a", fromModuleId: "grp-g9",  toModuleId: "grp-g10" },
+      { id: "c-gab", fromModuleId: "grp-g10", toModuleId: "grp-g11" },
     ],
   };
 }

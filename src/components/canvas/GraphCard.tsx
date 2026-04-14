@@ -1,221 +1,172 @@
 "use client";
 
-import type { GraphArtifact } from "@/lib/tools/types";
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useState, useCallback } from "react";
+import type { GraphArtifact, GraphVariable } from "@/lib/tools/types";
+import { useLineChart, W, PAD } from "./graph/LineChart";
+import { useBarChart } from "./graph/BarChart";
+import { usePieChart } from "./graph/PieChart";
+import { usePolarChart } from "./graph/PolarChart";
+import { useDistributionChart } from "./graph/DistributionChart";
 
-const COLORS = ["#7c3aed", "#0ea5e9", "#10b981", "#f97316", "#ec4899", "#eab308"];
-const W = 360, H = 220, PAD = 42;
+// ─── π fraction display ───────────────────────────────────────────────────────
 
-function evalExpr(fn: string, x: number): number {
-  // eslint-disable-next-line no-new-func
-  return new Function("x", "Math", `return ${fn}`)(x, Math);
+const PI_FRACS: [number, number][] = [
+  [0,1],[1,8],[1,6],[1,4],[1,3],[1,2],[2,3],[3,4],[5,6],[7,8],
+  [1,1],[5,4],[4,3],[3,2],[5,3],[7,4],[11,6],[15,8],[2,1],
+  [5,2],[3,1],[7,2],[4,1],
+];
+
+function formatPiValue(mult: number): string {
+  if (mult === 0) return "0";
+  for (const [n, d] of PI_FRACS) {
+    if (n > 0 && Math.abs(mult - n / d) < 0.001) {
+      if (d === 1) return n === 1 ? "π" : `${n}π`;
+      if (n === 1) return `π/${d}`;
+      return `${n}π/${d}`;
+    }
+  }
+  return `${mult.toFixed(2)}π`;
 }
 
+// ─── Slider component ─────────────────────────────────────────────────────────
+
+function VarSlider({
+  variable,
+  value,
+  onChange,
+}: {
+  variable: GraphVariable;
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  const isPi = variable.step_unit === "π";
+  const displayVal = isPi ? formatPiValue(value) : value.toFixed(value % 1 === 0 ? 0 : 2);
+
+  const steps = Math.round((variable.max - variable.min) / variable.step);
+
+  return (
+    <div className="flex items-center gap-2 min-w-0">
+      <span className="text-[10px] text-black/40 shrink-0 w-[60px] truncate">{variable.label}</span>
+      <input
+        type="range"
+        min={variable.min}
+        max={variable.max}
+        step={variable.step}
+        value={value}
+        onChange={e => onChange(parseFloat(e.target.value))}
+        className="flex-1 h-1 accent-violet-600 cursor-pointer"
+        style={{ minWidth: 60 }}
+        aria-label={variable.label}
+        aria-valuemin={variable.min}
+        aria-valuemax={variable.max}
+        aria-valuenow={value}
+      />
+      <span
+        className="text-[10px] font-mono text-violet-600 shrink-0 text-right"
+        style={{ minWidth: isPi ? 36 : 28 }}
+      >
+        {displayVal}
+      </span>
+      <span className="text-[10px] text-black/25 shrink-0">
+        / {steps} steps
+      </span>
+    </div>
+  );
+}
+
+// ─── Main dispatcher ──────────────────────────────────────────────────────────
+
 export default function GraphCard({ artifact }: { artifact: GraphArtifact }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; values: { label: string; y: number; color: string }[] } | null>(null);
-  const rangesRef = useRef<{ xMin: number; xMax: number; yMin: number; yMax: number }>({ xMin: 0, xMax: 1, yMin: 0, yMax: 1 });
+  const [vars, setVars] = useState<Record<string, number>>(() =>
+    Object.fromEntries((artifact.variables ?? []).map(v => [v.name, v.default]))
+  );
+  const [tooltip, setTooltip] = useState<{
+    x: number; y: number; values: { label: string; y: number; color: string }[];
+  } | null>(null);
+  const [tooltipX, setTooltipX] = useState<number | undefined>(undefined);
 
-  const draw = useCallback((highlightX?: number) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+  const setVar = useCallback((name: string, val: number) => {
+    setVars(prev => ({ ...prev, [name]: val }));
+    setTooltip(null);
+  }, []);
 
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = W * dpr;
-    canvas.height = H * dpr;
-    canvas.style.width = `${W}px`;
-    canvas.style.height = `${H}px`;
-    ctx.scale(dpr, dpr);
+  const onTooltip = useCallback((t: typeof tooltip) => setTooltip(t), []);
 
-    const [xMin, xMax] = artifact.x_range;
-    let yMin = artifact.y_range?.[0] ?? Infinity;
-    let yMax = artifact.y_range?.[1] ?? -Infinity;
+  const graphType = artifact.graph_type;
+  const isLineFam = graphType === "line" || graphType === "area" || graphType === "scatter" || graphType === "trend" || graphType === "forecast" || graphType === "parametric";
 
-    if (!artifact.y_range) {
-      for (const expr of artifact.expressions) {
-        for (let px = 0; px <= 100; px++) {
-          const x = xMin + (px / 100) * (xMax - xMin);
-          try {
-            const y = evalExpr(expr.fn, x);
-            if (isFinite(y)) { yMin = Math.min(yMin, y); yMax = Math.max(yMax, y); }
-          } catch { /* skip */ }
-        }
-      }
-      const pad = (yMax - yMin) * 0.12 || 1;
-      yMin -= pad; yMax += pad;
-    }
-
-    rangesRef.current = { xMin, xMax, yMin, yMax };
-
-    const plotW = W - 2 * PAD;
-    const plotH = H - 2 * PAD;
-    const toX = (x: number) => PAD + ((x - xMin) / (xMax - xMin)) * plotW;
-    const toY = (y: number) => PAD + plotH - ((y - yMin) / (yMax - yMin)) * plotH;
-
-    // Background — transparent so it sits directly on the whiteboard
-    ctx.clearRect(0, 0, W, H);
-
-    // Grid
-    ctx.strokeStyle = "rgba(0,0,0,0.05)";
-    ctx.lineWidth = 0.5;
-    for (let i = 0; i <= 5; i++) {
-      const gx = PAD + (i / 5) * plotW;
-      ctx.beginPath(); ctx.moveTo(gx, PAD); ctx.lineTo(gx, PAD + plotH); ctx.stroke();
-      const gy = PAD + (i / 5) * plotH;
-      ctx.beginPath(); ctx.moveTo(PAD, gy); ctx.lineTo(PAD + plotW, gy); ctx.stroke();
-    }
-
-    // Axes
-    ctx.strokeStyle = "rgba(0,0,0,0.15)";
-    ctx.lineWidth = 1;
-    if (yMin <= 0 && yMax >= 0) {
-      const y0 = toY(0);
-      ctx.beginPath(); ctx.moveTo(PAD, y0); ctx.lineTo(PAD + plotW, y0); ctx.stroke();
-    }
-    if (xMin <= 0 && xMax >= 0) {
-      const x0 = toX(0);
-      ctx.beginPath(); ctx.moveTo(x0, PAD); ctx.lineTo(x0, PAD + plotH); ctx.stroke();
-    }
-
-    // Axis labels
-    ctx.fillStyle = "rgba(0,0,0,0.3)";
-    ctx.font = "10px Inter, system-ui, sans-serif";
-    ctx.textAlign = "center";
-    for (let i = 0; i <= 4; i++) {
-      const val = xMin + (i / 4) * (xMax - xMin);
-      ctx.fillText(val.toFixed(val % 1 ? 1 : 0), PAD + (i / 4) * plotW, H - 6);
-    }
-    for (let i = 0; i <= 4; i++) {
-      const val = yMin + (i / 4) * (yMax - yMin);
-      ctx.textAlign = "right";
-      ctx.fillText(val.toFixed(val % 1 ? 1 : 0), PAD - 5, PAD + plotH - (i / 4) * plotH + 3);
-    }
-    if (artifact.x_label) {
-      ctx.textAlign = "center";
-      ctx.fillText(artifact.x_label, W / 2, H - 1);
-    }
-
-    // Curves
-    artifact.expressions.forEach((expr, idx) => {
-      const color = expr.color || COLORS[idx % COLORS.length];
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.beginPath();
-      let started = false;
-      const steps = 400;
-      for (let i = 0; i <= steps; i++) {
-        const x = xMin + (i / steps) * (xMax - xMin);
-        try {
-          const y = evalExpr(expr.fn, x);
-          if (!isFinite(y)) { started = false; continue; }
-          const cx = toX(x), cy = toY(y);
-          if (cy < -10 || cy > H + 10) { started = false; continue; }
-          if (!started) { ctx.moveTo(cx, cy); started = true; }
-          else ctx.lineTo(cx, cy);
-        } catch { started = false; }
-      }
-      ctx.stroke();
-    });
-
-    // Legend
-    let legendY = PAD + 12;
-    ctx.textAlign = "left";
-    artifact.expressions.forEach((expr, idx) => {
-      const color = expr.color || COLORS[idx % COLORS.length];
-      ctx.fillStyle = color;
-      ctx.fillRect(PAD + 8, legendY - 4, 12, 2.5);
-      ctx.fillStyle = "rgba(0,0,0,0.5)";
-      ctx.font = "10px Inter, system-ui, sans-serif";
-      ctx.fillText(expr.label, PAD + 24, legendY);
-      legendY += 14;
-    });
-
-    // Hover crosshair
-    if (highlightX !== undefined) {
-      const screenX = toX(highlightX);
-      ctx.strokeStyle = "rgba(124,58,237,0.35)";
-      ctx.lineWidth = 1;
-      ctx.setLineDash([4, 3]);
-      ctx.beginPath(); ctx.moveTo(screenX, PAD); ctx.lineTo(screenX, PAD + plotH); ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Dots on each curve
-      artifact.expressions.forEach((expr, idx) => {
-        const color = expr.color || COLORS[idx % COLORS.length];
-        try {
-          const y = evalExpr(expr.fn, highlightX);
-          if (!isFinite(y)) return;
-          const cy = toY(y);
-          if (cy < PAD - 8 || cy > PAD + plotH + 8) return;
-          ctx.beginPath();
-          ctx.arc(screenX, cy, 4, 0, Math.PI * 2);
-          ctx.fillStyle = "white";
-          ctx.fill();
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 2;
-          ctx.stroke();
-        } catch { /* skip */ }
-      });
-    }
-  }, [artifact]);
-
-  useEffect(() => { draw(); }, [draw]);
+  // All chart renderers are hooked unconditionally (hooks rules) — only the active one renders
+  const { canvasRef: lineRef, rangesRef } = useLineChart({ artifact, vars, onTooltip, tooltipX });
+  const barRef = useBarChart(artifact, vars);
+  const pieRef = usePieChart(artifact);
+  const polarRef = usePolarChart(artifact, vars);
+  const distRef = useDistributionChart(artifact);
 
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
+    const canvas = lineRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const px = e.clientX - rect.left;
-    const { xMin, xMax, yMin, yMax } = rangesRef.current;
-
+    const { xMin, xMax } = rangesRef.current;
     const plotW = W - 2 * PAD;
-    if (px < PAD || px > PAD + plotW) { setTooltip(null); draw(); return; }
-
+    if (px < PAD || px > PAD + plotW) { setTooltipX(undefined); setTooltip(null); return; }
     const worldX = xMin + ((px - PAD) / plotW) * (xMax - xMin);
-    draw(worldX);
-
-    const plotH = H - 2 * PAD;
-    const values = artifact.expressions.map((expr, idx) => {
-      try {
-        const y = evalExpr(expr.fn, worldX);
-        if (!isFinite(y)) return null;
-        // Clamp to visible range
-        if (y < yMin * 2 || y > yMax * 2) return null;
-        return { label: expr.label, y, color: expr.color || COLORS[idx % COLORS.length] };
-      } catch { return null; }
-    }).filter(Boolean) as { label: string; y: number; color: string }[];
-
-    if (values.length > 0) {
-      // Position tooltip above cursor
-      const tooltipX = Math.min(px, W - 120);
-      const firstY = values[0].y;
-      const screenY = PAD + plotH - ((firstY - yMin) / (yMax - yMin)) * plotH;
-      setTooltip({ x: tooltipX, y: Math.max(screenY - 60, 4), values });
-    } else {
-      setTooltip(null);
-    }
-  }, [artifact, draw]);
+    setTooltipX(worldX);
+  }, [lineRef, rangesRef]);
 
   const handleMouseLeave = useCallback(() => {
+    setTooltipX(undefined);
     setTooltip(null);
-    draw();
-  }, [draw]);
+  }, []);
+
+  const hasVars = (artifact.variables?.length ?? 0) > 0;
 
   return (
-    <div className="w-full space-y-2">
+    <div className="w-full space-y-1">
       <h3 className="text-[13px] font-semibold text-black/65">{artifact.title}</h3>
+
+      {/* Slider bank */}
+      {hasVars && (
+        <div
+          className="space-y-1.5 rounded-lg px-3 py-2"
+          style={{ background: "rgba(124,58,237,0.04)", border: "1px solid rgba(124,58,237,0.1)" }}
+        >
+          {(artifact.variables ?? []).map(v => (
+            <VarSlider
+              key={v.name}
+              variable={v}
+              value={vars[v.name] ?? v.default}
+              onChange={val => setVar(v.name, val)}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Chart canvas */}
       <div className="relative" style={{ width: W, maxWidth: "100%" }}>
-        <canvas
-          ref={canvasRef}
-          style={{ display: "block", width: "100%", cursor: "crosshair" }}
-          onMouseMove={handleMouseMove}
-          onMouseLeave={handleMouseLeave}
-        />
-        {tooltip && (
+        {isLineFam && (
+          <canvas
+            ref={lineRef}
+            style={{ display: "block", width: "100%", cursor: "crosshair" }}
+            onMouseMove={handleMouseMove}
+            onMouseLeave={handleMouseLeave}
+          />
+        )}
+        {graphType === "bar" && (
+          <canvas ref={barRef} style={{ display: "block", width: "100%" }} />
+        )}
+        {graphType === "pie" && (
+          <canvas ref={pieRef} style={{ display: "block", width: "100%" }} />
+        )}
+        {graphType === "polar" && (
+          <canvas ref={polarRef} style={{ display: "block", width: "100%" }} />
+        )}
+        {(graphType === "box" || graphType === "violin" || graphType === "density") && (
+          <canvas ref={distRef} style={{ display: "block", width: "100%" }} />
+        )}
+
+        {/* Hover tooltip (line family only) */}
+        {tooltip && isLineFam && (
           <div
             className="absolute pointer-events-none rounded-lg px-2.5 py-1.5 shadow-lg"
             style={{
@@ -227,7 +178,7 @@ export default function GraphCard({ artifact }: { artifact: GraphArtifact }) {
               zIndex: 10,
             }}
           >
-            {tooltip.values.map((v) => (
+            {tooltip.values.map(v => (
               <div key={v.label} className="flex items-center gap-1.5">
                 <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: v.color }} />
                 <span className="text-[10px] text-white/60">{v.label}:</span>

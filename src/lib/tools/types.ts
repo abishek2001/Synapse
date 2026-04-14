@@ -15,16 +15,44 @@ export interface VisualArtifact extends BaseArtifact {
   svgContent?: string;
 }
 
-export interface GraphExpression {
-  fn: string;
+export interface GraphVariable {
+  name: string;       // variable name used in fn expressions, e.g. "A", "freq"
+  label: string;      // display label, e.g. "Amplitude"
+  min: number;
+  max: number;
+  step: number;       // slider step. When step_unit is "π", this is multiples of π (e.g. 0.25 = π/4)
+  step_unit?: "π";    // if set, actual value passed to fn = slider_value * Math.PI
+  default: number;    // initial slider value (same units as step)
+}
+
+export interface GraphSeries {
+  fn?: string;        // math expression (JS syntax). Variables in scope: x (or t for parametric), Math, + any GraphVariable names
+  fn_x?: string;      // parametric x(t) expression — only for graph_type "parametric"
+  data?: { x: number; y: number }[];  // discrete data — used by bar, pie, box, violin, scatter
   label: string;
   color?: string;
+  style?: "solid" | "dashed" | "dotted";
 }
+
+export type GraphType =
+  | "line"        // connected curve
+  | "area"        // filled under curve
+  | "scatter"     // dots only
+  | "bar"         // vertical bars
+  | "pie"         // pie / donut slices
+  | "polar"       // r = f(θ), x_range is θ range
+  | "parametric"  // x(t), y(t)
+  | "box"         // box-and-whisker (data[] per series)
+  | "violin"      // violin distribution (data[] per series)
+  | "density"     // KDE density curves (x=value, y=probability density; data[] per series)
+  | "trend"       // scatter + linear regression line
+  | "forecast";   // line with solid past + dashed future
 
 export interface GraphArtifact extends BaseArtifact {
   type: "graph";
-  graph_type: "line" | "scatter" | "bar" | "parametric" | "polar";
-  expressions: GraphExpression[];
+  graph_type: GraphType;
+  series: GraphSeries[];
+  variables?: GraphVariable[];
   x_range: [number, number];
   y_range?: [number, number];
   x_label?: string;

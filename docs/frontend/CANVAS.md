@@ -44,7 +44,7 @@ All canvas objects are `CanvasElement` with a `type` field:
 | Sub-type | Renderer | Notes |
 |----------|----------|-------|
 | `visual` | `VisualCard` | SVG diagram. `style` field controls layout — see below |
-| `graph` | `GraphCard` | Canvas-based, evaluates JS math expressions, interactive crosshair/tooltip |
+| `graph` | `GraphCard` | Canvas-based, 11 chart types, optional slider variables with π-increment support |
 | `notation` | `NotationCard` | KaTeX, dark-mode aware |
 | `flashcard` | `FlashcardCard` | 3D flip, known/review tracking. Only type rendered inside a card box |
 | `lookup` | `LookupCard` | Semantic search excerpts from uploaded docs |
@@ -60,6 +60,37 @@ All canvas objects are `CanvasElement` with a `type` field:
 | `comparison` | Two-column side-by-side attribute table |
 | `diagram` | Component/system diagram with connections |
 | `hierarchy` | Tree structure (domain → branches → leaves) |
+
+**Graph types** (`GraphArtifact.graph_type`):
+
+| Type | Description | Data source |
+|------|-------------|-------------|
+| `line` | Connected curves | `series[].fn` |
+| `area` | Filled under curve | `series[].fn` |
+| `scatter` | Dot cloud | `series[].fn` or `series[].data` |
+| `trend` | Scatter + linear regression line | `series[].fn` or `series[].data` |
+| `forecast` | Solid past + dashed future (split at 75% of x range) | `series[].fn` |
+| `parametric` | x(t), y(t) curve; x_range is t range | `series[].fn` (y) + `series[].fn_x` (x) |
+| `bar` | Vertical grouped bars | `series[].fn` or `series[].data` |
+| `pie` | Pie/donut slices (each series = one slice, value = `data[0].y`) | `series[].data` |
+| `polar` | r = f(θ); x_range is θ range in radians | `series[].fn` |
+| `box` | Box-and-whisker (quartiles computed from data) | `series[].data` (raw values) |
+| `violin` | Mirrored KDE distribution shape | `series[].data` (raw values) |
+| `density` | KDE probability curves — x=value, y=density; overlapping series with fill + dashed mean line | `series[].data` (raw values) |
+
+**Graph variables** (`GraphVariable` — optional slider controls):
+```ts
+{
+  name: string;       // variable name used in fn, e.g. "A"
+  label: string;      // display label
+  min: number;
+  max: number;
+  step: number;       // slider step. If step_unit === "π", value × Math.PI is passed to fn
+  step_unit?: "π";    // enables π-fraction display (π/4, π/2, π, 3π/2, ...)
+  default: number;
+}
+```
+When `variables` is set, `GraphCard` renders a slider bank above the chart. Sliders update the chart in real time. π-increment sliders format their display value as fractions (π/4, π/2, π, 3π/2, 2π, etc.).
 
 **Key fields on `CanvasElement`:**
 ```ts
