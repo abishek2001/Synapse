@@ -83,6 +83,7 @@ app/workspace/page.tsx (Suspense wrapper)
 - **Drag model**: `useRef` drag state with `groupMembers` snapshot; `onGripDown` works in Hand+Select; `onRootDown` works in Select only. Group drag moves all members uniformly.
 - **Group hover**: fires `onGroupHover(element.groupId)` on enter, `onGroupHover(null)` on leave
 - **Identifier**: `data-element-id={element.id}` on root div (InfiniteCanvas key for early-return)
+- **Height measurement**: `ResizeObserver` on the root div calls `setElementHeight(id, offsetHeight)` after every resize. Uses `offsetHeight` (not `getBoundingClientRect`) so the measurement is transform-independent and unaffected by canvas zoom.
 
 ### `StrokeElement` (`src/components/workspace/StrokeElement.tsx`)
 - **Props**: `element, isSelected, onSelect, canvasScale, currentTool, onGroupHover?`
@@ -96,6 +97,7 @@ app/workspace/page.tsx (Suspense wrapper)
 - **Visual**: rounded rect with group name label; border highlights when `isHovered || hasSelectedMember`
 - **Interaction**: `pointer-events-none` — no toolbar buttons. Group controls live in `SelectionBar`.
 - **Exports**: `computeGroupBounds(groupId, elements)` — returns world-space bounding box `{x, y, w, h}` used for zoom-to-fit and hit testing
+- **Height**: uses `el.h ?? estimateElemH(el.type)` — prefers the measured height from `ElementCard`'s ResizeObserver; falls back to the static estimate only before the first measurement.
 
 ### `SelectionBar` (`src/components/workspace/SelectionBar.tsx`)
 - **Reads**: `useCanvasStore` (selectedElementIds, elements, groups)
@@ -134,7 +136,8 @@ app/workspace/page.tsx (Suspense wrapper)
 
 ### `useCanvasStore` (`src/store/canvas.ts`)
 - **Key state**: `elements: CanvasElement[], groups: CanvasGroup[], connections, selectedElementIds, toasts`
-- **Key actions**: `addElement, removeElement, moveElement, updateElementText, updateStickyContent, selectElements, toggleElementSelected, clearSelection, groupSelected, ungroupElements`
+- **Key actions**: `addElement, removeElement, moveElement, setElementHeight, updateElementText, updateStickyContent, selectElements, toggleElementSelected, clearSelection, groupSelected, ungroupElements`
+- **`setElementHeight(id, h)`**: writes the measured pixel height onto `el.h`; skipped when height hasn't changed to avoid spurious re-renders.
 
 ### `useSessionStore` (`src/store/session.ts`)
 - **Key state**: `query, persona, files, messages, isStreaming, voiceMode, liveCaption`

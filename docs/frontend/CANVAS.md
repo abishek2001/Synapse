@@ -34,10 +34,32 @@ All canvas objects are `CanvasElement` with a `type` field:
 
 | Type | Description | Stored in |
 |------|-------------|-----------|
-| `artifact` | AI-generated learning card (visual, graph, notation, flashcard, lookup, simulation) | `element.artifact` |
+| `artifact` | AI-generated learning card — see artifact sub-types below | `element.artifact` |
 | `text` | Freeform text annotation (heading / subheading / body styles) | `element.text` |
 | `sticky` | Sticky note with color | `element.sticky` |
 | `stroke` | Freehand pen drawing | `element.stroke` |
+
+**Artifact sub-types** (`element.artifact.type`):
+
+| Sub-type | Renderer | Notes |
+|----------|----------|-------|
+| `visual` | `VisualCard` | SVG diagram. `style` field controls layout — see below |
+| `graph` | `GraphCard` | Canvas-based, evaluates JS math expressions, interactive crosshair/tooltip |
+| `notation` | `NotationCard` | KaTeX, dark-mode aware |
+| `flashcard` | `FlashcardCard` | 3D flip, known/review tracking. Only type rendered inside a card box |
+| `lookup` | `LookupCard` | Semantic search excerpts from uploaded docs |
+| `simulation` | `SimulationCard` | Self-contained HTML/JS in a sandboxed iframe, fixed `380px` height |
+
+**Visual styles** (`VisualArtifact.style`):
+
+| Style | Purpose |
+|-------|---------|
+| `concept_map` | Node-and-edge map of related concepts |
+| `flowchart` | Step-by-step process with directional arrows |
+| `timeline` | Chronological events along a horizontal axis |
+| `comparison` | Two-column side-by-side attribute table |
+| `diagram` | Component/system diagram with connections |
+| `hierarchy` | Tree structure (domain → branches → leaves) |
 
 **Key fields on `CanvasElement`:**
 ```ts
@@ -47,12 +69,15 @@ All canvas objects are `CanvasElement` with a `type` field:
   x: number        // world-space position
   y: number
   w: number        // width
+  h?: number       // measured pixel height — written by ElementCard's ResizeObserver
   zIndex: number
   groupId?: string // set when element belongs to a group
   createdAt: number
   // one of: artifact, text, sticky, stroke
 }
 ```
+
+`h` is set automatically after the first render via `ResizeObserver` inside `ElementCard`. `GroupBoundary`, `computeGroupBounds`, hit-testing, and fit-all all prefer `el.h` and fall back to `estimateElemH(el.type)` until the measurement arrives. This means group boxes always match the true rendered height regardless of content length or zoom level.
 
 ---
 

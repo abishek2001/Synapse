@@ -1,6 +1,6 @@
 "use client";
 
-import { useCanvasStore, type CanvasElement, type CanvasStroke, ELEM_WIDTHS } from "@/store/canvas";
+import { useCanvasStore, type CanvasElement, type CanvasStroke, ELEM_WIDTHS, estimateElemH } from "@/store/canvas";
 import { useUIStore } from "@/store/ui";
 import { AnimatePresence, motion } from "framer-motion";
 import { useState, useRef, useCallback, useEffect } from "react";
@@ -94,7 +94,7 @@ export default function ArtifactCanvas({ topic }: ArtifactCanvasProps) {
     const minY = Math.min(y1, y2), maxY = Math.max(y1, y2);
     const hitIds = elements
       .filter((el) => {
-        const elH = el.stroke?.height ?? 320;
+        const elH = el.h ?? el.stroke?.height ?? estimateElemH(el.type);
         return el.x < maxX && el.x + el.w > minX && el.y < maxY && el.y + elH > minY;
       })
       .map((el) => el.id);
@@ -181,10 +181,10 @@ export default function ArtifactCanvas({ topic }: ArtifactCanvasProps) {
     });
   }, [addElement]);
 
-  /** Find the element under a world coordinate. Uses actual height for strokes. */
+  /** Find the element under a world coordinate. Uses measured height when available. */
   const hitTestElement = useCallback((worldX: number, worldY: number) => {
     return [...elements].reverse().find((el) => {
-      const elH = el.stroke?.height ?? 300;
+      const elH = el.h ?? el.stroke?.height ?? estimateElemH(el.type);
       return worldX >= el.x && worldX <= el.x + el.w &&
              worldY >= el.y && worldY <= el.y + elH;
     }) ?? null;
@@ -279,7 +279,7 @@ export default function ArtifactCanvas({ topic }: ArtifactCanvasProps) {
     if (elements.length === 0) return;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const el of elements) {
-      const elH = el.stroke?.height ?? 320;
+      const elH = el.h ?? el.stroke?.height ?? estimateElemH(el.type);
       minX = Math.min(minX, el.x);
       minY = Math.min(minY, el.y);
       maxX = Math.max(maxX, el.x + el.w);

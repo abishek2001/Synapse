@@ -24,7 +24,7 @@ export default function GroupBoundary({ group, elements, hasSelectedMember, isHo
     minX = Math.min(minX, el.x);
     minY = Math.min(minY, el.y);
     maxX = Math.max(maxX, el.x + el.w);
-    maxY = Math.max(maxY, el.y + estimateElemH(el.type));
+    maxY = Math.max(maxY, el.y + (el.h ?? estimateElemH(el.type)));
   }
 
   const x = minX - PAD_X;
@@ -84,7 +84,7 @@ export function computeGroupBounds(groupId: string, elements: CanvasElement[]) {
     minX = Math.min(minX, el.x);
     minY = Math.min(minY, el.y);
     maxX = Math.max(maxX, el.x + el.w);
-    maxY = Math.max(maxY, el.y + estimateElemH(el.type));
+    maxY = Math.max(maxY, el.y + (el.h ?? estimateElemH(el.type)));
   }
 
   return {

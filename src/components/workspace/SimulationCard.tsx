@@ -23,7 +23,8 @@ export default function SimulationCard({ artifact, expanded }: SimulationCardPro
 
   return (
     <div
-      className={`w-full ${expanded ? "h-[60vh]" : "h-full"} rounded-xl overflow-hidden bg-[#0a0b14]`}
+      className={`w-full rounded-xl overflow-hidden bg-[#0a0b14]`}
+      style={{ height: expanded ? 380 : "100%" }}
     >
       <SimulationFrame code={artifact.code} />
     </div>

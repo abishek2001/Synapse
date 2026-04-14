@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { X, GripHorizontal } from "lucide-react";
 import { useCanvasStore, type CanvasElement } from "@/store/canvas";
@@ -27,8 +27,26 @@ interface Props {
 // full, uncontested ownership of pointer events on elements.
 
 export default function ElementCard({ element, isSelected, onSelect, canvasScale, currentTool, onGroupHover }: Props) {
-  const { moveElement, removeElement, updateElementText, updateStickyContent } = useCanvasStore();
+  const { moveElement, removeElement, updateElementText, updateStickyContent, setElementHeight } = useCanvasStore();
   const { darkMode } = useUIStore();
+
+  // Measure actual rendered height and report it to the store so GroupBoundary
+  // can use real dimensions instead of static estimates.
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const setRef = useCallback((node: HTMLDivElement | null) => {
+    rootRef.current = node;
+  }, []);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const obs = new ResizeObserver(() => {
+      // offsetHeight is transform-independent — unaffected by canvas zoom/pan scale
+      const h = el.offsetHeight;
+      if (h > 0) setElementHeight(element.id, h);
+    });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [element.id, setElementHeight]);
 
   const [editing, setEditing] = useState(
     (element.type === "text" && !element.text?.content) ||
@@ -116,6 +134,7 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
 
     return (
       <div
+        ref={setRef}
         data-element-id={element.id}
         className="absolute group"
         style={{ left: element.x, top: element.y, width: element.w, zIndex: element.zIndex,
@@ -171,6 +190,7 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
 
     return (
       <motion.div
+        ref={setRef}
         data-element-id={element.id}
         initial={{ opacity: 0, scale: 0.85, rotate: -1.5 }}
         animate={{ opacity: 1, scale: 1, rotate: 0 }}
@@ -226,6 +246,7 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
 
   return (
     <motion.div
+      ref={setRef}
       data-element-id={element.id}
       initial={{ opacity: 0, scale: 0.94, y: 8 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
