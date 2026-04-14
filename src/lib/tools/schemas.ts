@@ -186,6 +186,57 @@ export const CANVAS_TOOLS: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "canvas_generate_3d_render",
+      description:
+        "Generate an interactive 3D render on the canvas. Use for any 3D visualization: anatomy (heart, lungs, brain, bones, veins), physics (projectile motion, orbital mechanics, waves), chemistry (molecular bonds, crystal lattices, chiral structures), 3D geometry, and more. The scene runs in Three.js — the user can rotate, zoom, and pan freely.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: {
+            type: "string",
+            description: "Short display title, e.g. 'Human Heart Anatomy', 'DNA Double Helix'",
+          },
+          topic: {
+            type: "string",
+            description: "What is being rendered — used for the loading label",
+          },
+          code: {
+            type: "string",
+            description: `Three.js JavaScript that builds the 3D scene. The following globals are pre-defined — do NOT redeclare them:
+- \`scene\` (THREE.Scene) — add all objects here
+- \`camera\` (THREE.PerspectiveCamera) — positioned at (0, 0.3*d, d) where d = camera_distance; reposition if needed
+- \`THREE\` — full Three.js r160 namespace
+- \`controls\` (OrbitControls) — rotate/zoom/pan already wired
+- \`renderer\` (THREE.WebGLRenderer) — shadow-maps enabled
+
+Pre-added lights: AmbientLight 0.55, DirectionalLight sun (6,12,8), DirectionalLight blue fill (-6,-3,-6), PointLight violet accent (-5,6,-5).
+
+Optionally define \`function update(t) { ... }\` (t = elapsed seconds) for per-frame animation (rotation, pulsing, physics loops, etc.).
+
+Style guidance:
+- Anatomy: MeshPhongMaterial with realistic colors + slight transparency (opacity 0.85-0.95) for outer shells; add inner structures with lower opacity
+- Chemistry: SphereGeometry atoms + CylinderGeometry bonds; use CPK colors (C=0x404040, H=0xffffff, O=0xff3333, N=0x4444ff, S=0xffff33)
+- Physics: use update(t) for motion; add trajectory lines with THREE.Line + BufferGeometry
+- Add a subtle grid helper or plane for spatial reference when appropriate
+
+Example (minimal): \`const mesh = new THREE.Mesh(new THREE.SphereGeometry(1,32,32), new THREE.MeshPhongMaterial({color:0x7c3aed,shininess:80})); scene.add(mesh); function update(t){mesh.rotation.y=t;}\``,
+          },
+          camera_distance: {
+            type: "number",
+            description: "Distance of camera from origin. Default 5. Use 2-3 for small molecular models, 5-8 for anatomy, 10-20 for large structures or physics trajectories.",
+          },
+          bg_color: {
+            type: "string",
+            description: "Hex background color. Default '#0a0b14' (dark navy). Use '#0f172a' for deep blue, '#111827' for dark gray. Prefer dark backgrounds for 3D renders.",
+          },
+        },
+        required: ["title", "topic", "code"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "canvas_delegate_task",
       description:
         "Delegate a complex canvas editing task. Use this to add handwritten annotations, arrows between concepts, labels, highlights, or to organize the board layout. This tool directly manipulates the shared canvas.",

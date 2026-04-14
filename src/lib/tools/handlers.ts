@@ -6,6 +6,7 @@ import type {
   NotationArtifact,
   FlashcardArtifact,
   LookupArtifact,
+  Render3DArtifact,
 } from "./types";
 import { semanticSearch } from "@/lib/grounding/retrieval";
 
@@ -40,6 +41,8 @@ export async function handleToolCall(
       return handleFlashcardCreate(args);
     case "knowledge_lookup":
       return handleKnowledgeLookup(args, documentContext);
+    case "canvas_generate_3d_render":
+      return handleGenerate3DRender(args);
     case "canvas_delegate_task":
       return handleDelegateTask(args);
     default:
@@ -218,6 +221,34 @@ async function handleKnowledgeLookup(
   return {
     artifact,
     result: `[Semantic search for "${search_query}" — ${results.length} result(s)]:\n${excerptSummary}`,
+  };
+}
+
+function handleGenerate3DRender(
+  args: Record<string, unknown>,
+): { artifact: Render3DArtifact; result: string } {
+  const { title, topic, code, camera_distance, bg_color } = args as {
+    title: string;
+    topic: string;
+    code: string;
+    camera_distance?: number;
+    bg_color?: string;
+  };
+
+  const artifact: Render3DArtifact = {
+    id: crypto.randomUUID(),
+    type: "render3d",
+    title,
+    status: "pending",
+    topic,
+    code,
+    camera_distance,
+    bg_color,
+  };
+
+  return {
+    artifact,
+    result: `[3D render "${title}" placed on canvas]`,
   };
 }
 

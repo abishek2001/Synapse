@@ -10,6 +10,7 @@ import GraphCard from "../canvas/GraphCard";
 import NotationCard from "../canvas/NotationCard";
 import FlashcardCard from "../canvas/FlashcardCard";
 import LookupCard from "../canvas/LookupCard";
+import Render3DCard from "../canvas/Render3DCard";
 import SimulationCard from "./SimulationCard";
 import type { CanvasTool } from "./InfiniteCanvas";
 
@@ -307,6 +308,7 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
           {artifact.type === "notation"   && <NotationCard artifact={artifact} dark={darkMode} />}
           {artifact.type === "lookup"     && <LookupCard artifact={artifact} />}
           {artifact.type === "simulation" && <SimulationCard artifact={artifact} expanded />}
+          {artifact.type === "render3d"   && <Render3DCard artifact={artifact} />}
         </div>
       )}
     </motion.div>

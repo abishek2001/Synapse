@@ -60,6 +60,15 @@ app/workspace/page.tsx (Suspense wrapper)
 - **Exit**: `AnimatePresence` with `exit={{ opacity:0, scale:0.98 }}`
 - **Arrow animation**: uses Framer Motion `pathLength` (0→1) instead of manual `strokeDasharray`/`strokeDashoffset` to ensure correct length calculation
 
+### `Render3DCard` (`src/components/canvas/Render3DCard.tsx`)
+- **Props**: `artifact: Render3DArtifact`
+- **Renders**: sandboxed `<iframe srcdoc>` with Three.js r160 + OrbitControls pre-booted
+- **Interactions**: drag to rotate, scroll to zoom, right-drag to pan (all via OrbitControls)
+- **Height**: fixed `420px`
+- **AI contract**: AI writes plain JS that adds objects to `scene`; may define `function update(t)` (t in seconds) for animation. Globals: `scene`, `camera`, `THREE`, `controls`, `renderer`. Pre-added: ambient + directional sun + blue fill + violet accent lights.
+- **Error handling**: `window.onerror` in iframe posts `render3d_error` via `postMessage`; React state renders an error overlay
+- **`bg_color`** / **`camera_distance`**: optional fields on the artifact control scene background and initial camera Z distance
+
 ### `GraphCard` (`src/components/canvas/GraphCard.tsx`)
 - **Props**: `artifact: GraphArtifact`
 - **Chart types**: 12 types dispatched by `artifact.graph_type` — line, area, scatter, trend, forecast, parametric, bar, pie, polar, box, violin, density
@@ -129,6 +138,16 @@ app/workspace/page.tsx (Suspense wrapper)
 ### `MockButton` (`src/components/workspace/MockButton.tsx`)
 - **Position**: `absolute bottom-20 right-4 z-40`
 - **Note**: Remove before production
+- **Calls**: `useCanvasStore().loadMockData(query)` → `buildMockCanvas(topic)` in `src/store/canvas.ts`
+- **Mock canvas layout** (3 rows):
+  - **Row 1** — 6 groups exercising all visual styles + complementary artifact types (concept map + flashcard, notation + graph-line, timeline + area graph, comparison + lookup, diagram + simulation, flowchart + hierarchy)
+  - **Row 2** — Chart Gallery: 12 single-element groups, one per graph type (line, area, scatter, trend, forecast, parametric, bar, pie, polar, box, violin, density)
+  - **Row 3** — 3D Render Gallery: 5 single-element groups showcasing `render3d` across disciplines:
+    - **Human Heart** — anatomy (ellipsoidal body + atria + vessels, beating 72 BPM animation)
+    - **DNA Double Helix** — biology (28 base pairs, color-coded rungs, backbone segments)
+    - **H₂O Molecule** — chemistry (CPK spheres, 104.5° bond angle, electron cloud, angle arc)
+    - **Projectile Motion** — physics (animated ball + live velocity arrow + drop lines, loops)
+    - **NaCl Crystal Lattice** — crystallography (InstancedMesh Na⁺/Cl⁻, LineSegments bonds)
 
 ### `CanvasContextMenu` (`src/components/workspace/CanvasContextMenu.tsx`)
 - **Props**: `screenX, screenY, worldX, worldY, targetModuleId?, onClose, onSetTool, onExpandModule`

@@ -49,6 +49,7 @@ All canvas objects are `CanvasElement` with a `type` field:
 | `flashcard` | `FlashcardCard` | 3D flip, known/review tracking. Only type rendered inside a card box |
 | `lookup` | `LookupCard` | Semantic search excerpts from uploaded docs |
 | `simulation` | `SimulationCard` | Self-contained HTML/JS in a sandboxed iframe, fixed `380px` height |
+| `render3d` | `Render3DCard` | Interactive Three.js scene in a sandboxed iframe, fixed `420px` height. Rotate/zoom/pan via OrbitControls. AI writes scene-building JS; wrapper pre-boots Three.js r160 + OrbitControls + lighting |
 
 **Visual styles** (`VisualArtifact.style`):
 

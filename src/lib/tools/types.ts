@@ -1,4 +1,4 @@
-export type ArtifactType = "visual" | "graph" | "notation" | "flashcard" | "lookup" | "simulation";
+export type ArtifactType = "visual" | "graph" | "notation" | "flashcard" | "lookup" | "simulation" | "render3d";
 
 export interface BaseArtifact {
   id: string;
@@ -87,10 +87,19 @@ export interface SimulationArtifact extends BaseArtifact {
   topic: string;
 }
 
+export interface Render3DArtifact extends BaseArtifact {
+  type: "render3d";
+  topic: string;
+  code: string;
+  camera_distance?: number;  // distance of camera from origin, default 5
+  bg_color?: string;         // CSS hex background, default "#0a0b14"
+}
+
 export type CanvasArtifact =
   | VisualArtifact
   | GraphArtifact
   | NotationArtifact
   | FlashcardArtifact
   | LookupArtifact
-  | SimulationArtifact;
+  | SimulationArtifact
+  | Render3DArtifact;
