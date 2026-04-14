@@ -25,6 +25,7 @@
 | `N` | Sticky note tool |
 | `P` | Pen (draw) tool |
 | `Escape` | Back to Interaction mode |
+| `Space` (hold) | Temporary hand/pan mode — restores previous tool on release |
 
 ---
 
@@ -175,10 +176,26 @@ Rendered by the `FlowArrows` SVG component:
 
 ## Zoom & Pan
 
-- **Zoom range**: 10% – 300% (`MIN_ZOOM = 0.1`, `MAX_ZOOM = 3`)
-- **Zoom**: scroll wheel, centered on cursor
-- **Pan**: Space + drag, middle-mouse drag, or Hand tool drag
+- **Zoom range**: 10% – 400% (`MIN_ZOOM = 0.1`, `MAX_ZOOM = 4`)
+- **Zoom**: mouse scroll wheel (centered on cursor), trackpad pinch (`ctrlKey` wheel), `Ctrl`+scroll
+- **Pan**: Space + drag (temporary hand mode — restores previous tool on release), middle-mouse drag, Hand tool drag, two-finger trackpad scroll
 - **Fit all**: auto-triggered when `groups.length` changes (new AI module added)
+
+### Gesture / scroll discrimination (wheel events)
+
+| Condition | Behavior |
+|-----------|----------|
+| `e.ctrlKey === true` | Trackpad pinch or Ctrl+scroll → **zoom** centered on cursor (pixel-precise sensitivity) |
+| `e.deltaMode === 0` (pixel), no ctrlKey | Trackpad two-finger scroll → **pan** by `deltaX`/`deltaY` |
+| `e.deltaMode !== 0` (line/page), no ctrlKey | Mouse scroll wheel → **zoom** centered on cursor |
+
+### Multi-touch pinch (touch screens & tablets)
+
+Two simultaneous pointers anywhere on the canvas (including over elements or in Interaction mode) trigger pinch handling:
+- **Distance change** → zoom, centered on the midpoint between the two fingers
+- **Midpoint translation** → pan simultaneously with zoom
+- Single-pointer operations (rubber-band, pen stroke, element drag) are cancelled when a second pointer lands
+- Click events are suppressed after a pinch gesture ends
 
 ---
 

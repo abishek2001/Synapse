@@ -131,6 +131,14 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
     const rbRef   = useRef<HTMLDivElement>(null);
     const rbState = useRef<{ active: boolean; sx: number; sy: number; ex: number; ey: number } | null>(null);
 
+    // ── Multi-touch / pinch state ─────────────────────────────────────────────
+    const pointerMapRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+    const lastPinchRef  = useRef<{ dist: number; midX: number; midY: number } | null>(null);
+
+    // ── Space-to-pan state ────────────────────────────────────────────────────
+    const spaceActiveRef  = useRef(false);
+    const preSpaceToolRef = useRef<CanvasTool | null>(null);
+
     // ── Transform helpers ─────────────────────────────────────────────────────
     const setTransform = useCallback(
       (updater: Transform | ((t: Transform) => Transform)) => {
@@ -225,6 +233,29 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
         // Never fire on toolbar / UI controls
         if (target.closest("[data-canvas-ui]")) return;
 
+        // Track this pointer for multi-touch gesture detection (before early returns)
+        pointerMapRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+        // Two-finger gesture: cancel any in-progress single-pointer ops, init pinch
+        if (pointerMapRef.current.size >= 2) {
+          if (rbState.current) {
+            rbState.current = null;
+            if (rbRef.current) rbRef.current.style.display = "none";
+          }
+          panState.current = { active: false, pending: false, startX: 0, startY: 0, originTx: 0, originTy: 0 };
+          isDrawing.current = false;
+          setIsPanning(false);
+          const pts = [...pointerMapRef.current.values()];
+          const rect = el.getBoundingClientRect();
+          lastPinchRef.current = {
+            dist: Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y),
+            midX: (pts[0].x + pts[1].x) / 2 - rect.left,
+            midY: (pts[0].y + pts[1].y) / 2 - rect.top,
+          };
+          el.setPointerCapture(e.pointerId);
+          return;
+        }
+
         // Interaction mode: let all events pass through to artifact content
         if (t === "interaction") return;
 
@@ -297,6 +328,33 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
       };
 
       const onMove = (e: PointerEvent) => {
+        // Update pointer position for multi-touch tracking
+        if (pointerMapRef.current.has(e.pointerId)) {
+          pointerMapRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        }
+
+        // Two-finger pinch + pan
+        if (lastPinchRef.current !== null && pointerMapRef.current.size >= 2) {
+          const pts = [...pointerMapRef.current.values()];
+          const rect = el.getBoundingClientRect();
+          const newDist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+          const newMidX = (pts[0].x + pts[1].x) / 2 - rect.left;
+          const newMidY = (pts[0].y + pts[1].y) / 2 - rect.top;
+          const last = lastPinchRef.current;
+
+          if (last.dist > 0) {
+            const scaleRatio = newDist / last.dist;
+            setTransform((t) => {
+              const ns = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, t.scale * scaleRatio));
+              const worldMidX = (last.midX - t.x) / t.scale;
+              const worldMidY = (last.midY - t.y) / t.scale;
+              return { scale: ns, x: newMidX - worldMidX * ns, y: newMidY - worldMidY * ns };
+            });
+          }
+          lastPinchRef.current = { dist: newDist, midX: newMidX, midY: newMidY };
+          return;
+        }
+
         // ── Pen ──────────────────────────────────────────────────────────────
         if (toolRef.current === "pen") {
           if (!isDrawing.current) return;
@@ -348,6 +406,15 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
       };
 
       const onUp = (e: PointerEvent) => {
+        // Clean up multi-touch tracking
+        pointerMapRef.current.delete(e.pointerId);
+
+        // If we were in a pinch gesture, end it without firing click events
+        if (lastPinchRef.current !== null) {
+          if (pointerMapRef.current.size < 2) lastPinchRef.current = null;
+          return;
+        }
+
         // ── Pen ──────────────────────────────────────────────────────────────
         if (toolRef.current === "pen") {
           if (!isDrawing.current) return;
@@ -429,8 +496,19 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
         const rect = el.getBoundingClientRect();
         const cx = e.clientX - rect.left;
         const cy = e.clientY - rect.top;
-        const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
-        zoom(delta * transformRef.current.scale, cx, cy);
+
+        if (e.ctrlKey) {
+          // Trackpad pinch or Ctrl+scroll → zoom centered on cursor
+          const factor = e.deltaMode === 0 ? 0.008 : 0.1;
+          zoom(-e.deltaY * factor * transformRef.current.scale, cx, cy);
+        } else if (e.deltaMode === 0) {
+          // Trackpad two-finger scroll → pan
+          setTransform((t) => ({ ...t, x: t.x - e.deltaX, y: t.y - e.deltaY }));
+        } else {
+          // Mouse wheel (line / page delta) → zoom
+          const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
+          zoom(delta * transformRef.current.scale, cx, cy);
+        }
       };
 
       const onDblClick = (e: MouseEvent) => {
@@ -477,9 +555,19 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
 
     // ── Keyboard shortcuts ────────────────────────────────────────────────────
     useEffect(() => {
-      const onKey = (e: KeyboardEvent) => {
+      const onKeyDown = (e: KeyboardEvent) => {
         const tag = (e.target as HTMLElement).tagName;
         if (tag === "INPUT" || tag === "TEXTAREA") return;
+
+        // Space → temporary hand/pan mode (held down)
+        if (e.key === " " && !spaceActiveRef.current) {
+          e.preventDefault();
+          spaceActiveRef.current = true;
+          preSpaceToolRef.current = toolRef.current;
+          setTool("hand");
+          return;
+        }
+
         if (e.key === "Escape")             setTool("interaction");
         if (e.key === "i" || e.key === "I") setTool("interaction");
         if (e.key === "v" || e.key === "V") setTool("select");
@@ -488,8 +576,23 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
         if (e.key === "t" || e.key === "T") setTool("text");
         if (e.key === "n" || e.key === "N") setTool("sticky");
       };
-      window.addEventListener("keydown", onKey);
-      return () => window.removeEventListener("keydown", onKey);
+
+      const onKeyUp = (e: KeyboardEvent) => {
+        if (e.key === " " && spaceActiveRef.current) {
+          spaceActiveRef.current = false;
+          if (preSpaceToolRef.current !== null) {
+            setTool(preSpaceToolRef.current);
+            preSpaceToolRef.current = null;
+          }
+        }
+      };
+
+      window.addEventListener("keydown", onKeyDown);
+      window.addEventListener("keyup",   onKeyUp);
+      return () => {
+        window.removeEventListener("keydown", onKeyDown);
+        window.removeEventListener("keyup",   onKeyUp);
+      };
     }, [setTool]);
 
     // ── Visual helpers ────────────────────────────────────────────────────────
