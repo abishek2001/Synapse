@@ -384,10 +384,10 @@ function CanvasTitle({ topic }: { topic: string }) {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
       className="absolute pointer-events-none select-none"
-      style={{ left: 80, top: TITLE_Y }}
+      style={{ left: "50%", top: TITLE_Y, transform: "translateX(-50%)" }}
     >
       <h1
-        className="text-black/70 leading-tight"
+        className="text-black/70 leading-tight text-center whitespace-nowrap"
         style={{
           fontFamily: "var(--font-caveat), 'Segoe Print', cursive",
           fontSize: 48,
@@ -398,7 +398,7 @@ function CanvasTitle({ topic }: { topic: string }) {
         {topic}
       </h1>
       <div
-        className="mt-1 h-[2px] rounded-full bg-black/[0.06]"
+        className="mt-1 h-[2px] rounded-full bg-black/[0.06] mx-auto"
         style={{ width: Math.min(topic.length * 22, 600) }}
       />
     </motion.div>

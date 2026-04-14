@@ -37,6 +37,7 @@ export default function WorkspaceView() {
     setShowCallFriend,
     setDocuments,
     setCanvasTitle,
+    setBridgeDone,
     initSession,
   } = useSessionStore();
 
@@ -301,6 +302,7 @@ export default function WorkspaceView() {
 
     addLog("All systems nominal — launching workspace", "success");
     await sleep(800);
+    setBridgeDone(true);
     setShowBridge(false);
   }
 

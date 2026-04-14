@@ -50,6 +50,7 @@ export default function TutorPanel() {
     isStreaming,
     isSpeaking,
     isMuted,
+    bridgeDone,
     pendingVoiceText,
     addMessage,
     setStreaming,
@@ -75,7 +76,7 @@ export default function TutorPanel() {
   }, [messages, showHistory]);
 
   useEffect(() => {
-    if (initialized.current || !query) return;
+    if (initialized.current || !query || !bridgeDone) return;
     if (files.length > 0 && !documentContext) return;
     initialized.current = true;
 
@@ -105,10 +106,10 @@ export default function TutorPanel() {
         speak(greeting, () => setSpeaking(false));
       }, 800);
     }
-  }, [query, files, documentContext, addMessage, autoSpeak, isMuted, setSpeaking]);
+  }, [query, files, documentContext, bridgeDone, addMessage, autoSpeak, isMuted, setSpeaking]);
 
   const processArtifacts = useCallback(
-    async (artifacts: CanvasArtifact[], userQuery: string) => {
+    async (artifacts: CanvasArtifact[], _userQuery: string, tutorExplanation?: string) => {
       if (artifacts.length === 0) return;
 
       const types = [...new Set(artifacts.map((a) => a.type))];
@@ -125,10 +126,21 @@ export default function TutorPanel() {
       updateToast(toastId, "adding");
 
       await new Promise((r) => setTimeout(r, 600));
-      const moduleTitle =
-        userQuery.length > 50 ? userQuery.slice(0, 50) + "..." : userQuery;
-      addModule(moduleTitle, artifacts);
 
+      // Derive title from artifact titles or tutor explanation, not the raw user query
+      let moduleTitle: string;
+      const artifactTitles = artifacts.map((a) => a.title).filter(Boolean);
+      if (artifactTitles.length > 0) {
+        moduleTitle = artifactTitles[0];
+        if (artifactTitles.length > 1) moduleTitle += ` + ${artifactTitles.length - 1} more`;
+      } else if (tutorExplanation) {
+        const firstSentence = tutorExplanation.split(/[.!?]/)[0]?.trim() || "";
+        moduleTitle = firstSentence.length > 60 ? firstSentence.slice(0, 57) + "..." : firstSentence;
+      } else {
+        moduleTitle = label;
+      }
+
+      addModule(moduleTitle, artifacts);
       updateToast(toastId, "done");
       setTimeout(() => removeToast(toastId), 1500);
     },
@@ -237,7 +249,7 @@ export default function TutorPanel() {
         }
 
         if (data.artifacts?.length > 0) {
-          processArtifacts(data.artifacts, text.trim());
+          processArtifacts(data.artifacts, text.trim(), data.tutor?.explanation);
           if (sessionContext) {
             updateContext({
               ...sessionContext,

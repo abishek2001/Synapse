@@ -39,10 +39,12 @@ interface SessionState {
   isMuted: boolean;
   pendingVoiceText: string | null;
 
+  bridgeDone: boolean;
   tutorCollapsed: boolean;
   showSources: boolean;
   showCallFriend: boolean;
 
+  setBridgeDone: (v: boolean) => void;
   initSession: (query: string, persona: string, files: UploadedFile[]) => void;
   setDocuments: (docs: ParsedDocument[]) => void;
   setCanvasTitle: (title: string) => void;
@@ -74,6 +76,7 @@ const initialState = {
   isListening: false,
   isMuted: false,
   pendingVoiceText: null as string | null,
+  bridgeDone: false,
   tutorCollapsed: false,
   showSources: false,
   showCallFriend: false,
@@ -108,6 +111,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   addMessage: (msg) =>
     set((s) => ({ messages: [...s.messages, msg] })),
 
+  setBridgeDone: (bridgeDone) => set({ bridgeDone }),
   setStreaming: (isStreaming) => set({ isStreaming }),
   setSceneConfig: (sceneConfig) => set({ sceneConfig }),
   setSpeaking: (isSpeaking) => set({ isSpeaking }),
