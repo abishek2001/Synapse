@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef } from "react";
+import { useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import SimCanvas from "./SimCanvas";
@@ -11,12 +11,14 @@ interface Props {
 }
 
 function Wave({ frequency, amplitude, speed }: { frequency: number; amplitude: number; speed: number }) {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const geo = useMemo(() => new THREE.PlaneGeometry(10, 6, 128, 64), []);
+  const geometryRef = useRef<THREE.PlaneGeometry>(null);
 
   useFrame(({ clock }) => {
+    const geometry = geometryRef.current;
+    if (!geometry) return;
+
     const t = clock.getElapsedTime() * speed;
-    const pos = geo.attributes.position;
+    const pos = geometry.attributes.position;
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i);
       const y = pos.getY(i);
@@ -24,11 +26,12 @@ function Wave({ frequency, amplitude, speed }: { frequency: number; amplitude: n
       pos.setZ(i, z);
     }
     pos.needsUpdate = true;
-    geo.computeVertexNormals();
+    geometry.computeVertexNormals();
   });
 
   return (
-    <mesh ref={meshRef} geometry={geo} rotation-x={-Math.PI / 3}>
+    <mesh rotation-x={-Math.PI / 3}>
+      <planeGeometry ref={geometryRef} args={[10, 6, 128, 64]} />
       <meshStandardMaterial color="#7c3aed" wireframe transparent opacity={0.6} />
     </mesh>
   );

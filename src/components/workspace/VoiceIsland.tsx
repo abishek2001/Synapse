@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Mic, MicOff, Volume2, VolumeOff, Square } from "lucide-react";
+import { Mic, Volume2, VolumeOff, Square } from "lucide-react";
 import { useSessionStore } from "@/store/session";
 import {
   startListening,
@@ -9,7 +9,7 @@ import {
   stopSpeaking,
   isRecognitionSupported,
 } from "@/lib/voice/speech";
-import { useCallback, useRef } from "react";
+import { useCallback } from "react";
 
 const GLOW: Record<string, string> = {
   listening: "rgba(239,68,68,0.35)",
@@ -25,6 +25,12 @@ const BORDER: Record<string, string> = {
   idle: "rgba(0,0,0,0.12)",
 };
 
+const VOICE_BAR_CONFIG = Array.from({ length: 12 }, (_, index) => ({
+  peak: 4 + ((index * 5) % 14),
+  duration: 0.35 + (index % 4) * 0.08,
+  delay: index * 0.04,
+}));
+
 export default function VoiceIsland() {
   const {
     isSpeaking,
@@ -37,9 +43,6 @@ export default function VoiceIsland() {
     setPendingVoiceText,
   } = useSessionStore();
 
-  const listeningRef = useRef(isListening);
-  listeningRef.current = isListening;
-
   const active = isSpeaking || isListening || isStreaming;
   const mode = isListening
     ? "listening"
@@ -50,7 +53,7 @@ export default function VoiceIsland() {
         : "idle";
 
   const handleStartMic = useCallback(() => {
-    if (listeningRef.current) return;
+    if (isListening) return;
     if (!isRecognitionSupported()) return;
 
     if (isSpeaking) {
@@ -63,7 +66,7 @@ export default function VoiceIsland() {
       (text) => setPendingVoiceText(text),
       () => setListening(false),
     );
-  }, [isSpeaking, setListening, setPendingVoiceText, setSpeaking]);
+  }, [isListening, isSpeaking, setListening, setPendingVoiceText, setSpeaking]);
 
   const handleStopMic = useCallback(() => {
     stopListening();
@@ -139,7 +142,7 @@ export default function VoiceIsland() {
             />
 
             <div className="flex items-center gap-[2px] flex-1 min-w-0">
-              {[...Array(12)].map((_, i) => (
+              {VOICE_BAR_CONFIG.map((bar, i) => (
                 <motion.div
                   key={i}
                   className={`w-[2px] rounded-full ${
@@ -150,12 +153,12 @@ export default function VoiceIsland() {
                         : "bg-green-400/70"
                   }`}
                   animate={{
-                    height: [2, 4 + Math.random() * 14, 2],
+                    height: [2, bar.peak, 2],
                   }}
                   transition={{
-                    duration: 0.35 + Math.random() * 0.35,
+                    duration: bar.duration,
                     repeat: Infinity,
-                    delay: i * 0.04,
+                    delay: bar.delay,
                     ease: "easeInOut",
                   }}
                 />

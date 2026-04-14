@@ -2,7 +2,6 @@
 
 import { useMemo } from "react";
 import SimCanvas from "./SimCanvas";
-import * as THREE from "three";
 import { Line } from "@react-three/drei";
 
 interface Props {

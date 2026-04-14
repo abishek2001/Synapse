@@ -23,7 +23,6 @@ export default function SimulationPanel() {
   const [params, setParams] = useState<Record<string, SimParam>>({});
   const [showParams, setShowParams] = useState(false);
   const [liveParams, setLiveParams] = useState<Record<string, number>>({});
-  const iframeRef = useRef<HTMLIFrameElement>(null);
   const generatedTopicRef = useRef<string | null>(null);
 
   const { files } = useSessionStore();

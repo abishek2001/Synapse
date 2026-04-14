@@ -29,7 +29,6 @@ export default function WorkspaceView() {
     persona,
     files,
     documents,
-    documentContext,
     canvasTitle,
     showSources,
     showCallFriend,
@@ -335,7 +334,6 @@ export default function WorkspaceView() {
       <AnimatePresence>
         {showBridge && (
           <BridgeScreen
-            query={displayQuery}
             persona={persona || urlPersona}
             stages={stages}
             logs={logs}

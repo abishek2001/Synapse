@@ -10,6 +10,12 @@ interface CallFriendModalProps {
   onClose: () => void;
 }
 
+const CALL_BAR_CONFIG = Array.from({ length: 12 }, (_, index) => ({
+  peak: 8 + ((index * 7) % 16),
+  duration: 0.4 + (index % 4) * 0.08,
+  delay: index * 0.05,
+}));
+
 export default function CallFriendModal({ onClose }: CallFriendModalProps) {
   const { query, messages } = useSessionStore();
   const [status, setStatus] = useState<"ringing" | "connected" | "ended">("ringing");
@@ -112,8 +118,13 @@ export default function CallFriendModal({ onClose }: CallFriendModalProps) {
 
         {status === "connected" && (
           <div className="flex items-center justify-center gap-1 mb-6">
-            {[...Array(12)].map((_, i) => (
-              <motion.div key={i} className="w-1 bg-green-500 rounded-full" animate={{ height: [4, 8 + Math.random() * 16, 4] }} transition={{ duration: 0.4 + Math.random() * 0.3, repeat: Infinity, delay: i * 0.05 }} />
+            {CALL_BAR_CONFIG.map((bar, i) => (
+              <motion.div
+                key={i}
+                className="w-1 bg-green-500 rounded-full"
+                animate={{ height: [4, bar.peak, 4] }}
+                transition={{ duration: bar.duration, repeat: Infinity, delay: bar.delay }}
+              />
             ))}
           </div>
         )}

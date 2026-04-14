@@ -30,7 +30,6 @@ export interface BridgeLog {
 }
 
 interface BridgeScreenProps {
-  query: string;
   persona: string;
   stages: BridgeStage[];
   logs: BridgeLog[];
@@ -46,31 +45,48 @@ interface BridgeScreenProps {
 
 const ACCENT = "#7c3aed";
 
+function deterministicUnit(seed: number) {
+  const raw = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
+  return raw - Math.floor(raw);
+}
+
+const LATENCY_BAR_CONFIG = Array.from({ length: 14 }, (_, index) => ({
+  height: 6 + deterministicUnit(index + 1) * 34,
+  bright: deterministicUnit(index + 101) > 0.6,
+  duration: 0.8 + deterministicUnit(index + 201) * 0.6,
+  delay: index * 0.06,
+}));
+
+const PARTICLE_CONFIG = Array.from({ length: 20 }, (_, index) => ({
+  left: `${10 + deterministicUnit(index + 301) * 80}%`,
+  top: `${10 + deterministicUnit(index + 401) * 80}%`,
+  duration: 3 + deterministicUnit(index + 501) * 4,
+  delay: deterministicUnit(index + 601) * 3,
+}));
+
 function LatencyBars({ active }: { active: boolean }) {
   return (
     <div className="flex items-end gap-[3px] h-10">
-      {[...Array(14)].map((_, i) => {
-        const h = 6 + Math.random() * 34;
-        const bright = Math.random() > 0.6;
+      {LATENCY_BAR_CONFIG.map((bar, i) => {
         return (
           <motion.div
             key={i}
             className="w-[6px] rounded-sm"
             style={{
-              backgroundColor: bright
+              backgroundColor: bar.bright
                 ? "rgba(124,58,237,0.7)"
                 : "rgba(124,58,237,0.2)",
             }}
             animate={
               active
-                ? { height: [h * 0.3, h, h * 0.5] }
-                : { height: h * 0.15 }
+                ? { height: [bar.height * 0.3, bar.height, bar.height * 0.5] }
+                : { height: bar.height * 0.15 }
             }
             transition={{
-              duration: 0.8 + Math.random() * 0.6,
+              duration: bar.duration,
               repeat: active ? Infinity : 0,
               repeatType: "reverse",
-              delay: i * 0.06,
+              delay: bar.delay,
               ease: "easeInOut",
             }}
           />
@@ -122,7 +138,6 @@ function ProgressBar({ stages }: { stages: BridgeStage[] }) {
 }
 
 export default function BridgeScreen({
-  query,
   persona,
   stages,
   logs,
@@ -144,19 +159,19 @@ export default function BridgeScreen({
       <div className="absolute inset-0 grid-bg opacity-40" />
       <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[#06060f]/50 to-[#06060f]" />
 
-      {[...Array(20)].map((_, i) => (
+      {PARTICLE_CONFIG.map((particle, i) => (
         <motion.div
           key={i}
           className="absolute w-1 h-1 rounded-full bg-purple-400/20"
           style={{
-            left: `${10 + Math.random() * 80}%`,
-            top: `${10 + Math.random() * 80}%`,
+            left: particle.left,
+            top: particle.top,
           }}
           animate={{ y: [-20, 20, -20], opacity: [0.1, 0.5, 0.1] }}
           transition={{
-            duration: 3 + Math.random() * 4,
+            duration: particle.duration,
             repeat: Infinity,
-            delay: Math.random() * 3,
+            delay: particle.delay,
             ease: "easeInOut",
           }}
         />
@@ -175,7 +190,8 @@ export default function BridgeScreen({
                 System Sequence
               </span>
               <span className="text-[10px] font-mono text-purple-400/60">
-                // {seq}
+                {"// "}
+                {seq}
               </span>
             </div>
 

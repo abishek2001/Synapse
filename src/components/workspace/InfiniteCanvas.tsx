@@ -69,8 +69,8 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(fun
   const [transform, setTransform] = useState<Transform>({ x: 0, y: 0, scale: 1 });
   const [isPanning, setIsPanning] = useState(false);
   const [internalTool, setInternalTool] = useState<CanvasTool>("select");
+  const [spacePressed, setSpacePressed] = useState(false);
   const panStart = useRef({ x: 0, y: 0, tx: 0, ty: 0 });
-  const spaceDown = useRef(false);
 
   useImperativeHandle(ref, () => ({
     getContainerRef: () => containerRef.current,
@@ -124,7 +124,7 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(fun
 
   const handlePointerDown = useCallback(
     (e: ReactPointerEvent) => {
-      if (e.button === 1 || tool === "hand" || spaceDown.current) {
+      if (e.button === 1 || tool === "hand" || spacePressed) {
         e.preventDefault();
         setIsPanning(true);
         panStart.current = {
@@ -136,7 +136,7 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(fun
         (e.target as HTMLElement).setPointerCapture(e.pointerId);
       }
     },
-    [tool, transform.x, transform.y],
+    [spacePressed, tool, transform.x, transform.y],
   );
 
   const handlePointerMove = useCallback(
@@ -178,7 +178,7 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(fun
       if ((e.target as HTMLElement).tagName === "INPUT" || (e.target as HTMLElement).tagName === "TEXTAREA") return;
       if (e.code === "Space" && !e.repeat) {
         e.preventDefault();
-        spaceDown.current = true;
+        setSpacePressed(true);
       }
       if (e.key === "v" || e.key === "V") setTool("select");
       if (e.key === "h" || e.key === "H") setTool("hand");
@@ -187,7 +187,7 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(fun
     };
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.code === "Space") {
-        spaceDown.current = false;
+        setSpacePressed(false);
         setIsPanning(false);
       }
     };
@@ -214,7 +214,7 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(fun
 
   const cursorStyle = isPanning
     ? "grabbing"
-    : tool === "hand" || spaceDown.current
+    : tool === "hand" || spacePressed
       ? "grab"
       : tool === "text"
         ? "text"

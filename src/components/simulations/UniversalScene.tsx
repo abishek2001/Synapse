@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useMemo } from "react";
+import { useRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, Stars, Text, Line } from "@react-three/drei";
 import * as THREE from "three";
@@ -26,7 +26,7 @@ export default function UniversalScene({ config }: UniversalSceneProps) {
         {env === "lab" && <LabEnv />}
 
         {config.objects.map((obj) => (
-          <SceneObj key={obj.id} obj={obj} allObjects={config.objects} />
+          <SceneObj key={obj.id} obj={obj} />
         ))}
 
         {config.connections?.map((conn, i) => (
@@ -60,7 +60,7 @@ function LabEnv() {
   );
 }
 
-function SceneObj({ obj, allObjects }: { obj: SceneObject; allObjects: SceneObject[] }) {
+function SceneObj({ obj }: { obj: SceneObject }) {
   const groupRef = useRef<THREE.Group>(null);
 
   useFrame(({ clock }) => {
@@ -148,8 +148,6 @@ function ShapeGeometry({ shape, size }: { shape: string; size: [number, number, 
 
 function ArrowObj({ obj }: { obj: SceneObject }) {
   const size = typeof obj.size === "number" ? obj.size : (obj.size?.[0] ?? 1);
-  const dir = new THREE.Vector3(0, 1, 0);
-  const origin = new THREE.Vector3(...obj.position);
 
   return (
     <group position={obj.position}>

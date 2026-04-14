@@ -6,7 +6,6 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   X,
   Maximize2,
-  Minimize2,
   GripHorizontal,
   Send,
   Loader2,
@@ -183,10 +182,15 @@ export default function ArtifactCanvas({ topic }: ArtifactCanvasProps) {
   }, [modules, annotations, moveAnnotation, addAnnotation, handHighlight]);
 
   useEffect(() => {
-    if (autoExpandModuleId) {
-      setExpandedModuleId(autoExpandModuleId);
-      setAutoExpandModuleId(null);
-    }
+    if (!autoExpandModuleId) return;
+
+    const nextModuleId = autoExpandModuleId;
+    const frame = window.requestAnimationFrame(() => {
+      setExpandedModuleId(nextModuleId);
+    });
+    setAutoExpandModuleId(null);
+
+    return () => window.cancelAnimationFrame(frame);
   }, [autoExpandModuleId, setAutoExpandModuleId]);
 
   const handleDismiss = useCallback(

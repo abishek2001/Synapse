@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import SimCanvas from "./SimCanvas";
@@ -10,27 +10,41 @@ interface Props {
   onParamChange?: (k: string, v: number) => void;
 }
 
+function deterministicUnit(seed: number) {
+  const raw = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
+  return raw - Math.floor(raw);
+}
+
+function createParticleField(count: number, speed: number) {
+  const positions = new Float32Array(count * 3);
+  const velocities = new Float32Array(count * 3);
+  const baseSeed = count * 101 + Math.round(speed * 1000);
+
+  for (let i = 0; i < count; i++) {
+    const seed = baseSeed + i * 6;
+    positions[i * 3] = (deterministicUnit(seed + 1) - 0.5) * 8;
+    positions[i * 3 + 1] = (deterministicUnit(seed + 2) - 0.5) * 8;
+    positions[i * 3 + 2] = (deterministicUnit(seed + 3) - 0.5) * 8;
+    velocities[i * 3] = (deterministicUnit(seed + 4) - 0.5) * speed * 0.1;
+    velocities[i * 3 + 1] = (deterministicUnit(seed + 5) - 0.5) * speed * 0.1;
+    velocities[i * 3 + 2] = (deterministicUnit(seed + 6) - 0.5) * speed * 0.1;
+  }
+
+  return { positions, velocities };
+}
+
 function Particles({ count, speed, attraction }: { count: number; speed: number; attraction: number }) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const velocities = useRef<Float32Array | null>(null);
   const positions = useRef<Float32Array | null>(null);
 
   const dummy = useMemo(() => new THREE.Object3D(), []);
+  const initialField = useMemo(() => createParticleField(count, speed), [count, speed]);
 
-  useMemo(() => {
-    const pos = new Float32Array(count * 3);
-    const vel = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) {
-      pos[i * 3] = (Math.random() - 0.5) * 8;
-      pos[i * 3 + 1] = (Math.random() - 0.5) * 8;
-      pos[i * 3 + 2] = (Math.random() - 0.5) * 8;
-      vel[i * 3] = (Math.random() - 0.5) * speed * 0.1;
-      vel[i * 3 + 1] = (Math.random() - 0.5) * speed * 0.1;
-      vel[i * 3 + 2] = (Math.random() - 0.5) * speed * 0.1;
-    }
-    positions.current = pos;
-    velocities.current = vel;
-  }, [count, speed]);
+  useEffect(() => {
+    positions.current = initialField.positions;
+    velocities.current = initialField.velocities;
+  }, [initialField]);
 
   useFrame((_, delta) => {
     if (!meshRef.current || !positions.current || !velocities.current) return;

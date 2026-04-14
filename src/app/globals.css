@@ -1,6 +1,9 @@
 @import "tailwindcss";
 
 :root {
+  --font-geist-sans: "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --font-geist-mono: "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", monospace;
+  --font-caveat: "Segoe Print", "Bradley Hand", "Comic Sans MS", cursive;
   --background: #06060f;
   --foreground: #e8e8f0;
   --accent: #7c3aed;
@@ -38,6 +41,7 @@
 body {
   background: var(--background);
   color: var(--foreground);
+  font-family: var(--font-geist-sans);
 }
 
 .grid-bg {
