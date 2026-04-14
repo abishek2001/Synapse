@@ -1,82 +1,139 @@
 # Canvas Interaction Model
 
-## Interaction Controls
-
-| Input | Action |
-|-------|--------|
-| **Scroll wheel** | Zoom in/out (centered on cursor) |
-| **Space + drag** | Pan canvas |
-| **Middle mouse + drag** | Pan canvas |
-| **Left click** (select tool) | Select module / deselect |
-| **Shift + left click** | Multi-select modules |
-| **Double-click** (empty area) | Open DoubtPopup at cursor position |
-| **Double-click** (on module) | Expand module to full-screen canvas |
-| **Right-click** (empty area) | Context menu: doubt / sticky / text |
-| **Right-click** (on module) | Context menu: expand / ask about / delete |
-| **V key** | Switch to Select tool |
-| **H key** | Switch to Hand (pan) tool |
-| **T key** | Switch to Text annotation tool |
-| **N key** | Switch to Sticky Note tool |
-| **Escape** | Close expanded module / doubt popup / context menu |
-
----
-
 ## Tool Modes
 
-| Tool | Icon | Behavior |
-|------|------|----------|
-| **Select** | MousePointer | Click modules to select; drag via grip handles only |
-| **Hand** | Hand | Click-drag anywhere to pan canvas |
-| **Text** | Type | Click empty area to place text annotation |
-| **Sticky** | StickyNote | Click empty area to place sticky note |
+| Tool | Key | Behavior |
+|------|-----|----------|
+| **Interaction** | `I` | Default mode. Pointer passes through to artifacts — flashcards flip, graphs are interactive, etc. Grip handle still drags elements. |
+| **Select** | `V` | Click element = select (or select whole group). Drag element = move. Shift-click = add to selection. Click empty canvas = clear selection. |
+| **Hand** | `H` | Drag empty canvas = pan. Grip handle still drags elements. |
+| **Text** | `T` | Click empty canvas = place text annotation. Auto-switches to Select after placement. |
+| **Sticky** | `N` | Click empty canvas = place sticky note. Auto-switches to Select after placement. |
+| **Pen** | `P` | Freehand stroke drawing. Release = stroke becomes a `CanvasElement` of type `stroke`. |
+| **Escape** | — | Returns to Interaction mode. Closes popups/menus. |
 
 ---
 
-## Double-Click Matrix
+## Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `I` | Interaction tool |
+| `V` | Select tool |
+| `H` | Hand (pan) tool |
+| `T` | Text annotation tool |
+| `N` | Sticky note tool |
+| `P` | Pen (draw) tool |
+| `Escape` | Back to Interaction mode |
+
+---
+
+## Element Types
+
+All canvas objects are `CanvasElement` with a `type` field:
+
+| Type | Description | Stored in |
+|------|-------------|-----------|
+| `artifact` | AI-generated learning card (visual, graph, notation, flashcard, lookup, simulation) | `element.artifact` |
+| `text` | Freeform text annotation (heading / subheading / body styles) | `element.text` |
+| `sticky` | Sticky note with color | `element.sticky` |
+| `stroke` | Freehand pen drawing | `element.stroke` |
+
+**Key fields on `CanvasElement`:**
+```ts
+{
+  id: string
+  type: "artifact" | "text" | "sticky" | "stroke"
+  x: number        // world-space position
+  y: number
+  w: number        // width
+  zIndex: number
+  groupId?: string // set when element belongs to a group
+  createdAt: number
+  // one of: artifact, text, sticky, stroke
+}
+```
+
+---
+
+## Groups
+
+Elements can be grouped into a `CanvasGroup`. When `element.groupId` is set:
+
+- **Drag any member** → entire group moves together (all member positions snapshot at drag start, uniform delta applied)
+- **Hover any member** → the group boundary (`GroupBoundary`) highlights with a purple border
+- **Click any member** (select mode) → selects ALL group members
+- **Shift-click any member** (select mode) → toggles all group members in/out of selection
+- **Ungroup** → available in `SelectionBar` when all selected elements share the same `groupId`
+- **Group boundary** → rendered as a rounded rect with a label; `pointer-events-none` (no toolbar buttons on the boundary itself)
+
+---
+
+## Rendering Layer Order
+
+Elements are rendered in two passes to guarantee stroke annotations are always visible:
+
+1. Non-stroke elements (`artifact`, `text`, `sticky`) — sorted by `zIndex`
+2. Stroke elements — sorted by `zIndex`, but with a base `zIndex` of `9000 + element.zIndex`
+
+This ensures pen annotations are never occluded by artifact cards, regardless of their `zIndex` values.
+
+---
+
+## Element Drag Model
+
+InfiniteCanvas uses native `addEventListener` on its container. To avoid pointer capture conflicts:
+
+- InfiniteCanvas returns early (no pan/rubber-band) when `e.target.closest("[data-element-id]")` is found
+- Each `ElementCard` / `StrokeElement` uses React `onPointerDown` + `e.currentTarget.setPointerCapture(e.pointerId)` to own the pointer exclusively
+- The grip handle works in **Hand** and **Select** modes; the root element drag works in **Select** mode only
+
+---
+
+## Rubber-Band Box Selection
+
+In **Select** mode, dragging over empty canvas draws a selection rectangle. On release, all elements whose bounding boxes intersect the rect become selected. If a selected element belongs to a group, only that element (not the whole group) is selected via box select — group-select-all only triggers on individual click.
+
+---
+
+## Double-Click Behavior
 
 | Target | Result |
 |--------|--------|
-| Empty canvas area | Open `DoubtPopup` at cursor world position |
-| Module card | Expand to full-screen `ExpandedModuleCanvas` |
-| Module header/grip | (drag — no double-click action) |
-| Annotation | Enter edit mode (text/sticky) |
-
----
-
-## Module Cards
-
-Each module card renders on the canvas as an absolute-positioned div:
-- **Width**: 360px fixed
-- **Position**: Set by `module.position.{x, y}` in world coordinates
-- **Drag**: Pointer down on header grip → moves module → updates `moveModule(id, x, y)`
-- **Select**: Single click → `clearSelection()` (deselect others) OR shift-click → `toggleModuleSelected(id)`
-
-### Card structure
-```
-ModuleCard (360px × dynamic height)
-  ├── Header (grip + title + expand button)
-  ├── Artifact previews (2-column grid, max 4 shown)
-  ├── Type badges row
-  └── Crumbs row (notes / hints / tips chips)
-```
-
-### Selection state
-- Normal: `border-white/[0.08]`
-- Selected: `ring-2 ring-[#7c3aed] + purple glow shadow`
-- Hover: `border-white/[0.15] + deeper shadow`
+| Empty canvas | Opens `DoubtPopup` at cursor world position |
+| Element or group | Zooms canvas to fit the element's group bounds (or element bounds if ungrouped) |
 
 ---
 
 ## Connection Arrows
 
-Connections are stored in `useCanvasStore().connections: ModuleConnection[]`.
+Connections between groups are stored in `useCanvasStore().connections`.
 
-Arrow rendering (`FlowArrows` SVG component):
-- **Path**: Cubic bezier from bottom-center of source to top-center of target
+Rendered by the `FlowArrows` SVG component:
+- **Path**: Cubic bezier. Edge selection is direction-aware — horizontal connections exit right/enter left; vertical connections exit bottom/enter top
 - **Default**: `stroke="rgba(124,58,237,0.22)"` dashed, animated `stroke-dashoffset`
-- **Highlighted** (when source or target is selected): `stroke="rgba(124,58,237,0.7)"` solid
+- **Highlighted** (source or target group is selected): `stroke="rgba(124,58,237,0.7)"` solid
 
-When `addModule` is called, a connection is automatically created from the previous module to the new one.
+---
+
+## Zoom & Pan
+
+- **Zoom range**: 10% – 300% (`MIN_ZOOM = 0.1`, `MAX_ZOOM = 3`)
+- **Zoom**: scroll wheel, centered on cursor
+- **Pan**: Space + drag, middle-mouse drag, or Hand tool drag
+- **Fit all**: auto-triggered when `groups.length` changes (new AI module added)
+
+---
+
+## Dot Grid Background
+
+```css
+background-image: radial-gradient(circle, rgba(124,58,237,0.07) 1px, transparent 1px);
+background-size: {28 × scale}px {28 × scale}px;
+background-position: {x % (28 × scale)}px {y % (28 × scale)}px;
+```
+
+Dots move with pan and scale with zoom to create the infinite-canvas illusion.
 
 ---
 
@@ -84,36 +141,8 @@ When `addModule` is called, a connection is automatically created from the previ
 
 ### How it triggers
 1. **Double-click empty canvas** → `handleCanvasDoubleClick` → `openDoubtPopup(worldX, worldY)`
-2. **Right-click** → context menu → "Ask a doubt here" → same
+2. **Right-click** → context menu → "Ask a doubt here"
 3. **SelectionBar** → "Ask about selection" → `openDoubtPopup` pre-filled
 
 ### DoubtPopup positioning
-The popup renders in **screen space** (not canvas world space) so it stays fixed regardless of zoom. Screen position = `worldX × scale + panX + containerLeft`.
-
-### Mock mode vs. real mode
-| Mode | Behavior |
-|------|----------|
-| Mock (`isMockMode: true`) | Creates a `FlashcardArtifact` module immediately, no API call |
-| Real (`isMockMode: false`) | Calls `sendMessage(question)` via `useAIChat`, AI generates artifacts |
-
----
-
-## Zoom & Pan
-
-- **Zoom range**: 10% – 300% (`MIN_ZOOM = 0.1`, `MAX_ZOOM = 3`)
-- **Zoom step**: 10% of current scale per scroll tick (multiplicative)
-- **Center-zoom**: Zoom is always centered on the cursor position
-- **Zoom to fit**: Button resets transform to `{x:0, y:0, scale:1}`
-- **Pan speed**: 1:1 with pointer movement when using hand tool
-
----
-
-## Dark Mode Dot Grid
-
-The canvas background uses a radial-gradient dot grid:
-```css
-background-image: radial-gradient(circle, rgba(255,255,255,0.04) 1px, transparent 1px);
-background-size: {24 × scale}px {24 × scale}px;
-background-position: {x % (24 × scale)}px {y % (24 × scale)}px;
-```
-This creates the infinite-canvas illusion — dots move with pan, scale with zoom.
+Renders in **screen space** (fixed, not canvas-world) so it stays put during zoom/pan. Screen position = `worldX × scale + panX + containerLeft`.

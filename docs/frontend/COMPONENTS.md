@@ -32,9 +32,10 @@ app/workspace/page.tsx (Suspense wrapper)
               │           ├── ArtifactCanvas
               │           │     ├── InfiniteCanvas
               │           │     │     ├── CanvasTitle
+              │           │     │     ├── GroupBoundary × N   ← rendered below elements
               │           │     │     ├── FlowArrows (SVG)
-              │           │     │     ├── ModuleCard × N
-              │           │     │     └── CanvasAnnotationCard × N
+              │           │     │     ├── ElementCard × N     ← artifact / text / sticky
+              │           │     │     └── StrokeElement × N   ← pen annotations (always on top)
               │           │     ├── HandTrackingOverlay
               │           │     ├── SelectionBar (floating)
               │           │     ├── DoubtPopup (fixed screen)
@@ -50,65 +51,74 @@ app/workspace/page.tsx (Suspense wrapper)
 ## Component Reference
 
 ### `WorkspaceView` (`src/components/workspace/WorkspaceView.tsx`)
-- **Reads**: `useSessionStore` (query, persona, files, etc.), `useGroundingStore`, `useUIStore` (leftSidebarOpen)
-- **Writes**: orchestrates bridge sequence, calls all store inits
-- **Responsibilities**: bridge loading sequence, layout composition, workspace dark theme container
+- **Reads**: `useSessionStore`, `useGroundingStore`, `useUIStore`
+- **Responsibilities**: bridge loading sequence, layout composition, workspace container
 
 ### `BridgeScreen` (`src/components/workspace/BridgeScreen.tsx`)
 - **Props**: `query, persona, stages, logs, contextCard, latencyMs, fileNames`
-- **Visual**: dark full-screen overlay with ghost module shimmer, staged progress, live log
+- **Visual**: full-screen light overlay with animated whiteboard — group boxes draw in via SVG `pathLength` animation, connection arrows route direction-aware (horizontal right→left, vertical bottom→top), floating cursor dot
 - **Exit**: `AnimatePresence` with `exit={{ opacity:0, scale:0.98 }}`
-
-### `WorkspaceNavbar` (`src/components/workspace/WorkspaceNavbar.tsx`)
-- **Props**: `title, onCallFriend, hasFiles, showSources, onToggleSources, onToggleSidebar?, sidebarOpen?`
-- **Theme**: dark (`text-white/40`, `border-white/[0.05]`)
-
-### `LeftSidebar` (`src/components/workspace/LeftSidebar.tsx`)
-- **Reads**: `useSessionStore` (messages, isStreaming), `useCanvasStore` (updates), `useUIStore` (transcriptExpanded, updatesExpanded)
-- **Writes**: `setTranscriptExpanded`, `setUpdatesExpanded`
-- **Animation**: `motion.div` width `0 → 272px` on open/close
+- **Arrow animation**: uses Framer Motion `pathLength` (0→1) instead of manual `strokeDasharray`/`strokeDashoffset` to ensure correct length calculation
 
 ### `ArtifactCanvas` (`src/components/workspace/ArtifactCanvas.tsx`)
-- **Reads**: `useCanvasStore` (modules, connections, annotations, toasts, selectedModuleIds), `useUIStore` (doubtPopup, contextMenu)
-- **Writes**: annotation CRUD, `toggleModuleSelected`, `clearSelection`, `setAutoExpandModuleId`
-- **Wires events**: `onDoubleClick → openDoubtPopup`, `onRightClick → openContextMenu`, `onShiftClick → toggleModuleSelected`
+- **Reads**: `useCanvasStore` (elements, groups, connections, toasts, selectedElementIds), `useUIStore`
+- **State**: `tool`, `canvasScale`, `hoveredGroupId`
+- **Writes**: `selectElements`, `toggleElementSelected`, `clearSelection`, `addElement`, `moveElement`, `removeElement`
+- **Key logic**:
+  - `handleElementSelect(id, multi)` — if element is grouped, selects/toggles the **entire group**
+  - `hoveredGroupId` — set by `onGroupHover` from each element; passed to `GroupBoundary` as `isHovered`
+  - Elements render in two layers: non-strokes first (sorted by `zIndex`), then strokes (always on top, `zIndex: 9000 + element.zIndex`)
+  - `canvasScale` updated via `onTransformChange` and passed to elements for correct drag delta math
 
 ### `InfiniteCanvas` (`src/components/workspace/InfiniteCanvas.tsx`)
-- **Props**: `children, onCanvasClick?, onDoubleClick?, onRightClick?, onShiftClick?, externalTool?, onToolChange?, hideTools?, handTrackingEnabled?, onToggleHandTracking?, darkMode?`
-- **Ref handle**: `getTransform(), panBy(), screenToWorld(), worldToScreen()`
-- **Manages**: pan/zoom transform, tool state, keyboard shortcuts
+- **Props**: `children, onCanvasClick?, onDoubleClick?, onRightClick?, onShiftClick?, onBoxSelect?, externalTool?, onToolChange?, darkMode?, onStrokeComplete?, strokeColor?, onTransformChange?`
+- **Ref handle** (`InfiniteCanvasHandle`): `getTransform(), panBy(), screenToWorld(), worldToScreen(), zoomToRect(), fitAll()`
+- **Tool type**: `"interaction" | "select" | "hand" | "text" | "sticky" | "pen"`
+- **Event delegation**: returns early (no capture) when `e.target.closest("[data-element-id]")` — gives element React handlers uncontested pointer ownership
+- **Rubber-band**: drawn in Select mode over empty canvas; fires `onBoxSelect(x1, y1, x2, y2)` in world coords
 
-### `ModuleCard` (`src/components/workspace/ModuleCard.tsx`)
-- **Props**: `module, isSelected, onExpand, onSelect, onShiftSelect`
-- **Reads**: `useCanvasStore.moveModule` (for drag)
-- **Visual**: dark card with drag header, 2-col artifact preview grid, type badges, crumb chips
+### `ElementCard` (`src/components/workspace/ElementCard.tsx`)
+- **Props**: `element, isSelected, onSelect, canvasScale, currentTool, onGroupHover?`
+- **Handles**: `artifact`, `text`, `sticky` element types
+- **Drag model**: `useRef` drag state with `groupMembers` snapshot; `onGripDown` works in Hand+Select; `onRootDown` works in Select only. Group drag moves all members uniformly.
+- **Group hover**: fires `onGroupHover(element.groupId)` on enter, `onGroupHover(null)` on leave
+- **Identifier**: `data-element-id={element.id}` on root div (InfiniteCanvas key for early-return)
+
+### `StrokeElement` (`src/components/workspace/StrokeElement.tsx`)
+- **Props**: `element, isSelected, onSelect, canvasScale, currentTool, onGroupHover?`
+- **Renders**: SVG `<path>` from stroke points using quadratic bezier smoothing
+- **z-index**: `9000 + element.zIndex` — always above all artifact cards
+- **Drag**: same grip handle + group drag logic as `ElementCard`
+- **Identifier**: `data-element-id={element.id}`
+
+### `GroupBoundary` (`src/components/workspace/GroupBoundary.tsx`)
+- **Props**: `group, elements, hasSelectedMember, isHovered`
+- **Visual**: rounded rect with group name label; border highlights when `isHovered || hasSelectedMember`
+- **Interaction**: `pointer-events-none` — no toolbar buttons. Group controls live in `SelectionBar`.
+- **Exports**: `computeGroupBounds(groupId, elements)` — returns world-space bounding box `{x, y, w, h}` used for zoom-to-fit and hit testing
+
+### `SelectionBar` (`src/components/workspace/SelectionBar.tsx`)
+- **Reads**: `useCanvasStore` (selectedElementIds, elements, groups)
+- **Visible when**: `selectedElementIds.length >= 1`
+- **Actions**: clear selection, group selected elements, ungroup (when all selected share one `groupId`), ask doubt about selection
+- **Primary UI for group management** — GroupBoundary intentionally has no toolbar
 
 ### `CanvasInputBar` (`src/components/workspace/CanvasInputBar.tsx`)
 - **Reads**: `useSessionStore` (messages, voiceMode, liveCaption, isSpeaking, etc.)
 - **Writes**: `setVoiceMode`, `setLiveCaption`, `sendMessage` via `useAIChat`
-- **Modes**: normal (full input bar) | voice (floating pulse pill + caption)
-- **Replaces**: `TutorPanel` from original implementation
+- **Modes**: normal (full input bar) | voice (floating pulse pill + live caption)
 
 ### `DoubtPopup` (`src/components/workspace/DoubtPopup.tsx`)
 - **Props**: `worldX, worldY, screenX, screenY, prefill?, onClose`
 - **Positioned**: fixed screen coords (not canvas-space)
-- **Mock mode**: creates dummy `FlashcardArtifact` module immediately
-- **Real mode**: calls `useAIChat.sendMessage(question)`
-
-### `SelectionBar` (`src/components/workspace/SelectionBar.tsx`)
-- **Reads**: `useCanvasStore` (selectedModuleIds, modules)
-- **Writes**: `clearSelection`, `openDoubtPopup` (via UIStore)
-- **Visible when**: `selectedModuleIds.length > 1`
 
 ### `MockButton` (`src/components/workspace/MockButton.tsx`)
-- **Reads/Writes**: `useCanvasStore` (isMockMode, loadMockData, clearModules, setMockMode)
 - **Position**: `absolute bottom-20 right-4 z-40`
-- **Note**: Remove this component (one import line in WorkspaceView) before production
+- **Note**: Remove before production
 
 ### `CanvasContextMenu` (`src/components/workspace/CanvasContextMenu.tsx`)
 - **Props**: `screenX, screenY, worldX, worldY, targetModuleId?, onClose, onSetTool, onExpandModule`
 - **Positioned**: `fixed` at screen coords, clamped to viewport
-- **Two modes**: empty canvas menu | module menu
 
 ---
 
@@ -116,25 +126,24 @@ app/workspace/page.tsx (Suspense wrapper)
 
 ### `useAIChat` (`src/hooks/useAIChat.ts`)
 - **Returns**: `{ sendMessage, isStreaming, latestTutor, query }`
-- **Reads**: session store, canvas store, grounding store
-- **Pipeline**: user message → strategy agent → chat API → artifacts + annotations → canvas
+- **Pipeline**: user message → strategy agent → chat API → artifacts → canvas elements
 
 ---
 
 ## Stores
 
 ### `useCanvasStore` (`src/store/canvas.ts`)
-- **Key state**: `modules, connections, updates, selectedModuleIds, isMockMode, annotations, toasts`
-- **Key actions**: `addModule, loadMockData, addConnection, addUpdate, toggleModuleSelected, addCrumbToModule`
+- **Key state**: `elements: CanvasElement[], groups: CanvasGroup[], connections, selectedElementIds, toasts`
+- **Key actions**: `addElement, removeElement, moveElement, updateElementText, updateStickyContent, selectElements, toggleElementSelected, clearSelection, groupSelected, ungroupElements`
 
 ### `useSessionStore` (`src/store/session.ts`)
 - **Key state**: `query, persona, files, messages, isStreaming, voiceMode, liveCaption`
 - **Key actions**: `initSession, addMessage, setVoiceMode, setLiveCaption`
 
 ### `useUIStore` (`src/store/ui.ts`)
-- **Key state**: `leftSidebarOpen, doubtPopup, contextMenu, transcriptExpanded, updatesExpanded`
+- **Key state**: `leftSidebarOpen, doubtPopup, contextMenu, darkMode`
 - **Key actions**: `openDoubtPopup, closeDoubtPopup, openContextMenu, closeContextMenu`
 
 ### `useGroundingStore` (`src/store/grounding.ts`)
 - **Key state**: `studyPlan, sessionContext, retrievalIndexed`
-- **Key actions**: `setStudyPlan, setSessionContext, updateContext, setRetrievalIndexed`
+- **Key actions**: `setStudyPlan, setSessionContext, setRetrievalIndexed`

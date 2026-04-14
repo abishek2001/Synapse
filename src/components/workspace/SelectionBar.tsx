@@ -1,22 +1,34 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { X, HelpCircle } from "lucide-react";
+import { X, HelpCircle, Group, Ungroup, Trash2 } from "lucide-react";
 import { useCanvasStore } from "@/store/canvas";
 import { useUIStore } from "@/store/ui";
 
 export default function SelectionBar() {
-  const { selectedElementIds, elements, groups, clearSelection } = useCanvasStore();
+  const {
+    selectedElementIds,
+    elements,
+    groups,
+    clearSelection,
+    removeElement,
+    groupSelected,
+    ungroupElements,
+  } = useCanvasStore();
   const { openDoubtPopup } = useUIStore();
 
-  if (selectedElementIds.length < 2) return null;
+  if (selectedElementIds.length < 1) return null;
 
-  // Collect unique group names (or element types for ungrouped elements)
   const selectedEls = elements.filter((e) => selectedElementIds.includes(e.id));
-  const groupIds = [...new Set(selectedEls.map((e) => e.groupId).filter(Boolean))];
+  const groupIds = [...new Set(selectedEls.map((e) => e.groupId).filter(Boolean))] as string[];
   const groupNames = groupIds.map((id) => groups.find((g) => g.id === id)?.name).filter(Boolean) as string[];
 
-  // Labels for the subtitle — prefer group names, fall back to element types
+  // Can group when 2+ items selected with no existing group mixing
+  const canGroup = selectedElementIds.length >= 2;
+  // Can ungroup when all selected items share a single group
+  const allSameGroup = groupIds.length === 1 && selectedEls.every((e) => e.groupId === groupIds[0]);
+  const canUngroup = allSameGroup;
+
   const labels = groupNames.length > 0 ? groupNames : selectedEls.map((e) => e.type);
   const subtitle = labels.slice(0, 3).join(" · ") + (labels.length > 3 ? ` +${labels.length - 3}` : "");
 
@@ -25,6 +37,20 @@ export default function SelectionBar() {
       ? groupNames.map((n) => `"${n}"`).join(", ")
       : `${selectedElementIds.length} selected elements`;
     openDoubtPopup(400, 300, `Explain the relationship and connection between: ${aboutText}`);
+  };
+
+  const handleGroup = () => {
+    groupSelected("Group");
+  };
+
+  const handleUngroup = () => {
+    if (groupIds[0]) ungroupElements(groupIds[0]);
+    clearSelection();
+  };
+
+  const handleDelete = () => {
+    selectedElementIds.forEach((id) => removeElement(id));
+    clearSelection();
   };
 
   return (
@@ -36,29 +62,61 @@ export default function SelectionBar() {
       className="absolute top-4 left-1/2 -translate-x-1/2 z-50 pointer-events-auto"
     >
       <div
-        className="flex items-center gap-3 px-4 py-2 rounded-full border border-[#7c3aed]/40 shadow-lg"
+        className="flex items-center gap-1 px-3 py-1.5 rounded-full border border-[#7c3aed]/40 shadow-lg"
         style={{ backgroundColor: "rgba(124,58,237,0.85)", backdropFilter: "blur(12px)" }}
       >
-        <span className="text-[12px] font-semibold text-white/90">
+        <span className="text-[12px] font-semibold text-white/90 px-1.5">
           {selectedElementIds.length} selected
         </span>
 
-        <div className="w-px h-4 bg-white/20" />
+        <div className="w-px h-4 bg-white/20 mx-1" />
+
+        {canGroup && (
+          <button
+            onClick={handleGroup}
+            className="flex items-center gap-1.5 text-[11px] font-medium text-white/80 hover:text-white transition-colors px-2 py-1 rounded-full hover:bg-white/10"
+            title="Group selected"
+          >
+            <Group className="w-3.5 h-3.5" />
+            Group
+          </button>
+        )}
+
+        {canUngroup && (
+          <button
+            onClick={handleUngroup}
+            className="flex items-center gap-1.5 text-[11px] font-medium text-white/80 hover:text-white transition-colors px-2 py-1 rounded-full hover:bg-white/10"
+            title="Ungroup"
+          >
+            <Ungroup className="w-3.5 h-3.5" />
+            Ungroup
+          </button>
+        )}
+
+        {selectedElementIds.length > 1 && (
+          <button
+            onClick={handleAskAboutSelection}
+            className="flex items-center gap-1.5 text-[11px] font-medium text-white/80 hover:text-white transition-colors px-2 py-1 rounded-full hover:bg-white/10"
+          >
+            <HelpCircle className="w-3.5 h-3.5" />
+            Ask AI
+          </button>
+        )}
+
+        <div className="w-px h-4 bg-white/20 mx-1" />
 
         <button
-          onClick={handleAskAboutSelection}
-          className="flex items-center gap-1.5 text-[11px] font-medium text-white/80 hover:text-white transition-colors"
+          onClick={handleDelete}
+          className="text-white/50 hover:text-red-300 transition-colors p-1 rounded-full hover:bg-white/10"
+          title="Delete selected"
         >
-          <HelpCircle className="w-3.5 h-3.5" />
-          Ask about selection
+          <Trash2 className="w-3.5 h-3.5" />
         </button>
-
-        <div className="w-px h-4 bg-white/20" />
 
         <button
           onClick={clearSelection}
-          className="text-white/50 hover:text-white transition-colors"
-          title="Clear selection"
+          className="text-white/50 hover:text-white transition-colors p-1 rounded-full hover:bg-white/10"
+          title="Deselect"
         >
           <X className="w-3.5 h-3.5" />
         </button>

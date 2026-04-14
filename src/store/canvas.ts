@@ -51,7 +51,7 @@ const GROUP_COLORS = [
 
 export type ElementType =
   | "flashcard" | "graph" | "notation" | "visual"
-  | "lookup" | "simulation" | "text" | "sticky";
+  | "lookup" | "simulation" | "text" | "sticky" | "stroke";
 
 export interface TextData {
   content: string;
@@ -62,6 +62,14 @@ export interface TextData {
 export interface StickyData {
   content: string;
   color: string;
+}
+
+// Freehand stroke drawn by the user (stored relative to element's x,y origin)
+export interface StrokeData {
+  points: [number, number][]; // coords relative to element (x, y)
+  color: string;
+  width: number;
+  height: number; // bounding-box height (width lives in CanvasElement.w)
 }
 
 // A single freestanding element on the whiteboard
@@ -78,6 +86,7 @@ export interface CanvasElement {
   artifact?: CanvasArtifact; // for flashcard / graph / notation / visual / lookup / simulation
   text?: TextData;            // for "text"
   sticky?: StickyData;        // for "sticky"
+  stroke?: StrokeData;        // for "stroke"
 }
 
 // A visual group — just a label + background behind related elements

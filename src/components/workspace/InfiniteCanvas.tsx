@@ -25,7 +25,7 @@ import type { CanvasStroke } from "@/store/canvas";
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Transform { x: number; y: number; scale: number }
-export type CanvasTool = "select" | "hand" | "text" | "sticky" | "pen";
+export type CanvasTool = "interaction" | "select" | "hand" | "text" | "sticky" | "pen";
 
 const MIN_ZOOM  = 0.1;
 const MAX_ZOOM  = 4;
@@ -47,7 +47,6 @@ interface InfiniteCanvasProps {
   handTrackingEnabled?: boolean;
   onToggleHandTracking?: () => void;
   darkMode?: boolean;
-  strokes?: CanvasStroke[];
   onStrokeComplete?: (stroke: CanvasStroke) => void;
   strokeColor?: string;
   onTransformChange?: (t: Transform) => void;
@@ -61,6 +60,14 @@ export interface InfiniteCanvasHandle {
   worldToScreen: (worldX: number, worldY: number) => { x: number; y: number };
   zoomToRect: (x: number, y: number, w: number, h: number, padding?: number) => void;
   fitAll: (bounds: { x: number; y: number; w: number; h: number }) => void;
+}
+
+function SelectionRectIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={className} style={style}>
+      <rect x="3" y="3" width="18" height="18" rx="2" strokeDasharray="3.5 2.5" />
+    </svg>
+  );
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -80,7 +87,6 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
       handTrackingEnabled,
       onToggleHandTracking,
       darkMode = false,
-      strokes = [],
       onStrokeComplete,
       strokeColor = "#7c3aed",
       onTransformChange,
@@ -103,56 +109,16 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
 
     // ── Pen stroke state ──────────────────────────────────────────────────────
     // Live strokes drawn imperatively on liveCanvasRef — no React state, no
-    // listener churn. Committed strokes drawn on committedCanvasRef in screen
-    // space (world→screen via transform), so CSS overflow:hidden never clips them.
-    const liveCanvasRef      = useRef<HTMLCanvasElement>(null);
-    const committedCanvasRef = useRef<HTMLCanvasElement>(null);
-    const livePtsRef         = useRef<[number, number][]>([]); // screen pts for commit
-    const isDrawing          = useRef(false);
+    // listener churn. Committed strokes are converted to CanvasElement (type
+    // "stroke") and rendered as world-layer children by ArtifactCanvas.
+    const liveCanvasRef = useRef<HTMLCanvasElement>(null);
+    const livePtsRef    = useRef<[number, number][]>([]); // screen pts for commit
+    const isDrawing     = useRef(false);
 
     const onStrokeCompleteRef = useRef(onStrokeComplete);
     useEffect(() => { onStrokeCompleteRef.current = onStrokeComplete; }, [onStrokeComplete]);
     const strokeColorRef = useRef(strokeColor);
     useEffect(() => { strokeColorRef.current = strokeColor; }, [strokeColor]);
-
-    // Redraw committed strokes canvas whenever strokes or transform changes
-    useEffect(() => {
-      const cvs = committedCanvasRef.current;
-      const container = containerRef.current;
-      if (!cvs || !container) return;
-      const dpr = window.devicePixelRatio || 1;
-      const w = container.offsetWidth;
-      const h = container.offsetHeight;
-      cvs.width  = w * dpr;
-      cvs.height = h * dpr;
-      const ctx = cvs.getContext("2d");
-      if (!ctx) return;
-      ctx.scale(dpr, dpr);
-      if (strokes.length === 0) return;
-      const t = transform;
-      for (const stroke of strokes) {
-        if (stroke.points.length < 2) continue;
-        const pts: [number, number][] = stroke.points.map(([wx, wy]) => [
-          wx * t.scale + t.x,
-          wy * t.scale + t.y,
-        ]);
-        ctx.beginPath();
-        ctx.strokeStyle = stroke.color;
-        ctx.lineWidth   = stroke.width * t.scale;
-        ctx.lineCap     = "round";
-        ctx.lineJoin    = "round";
-        ctx.globalAlpha = 0.85;
-        ctx.moveTo(pts[0][0], pts[0][1]);
-        for (let i = 1; i < pts.length - 1; i++) {
-          const mx = (pts[i][0] + pts[i + 1][0]) / 2;
-          const my = (pts[i][1] + pts[i + 1][1]) / 2;
-          ctx.quadraticCurveTo(pts[i][0], pts[i][1], mx, my);
-        }
-        const last = pts[pts.length - 1];
-        ctx.lineTo(last[0], last[1]);
-        ctx.stroke();
-      }
-    }, [strokes, transform]);
 
     // ── Pan state ─────────────────────────────────────────────────────────────
     const panState = useRef({
@@ -258,6 +224,13 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
 
         // Never fire on toolbar / UI controls
         if (target.closest("[data-canvas-ui]")) return;
+
+        // Interaction mode: let all events pass through to artifact content
+        if (t === "interaction") return;
+
+        // Non-pen: if the click landed on an element, let the element's own
+        // native listeners handle it. Don't start rubber-band or pan.
+        if (t !== "pen" && target.closest("[data-element-id]")) return;
 
         // ── Pen ──────────────────────────────────────────────────────────────
         if (t === "pen") {
@@ -507,7 +480,8 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
       const onKey = (e: KeyboardEvent) => {
         const tag = (e.target as HTMLElement).tagName;
         if (tag === "INPUT" || tag === "TEXTAREA") return;
-        if (e.key === "Escape")             setTool("select");
+        if (e.key === "Escape")             setTool("interaction");
+        if (e.key === "i" || e.key === "I") setTool("interaction");
         if (e.key === "v" || e.key === "V") setTool("select");
         if (e.key === "h" || e.key === "H") setTool("hand");
         if (e.key === "p" || e.key === "P") setTool("pen");
@@ -528,11 +502,12 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
     };
     const zoomPct = Math.round(transform.scale * 100);
 
-    const cursorStyle = isPanning    ? "grabbing"
-      : tool === "hand"   ? "grab"
-      : tool === "pen"    ? "crosshair"
-      : tool === "text"   ? "text"
-      : tool === "sticky" ? "crosshair"
+    const cursorStyle = isPanning           ? "grabbing"
+      : tool === "hand"        ? "grab"
+      : tool === "pen"         ? "crosshair"
+      : tool === "text"        ? "text"
+      : tool === "sticky"      ? "crosshair"
+      : tool === "interaction" ? "default"
       : "default";
 
     const toolbarBg     = darkMode ? "bg-[#1a1a2e]" : "bg-white";
@@ -543,12 +518,13 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
     const toolbarActive = darkMode ? "bg-white/[0.08] text-white/70" : "bg-black/[0.06] text-black/70";
     const dotColor      = darkMode ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.07)";
 
-    const TOOLS = [
-      { id: "select" as CanvasTool, icon: MousePointer2, label: "Select", shortcut: "V" },
-      { id: "hand"   as CanvasTool, icon: Hand,          label: "Pan",    shortcut: "H" },
-      { id: "pen"    as CanvasTool, icon: Pencil,        label: "Draw",   shortcut: "P" },
-      { id: "text"   as CanvasTool, icon: Type,          label: "Text",   shortcut: "T" },
-      { id: "sticky" as CanvasTool, icon: StickyNote,    label: "Sticky", shortcut: "N" },
+    const TOOLS: { id: CanvasTool; icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }>; label: string; shortcut: string; color?: string }[] = [
+      { id: "interaction", icon: MousePointer2,    label: "Interact", shortcut: "I" },
+      { id: "select",      icon: SelectionRectIcon, label: "Select",   shortcut: "V" },
+      { id: "hand",        icon: Hand,              label: "Pan",      shortcut: "H" },
+      { id: "pen",         icon: Pencil,            label: "Draw",     shortcut: "P", color: "rgba(124,58,237,0.75)" },
+      { id: "text",        icon: Type,              label: "Text",     shortcut: "T", color: "rgba(59,130,246,0.8)" },
+      { id: "sticky",      icon: StickyNote,        label: "Sticky",   shortcut: "N", color: "rgba(234,179,8,0.85)" },
     ];
 
     return (
@@ -588,13 +564,6 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
             style={{ zIndex: 15, cursor: "crosshair" }}
           />
         )}
-
-        {/* ── Committed strokes canvas (screen-space, redrawn on transform/stroke change) ── */}
-        <canvas
-          ref={committedCanvasRef}
-          className="absolute inset-0 pointer-events-none"
-          style={{ zIndex: 22, width: "100%", height: "100%" }}
-        />
 
         {/* ── Live pen stroke canvas overlay (drawn imperatively, no React state) ── */}
         <canvas
@@ -638,7 +607,7 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
                       }`}
                       title={`${t.label} (${t.shortcut})`}
                     >
-                      <Icon className="w-3.5 h-3.5" />
+                      <Icon className="w-3.5 h-3.5" style={t.color ? { color: t.color } : undefined} />
                       <div className={`absolute -top-8 left-1/2 -translate-x-1/2 ${
                         darkMode ? "bg-white/10 text-white/80" : "bg-black/80 text-white"
                       } text-[9px] rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap`}>

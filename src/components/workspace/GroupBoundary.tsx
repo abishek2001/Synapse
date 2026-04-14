@@ -4,21 +4,21 @@ import { estimateElemH, type CanvasGroup, type CanvasElement } from "@/store/can
 import { useUIStore } from "@/store/ui";
 
 const PAD_X = 14;
-const PAD_TOP = 26;  // extra room for the label chip above the first element
+const PAD_TOP = 26;
 const PAD_BOTTOM = 14;
 
 interface Props {
   group: CanvasGroup;
   elements: CanvasElement[];
   hasSelectedMember: boolean;
+  isHovered: boolean;
 }
 
-export default function GroupBoundary({ group, elements, hasSelectedMember }: Props) {
+export default function GroupBoundary({ group, elements, hasSelectedMember, isHovered }: Props) {
   const { darkMode } = useUIStore();
 
   if (elements.length === 0) return null;
 
-  // Compute bounding box from member elements
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const el of elements) {
     minX = Math.min(minX, el.x);
@@ -32,35 +32,31 @@ export default function GroupBoundary({ group, elements, hasSelectedMember }: Pr
   const w = maxX - minX + PAD_X * 2;
   const h = maxY - minY + PAD_TOP + PAD_BOTTOM;
 
-  // Slightly brighter tint in dark mode so groups are visible on the dark canvas
   const bgColor = darkMode
     ? group.color.replace(/[\d.]+\)$/, "0.07)")
     : group.color;
 
-  const borderColor = hasSelectedMember
-    ? "rgba(124,58,237,0.22)"
+  const borderColor = hasSelectedMember || isHovered
+    ? "rgba(124,58,237,0.35)"
     : darkMode
       ? "rgba(255,255,255,0.04)"
       : "rgba(0,0,0,0.05)";
 
-  const labelBg = darkMode ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)";
+  const labelBg   = darkMode ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)";
   const labelText = darkMode ? "rgba(255,255,255,0.28)" : "rgba(0,0,0,0.3)";
 
   return (
     <div
       className="absolute pointer-events-none select-none"
       style={{
-        left: x,
-        top: y,
-        width: w,
-        height: h,
+        left: x, top: y, width: w, height: h,
         backgroundColor: bgColor,
         borderRadius: 28,
-        border: `1px solid ${borderColor}`,
+        border: `1.5px solid ${borderColor}`,
         zIndex: 0,
+        transition: "border-color 0.15s",
       }}
     >
-      {/* Group name label — sits inside the padded top area */}
       <div className="absolute top-3 left-4">
         <span
           className="px-2.5 py-0.5 rounded-full inline-block"
@@ -68,9 +64,7 @@ export default function GroupBoundary({ group, elements, hasSelectedMember }: Pr
             backgroundColor: labelBg,
             color: labelText,
             fontFamily: "var(--font-caveat), 'Segoe Print', Georgia, serif",
-            fontSize: 13,
-            fontWeight: 600,
-            letterSpacing: "0.01em",
+            fontSize: 13, fontWeight: 600, letterSpacing: "0.01em",
           }}
         >
           {group.name}
@@ -80,7 +74,7 @@ export default function GroupBoundary({ group, elements, hasSelectedMember }: Pr
   );
 }
 
-/** Compute the world-space bounding box for a group (for arrow endpoints, zoom-to, etc.) */
+/** Compute the world-space bounding box for a group */
 export function computeGroupBounds(groupId: string, elements: CanvasElement[]) {
   const members = elements.filter((e) => e.groupId === groupId);
   if (members.length === 0) return null;

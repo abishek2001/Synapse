@@ -51,19 +51,45 @@ const ARROWS = [
   { from: 2, to: 4, delay: 3.3 },
 ];
 
-function getRectPerimeter(w: number, h: number) {
-  return 2 * (w + h);
-}
-
 function getCenterX(g: typeof GROUPS[0]) { return g.x + g.w / 2; }
 function getCenterY(g: typeof GROUPS[0]) { return g.y + g.h / 2; }
 
-// Compute a curved arrow path between two group rects
+// Compute a curved arrow path between two group rects, picking the right edge
 function arrowPath(from: typeof GROUPS[0], to: typeof GROUPS[0]) {
-  const sx = getCenterX(from), sy = from.y + from.h; // bottom center of from
-  const ex = getCenterX(to),   ey = to.y;             // top center of to
-  const midY = (sy + ey) / 2;
-  return `M ${sx} ${sy} C ${sx} ${midY}, ${ex} ${midY}, ${ex} ${ey}`;
+  const fromCx = getCenterX(from), fromCy = getCenterY(from);
+  const toCx   = getCenterX(to),   toCy   = getCenterY(to);
+  const dx = toCx - fromCx, dy = toCy - fromCy;
+
+  let sx: number, sy: number, ex: number, ey: number;
+  let c1x: number, c1y: number, c2x: number, c2y: number;
+
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    // Mostly horizontal — exit right/left edge, enter opposite edge
+    if (dx > 0) {
+      sx = from.x + from.w; sy = fromCy;
+      ex = to.x;            ey = toCy;
+    } else {
+      sx = from.x;          sy = fromCy;
+      ex = to.x + to.w;     ey = toCy;
+    }
+    const mid = (sx + ex) / 2;
+    c1x = mid; c1y = sy;
+    c2x = mid; c2y = ey;
+  } else {
+    // Mostly vertical — exit bottom/top edge, enter opposite edge
+    if (dy > 0) {
+      sx = fromCx; sy = from.y + from.h;
+      ex = toCx;   ey = to.y;
+    } else {
+      sx = fromCx; sy = from.y;
+      ex = toCx;   ey = to.y + to.h;
+    }
+    const mid = (sy + ey) / 2;
+    c1x = sx; c1y = mid;
+    c2x = ex; c2y = mid;
+  }
+
+  return `M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${ex} ${ey}`;
 }
 
 function ArrowDef() {
@@ -149,8 +175,6 @@ export default function BridgeScreen({
           {ARROWS.map((arrow, i) => {
             const from = GROUPS[arrow.from], to = GROUPS[arrow.to];
             const d = arrowPath(from, to);
-            // Rough path length estimate
-            const pathLen = 160;
             return (
               <motion.path
                 key={i}
@@ -158,10 +182,9 @@ export default function BridgeScreen({
                 fill="none"
                 stroke="rgba(124,58,237,0.35)"
                 strokeWidth={1.5}
-                strokeDasharray={pathLen}
-                initial={{ strokeDashoffset: pathLen }}
-                animate={{ strokeDashoffset: 0 }}
-                transition={{ delay: arrow.delay, duration: 0.55, ease: "easeInOut" }}
+                initial={{ pathLength: 0, opacity: 0 }}
+                animate={{ pathLength: 1, opacity: 1 }}
+                transition={{ delay: arrow.delay, duration: 0.6, ease: "easeInOut" }}
                 markerEnd="url(#arrow)"
               />
             );
@@ -169,7 +192,6 @@ export default function BridgeScreen({
 
           {/* Group boxes */}
           {GROUPS.map((g, i) => {
-            const perim = getRectPerimeter(g.w, g.h);
             return (
               <g key={i}>
                 {/* Box outline draws in */}
@@ -182,9 +204,8 @@ export default function BridgeScreen({
                   fill="rgba(124,58,237,0.025)"
                   stroke="rgba(124,58,237,0.30)"
                   strokeWidth={1.5}
-                  strokeDasharray={perim}
-                  initial={{ strokeDashoffset: perim, opacity: 0 }}
-                  animate={{ strokeDashoffset: 0, opacity: 1 }}
+                  initial={{ pathLength: 0, opacity: 0 }}
+                  animate={{ pathLength: 1, opacity: 1 }}
                   transition={{ delay: g.delay, duration: 0.7, ease: "easeInOut" }}
                 />
 

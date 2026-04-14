@@ -1,10 +1,11 @@
 "use client";
 
-import { useCanvasStore, type CanvasElement, ELEM_WIDTHS } from "@/store/canvas";
+import { useCanvasStore, type CanvasElement, type CanvasStroke, ELEM_WIDTHS } from "@/store/canvas";
 import { useUIStore } from "@/store/ui";
 import { AnimatePresence, motion } from "framer-motion";
 import { useState, useRef, useCallback, useEffect } from "react";
 import ElementCard from "./ElementCard";
+import StrokeElement from "./StrokeElement";
 import GroupBoundary, { computeGroupBounds } from "./GroupBoundary";
 import InfiniteCanvas, { type CanvasTool, type InfiniteCanvasHandle } from "./InfiniteCanvas";
 import HandTrackingOverlay, { type HandGestureEvent } from "./HandTrackingOverlay";
@@ -25,13 +26,11 @@ export default function ArtifactCanvas({ topic }: ArtifactCanvasProps) {
     elements,
     groups,
     connections,
-    strokes,
     toasts,
     selectedElementIds,
     removeElement,
     addElement,
     moveElement,
-    addStroke,
     selectElements,
     toggleElementSelected,
     clearSelection,
@@ -47,8 +46,10 @@ export default function ArtifactCanvas({ topic }: ArtifactCanvasProps) {
     closeContextMenu,
   } = useUIStore();
 
-  const [tool, setTool] = useState<CanvasTool>("select");
+  const [tool, setTool] = useState<CanvasTool>("interaction");
+  const [canvasScale, setCanvasScale] = useState(1);
   const [handTrackingEnabled, setHandTrackingEnabled] = useState(false);
+  const [hoveredGroupId, setHoveredGroupId] = useState<string | null>(null);
   const canvasHandleRef = useRef<InfiniteCanvasHandle>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
 
@@ -65,21 +66,37 @@ export default function ArtifactCanvas({ topic }: ArtifactCanvasProps) {
     setUndoStack((prev) => prev.filter((e) => e.id !== el.id));
   }, []);
 
-  // Element selection handler (passed to ElementCard)
+  // Element selection — if element is grouped, select/toggle the whole group
   const handleElementSelect = useCallback((id: string, multi: boolean) => {
-    if (multi) {
-      toggleElementSelected(id);
+    const el = elements.find(e => e.id === id);
+    const groupId = el?.groupId;
+    if (groupId) {
+      const memberIds = elements.filter(e => e.groupId === groupId).map(e => e.id);
+      if (multi) {
+        const anySelected = memberIds.some(mid => selectedElementIds.includes(mid));
+        if (anySelected) {
+          selectElements(selectedElementIds.filter(sid => !memberIds.includes(sid)));
+        } else {
+          selectElements([...selectedElementIds, ...memberIds]);
+        }
+      } else {
+        selectElements(memberIds);
+      }
     } else {
-      selectElements([id]);
+      if (multi) toggleElementSelected(id);
+      else selectElements([id]);
     }
-  }, [selectElements, toggleElementSelected]);
+  }, [elements, selectedElementIds, selectElements, toggleElementSelected]);
 
   // Rubber-band box selection from InfiniteCanvas
   const handleBoxSelect = useCallback((x1: number, y1: number, x2: number, y2: number) => {
     const minX = Math.min(x1, x2), maxX = Math.max(x1, x2);
     const minY = Math.min(y1, y2), maxY = Math.max(y1, y2);
     const hitIds = elements
-      .filter((el) => el.x < maxX && el.x + el.w > minX && el.y < maxY && el.y + 320 > minY)
+      .filter((el) => {
+        const elH = el.stroke?.height ?? 320;
+        return el.x < maxX && el.x + el.w > minX && el.y < maxY && el.y + elH > minY;
+      })
       .map((el) => el.id);
     if (hitIds.length > 0) selectElements(hitIds);
     else clearSelection();
@@ -138,11 +155,36 @@ export default function ArtifactCanvas({ topic }: ArtifactCanvasProps) {
 
   // ── Hit-testing ──────────────────────────────────────────────────────────────
 
-  /** Find the element under a world coordinate (approximate height). */
+  // Convert a completed CanvasStroke into a first-class CanvasElement
+  const handleStrokeComplete = useCallback((stroke: CanvasStroke) => {
+    if (stroke.points.length < 2) return;
+    const xs = stroke.points.map((p) => p[0]);
+    const ys = stroke.points.map((p) => p[1]);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const pad = stroke.width * 2 + 8;
+    const elX = minX - pad, elY = minY - pad;
+    const elW = Math.max(maxX - minX + pad * 2, 4);
+    const elH = Math.max(maxY - minY + pad * 2, 4);
+    addElement({
+      id: stroke.id,
+      type: "stroke",
+      x: elX, y: elY, w: elW,
+      zIndex: useCanvasStore.getState().elements.length + 100,
+      createdAt: Date.now(),
+      stroke: {
+        points: stroke.points.map(([x, y]) => [x - elX, y - elY] as [number, number]),
+        color: stroke.color,
+        width: stroke.width,
+        height: elH,
+      },
+    });
+  }, [addElement]);
+
+  /** Find the element under a world coordinate. Uses actual height for strokes. */
   const hitTestElement = useCallback((worldX: number, worldY: number) => {
-    // Reverse z-order so topmost element wins
     return [...elements].reverse().find((el) => {
-      const elH = 300; // approximate — good enough for hit-testing
+      const elH = el.stroke?.height ?? 300;
       return worldX >= el.x && worldX <= el.x + el.w &&
              worldY >= el.y && worldY <= el.y + elH;
     }) ?? null;
@@ -237,10 +279,11 @@ export default function ArtifactCanvas({ topic }: ArtifactCanvasProps) {
     if (elements.length === 0) return;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const el of elements) {
+      const elH = el.stroke?.height ?? 320;
       minX = Math.min(minX, el.x);
       minY = Math.min(minY, el.y);
       maxX = Math.max(maxX, el.x + el.w);
-      maxY = Math.max(maxY, el.y + 320);
+      maxY = Math.max(maxY, el.y + elH);
     }
     canvasHandleRef.current?.fitAll({ x: minX - 60, y: minY - 60, w: maxX - minX + 120, h: maxY - minY + 120 });
   // Only re-fit when group count changes (new module added by AI)
@@ -255,8 +298,6 @@ export default function ArtifactCanvas({ topic }: ArtifactCanvasProps) {
 
   const penColor = darkMode ? "rgba(124,58,237,0.8)" : "rgba(124,58,237,0.7)";
 
-  // Current canvas scale for correct drag delta in ElementCard
-  const [canvasScale, setCanvasScale] = useState(1);
   const handleToolChange = useCallback((t: CanvasTool) => setTool(t), []);
 
   return (
@@ -277,8 +318,7 @@ export default function ArtifactCanvas({ topic }: ArtifactCanvasProps) {
           handTrackingEnabled={handTrackingEnabled}
           onToggleHandTracking={() => setHandTrackingEnabled((p) => !p)}
           darkMode={darkMode}
-          strokes={strokes}
-          onStrokeComplete={addStroke}
+          onStrokeComplete={handleStrokeComplete}
           strokeColor={penColor}
           onTransformChange={(t) => setCanvasScale(t.scale)}
         >
@@ -295,6 +335,7 @@ export default function ArtifactCanvas({ topic }: ArtifactCanvasProps) {
                 group={group}
                 elements={members}
                 hasSelectedMember={hasSelected}
+                isHovered={hoveredGroupId === group.id}
               />
             );
           })}
@@ -312,8 +353,9 @@ export default function ArtifactCanvas({ topic }: ArtifactCanvasProps) {
             />
           )}
 
-          {/* Elements — sorted by zIndex so higher z renders on top */}
+          {/* Non-stroke elements — sorted by zIndex */}
           {[...elements]
+            .filter((el) => el.type !== "stroke")
             .sort((a, b) => a.zIndex - b.zIndex)
             .map((el) => (
               <ElementCard
@@ -322,6 +364,24 @@ export default function ArtifactCanvas({ topic }: ArtifactCanvasProps) {
                 isSelected={selectedElementIds.includes(el.id)}
                 onSelect={handleElementSelect}
                 canvasScale={canvasScale}
+                currentTool={tool}
+                onGroupHover={setHoveredGroupId}
+              />
+            ))}
+
+          {/* Stroke annotations — always rendered above artifacts */}
+          {[...elements]
+            .filter((el) => el.type === "stroke")
+            .sort((a, b) => a.zIndex - b.zIndex)
+            .map((el) => (
+              <StrokeElement
+                key={el.id}
+                element={el}
+                isSelected={selectedElementIds.includes(el.id)}
+                onSelect={handleElementSelect}
+                canvasScale={canvasScale}
+                currentTool={tool}
+                onGroupHover={setHoveredGroupId}
               />
             ))}
 
@@ -342,7 +402,7 @@ export default function ArtifactCanvas({ topic }: ArtifactCanvasProps) {
 
         {/* Selection bar */}
         <AnimatePresence>
-          {selectedElementIds.length > 1 && <SelectionBar />}
+          {selectedElementIds.length >= 1 && <SelectionBar />}
         </AnimatePresence>
 
         {/* Doubt popup */}
