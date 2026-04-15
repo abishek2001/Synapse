@@ -48,6 +48,9 @@ export default function WorkspaceView() {
   const { darkMode, leftSidebarOpen, setLeftSidebarOpen, rightSidebarOpen, setRightSidebarOpen } = useUIStore();
   const { addUpdate } = useCanvasStore();
 
+  /* ── Canvas intro text (written on board after bridge) ── */
+  const [introText, setIntroText] = useState("");
+
   /* ── Bridge state ── */
   const [showBridge, setShowBridge] = useState(true);
   const [stages, setStages] = useState<BridgeStage[]>([]);
@@ -225,7 +228,12 @@ export default function WorkspaceView() {
         const tutorWarmup = fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query: `Briefly summarize the key concepts in "${displayQ}" in one sentence. Reply in under 20 words.`, persona: displayP, history: [], mode: "tutor" }),
+          body: JSON.stringify({
+            query: `Write a brief 2-sentence introduction to "${displayQ}" for a student just starting to learn. Be clear and engaging. No bullet points, no headers — plain prose only.`,
+            persona: displayP,
+            history: [],
+            mode: "tutor",
+          }),
         });
 
         const [, , tutorRes] = await Promise.all([studyPlanPromise, embedPromise, tutorWarmup]);
@@ -236,8 +244,12 @@ export default function WorkspaceView() {
           if (tutorRes.ok) {
             const data = await tutorRes.json();
             const preview = data.tutor?.explanation || data.rawResponse || "";
-            if (preview) addLog(`AI ready — "${preview.slice(0, 80)}${preview.length > 80 ? "..." : ""}"`, "success");
-            else addLog(`AI connected in ${elapsed}ms`, "success");
+            if (preview) {
+              addLog(`AI ready — "${preview.slice(0, 80)}${preview.length > 80 ? "..." : ""}"`, "success");
+              setIntroText(preview);
+            } else {
+              addLog(`AI connected in ${elapsed}ms`, "success");
+            }
             setContextCard((prev) => ({
               ...prev,
               tags: [{ label: displayP, color: "#7c3aed" }, { label: `${elapsed}ms`, color: "#06b6d4" }, { label: "Ready", color: "#10b981" }],
@@ -341,7 +353,7 @@ export default function WorkspaceView() {
 
               {/* Canvas area */}
               <div className="flex-1 min-w-0 relative">
-                <ArtifactCanvas topic={displayTitle} />
+                <ArtifactCanvas topic={displayTitle} intro={introText} />
 
                 {/* Sources panel (floating, top-right) */}
                 {showSources && files.length > 0 && (

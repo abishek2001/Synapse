@@ -6,7 +6,7 @@ import { Send, Mic, MicOff, Loader2 } from "lucide-react";
 import { useSessionStore } from "@/store/session";
 import { useUIStore } from "@/store/ui";
 import { useAIChat } from "@/hooks/useAIChat";
-import { startListening, stopListening, isRecognitionSupported, speak } from "@/lib/voice/speech";
+import { startListening, stopListening, isRecognitionSupported } from "@/lib/voice/speech";
 
 export default function CanvasInputBar() {
   const {
@@ -14,16 +14,10 @@ export default function CanvasInputBar() {
     voiceMode,
     liveCaption,
     isSpeaking,
-    isMuted,
     setVoiceMode,
     setLiveCaption,
-    setSpeaking,
     pendingVoiceText,
     setPendingVoiceText,
-    addMessage,
-    query,
-    files,
-    documentContext,
   } = useSessionStore();
 
   const { darkMode } = useUIStore();
@@ -31,35 +25,10 @@ export default function CanvasInputBar() {
   const [input, setInput] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const recognitionOk = useRef(false);
-  const initialized = useRef(false);
 
   useEffect(() => { recognitionOk.current = isRecognitionSupported(); }, []);
 
-  // Inject welcome message once
-  useEffect(() => {
-    if (initialized.current || !query) return;
-    // Skip if welcome already exists
-    if (useSessionStore.getState().messages.some((m) => m.id === "welcome")) {
-      initialized.current = true;
-      return;
-    }
-    if (files.length > 0 && !documentContext) return;
-    initialized.current = true;
-
-    const greeting = files.length > 0
-      ? `Loaded your material on "${query}". Ask me anything!`
-      : `Ready to explore "${query}" — ask me anything or just start typing.`;
-
-    addMessage({ id: "welcome", role: "tutor", content: greeting, timestamp: Date.now() });
-
-    if (!isMuted) {
-      setTimeout(() => {
-        setSpeaking(true);
-        speak(greeting, () => setSpeaking(false));
-      }, 800);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query]);
+  // (Intro is written directly on the canvas; no bottom greeting needed here.)
 
   // Handle pending voice text
   useEffect(() => {
@@ -96,10 +65,7 @@ export default function CanvasInputBar() {
     }
   };
 
-  // Last user message for caption context
-  const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
-  const _ = lastUserMsg; // suppress unused warning
-  void _;
+  void messages;
   void isSpeaking;
 
   const barBg = darkMode

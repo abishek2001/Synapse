@@ -19,9 +19,10 @@ const ARTIFACTS_Y = 140;
 
 interface ArtifactCanvasProps {
   topic?: string;
+  intro?: string;
 }
 
-export default function ArtifactCanvas({ topic }: ArtifactCanvasProps) {
+export default function ArtifactCanvas({ topic, intro }: ArtifactCanvasProps) {
   const {
     elements,
     groups,
@@ -323,7 +324,8 @@ export default function ArtifactCanvas({ topic }: ArtifactCanvasProps) {
           onTransformChange={(t) => setCanvasScale(t.scale)}
         >
           {topic && <CanvasTitle topic={topic} dark={darkMode} />}
-          {elements.length === 0 && <EmptyHint dark={darkMode} />}
+          {intro && <CanvasIntroText intro={intro} dark={darkMode} />}
+          {elements.length === 0 && !intro && <EmptyHint dark={darkMode} />}
 
           {/* Group boundaries — rendered below elements */}
           {groups.map((group) => {
@@ -523,6 +525,52 @@ function CanvasTitle({ topic, dark }: { topic: string; dark: boolean }) {
         className="mt-1 h-[2px] rounded-full"
         style={{ width: Math.min(topic.length * 22, 600), backgroundColor: dark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)" }}
       />
+    </motion.div>
+  );
+}
+
+/* ──── Canvas Intro Text (typewriter) ──── */
+
+function CanvasIntroText({ intro, dark }: { intro: string; dark: boolean }) {
+  const [displayed, setDisplayed] = useState("");
+
+  useEffect(() => {
+    setDisplayed("");
+    let i = 0;
+    const id = setInterval(() => {
+      i++;
+      setDisplayed(intro.slice(0, i));
+      if (i >= intro.length) clearInterval(id);
+    }, 16);
+    return () => clearInterval(id);
+  }, [intro]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.5, delay: 0.2 }}
+      className="absolute pointer-events-none select-none"
+      style={{ left: 80, top: TITLE_Y + 100, width: 640 }}
+    >
+      <p
+        style={{
+          fontFamily: "var(--font-caveat), 'Segoe Print', cursive",
+          fontSize: 21,
+          lineHeight: 1.65,
+          color: dark ? "rgba(255,255,255,0.42)" : "rgba(0,0,0,0.48)",
+        }}
+      >
+        {displayed}
+        {displayed.length < intro.length && (
+          <span
+            className="animate-pulse"
+            style={{ color: dark ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.3)" }}
+          >
+            |
+          </span>
+        )}
+      </p>
     </motion.div>
   );
 }
