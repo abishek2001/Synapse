@@ -8,6 +8,9 @@ import {
   Loader2,
   Sparkles,
   Volume2,
+  Compass,
+  GraduationCap,
+  X,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSessionStore } from "@/store/session";
@@ -51,11 +54,13 @@ export default function TutorPanel() {
     isSpeaking,
     isMuted,
     bridgeDone,
+    learningMode,
     pendingVoiceText,
     addMessage,
     setStreaming,
     setSpeaking,
     setPendingVoiceText,
+    setLearningMode,
   } = useSessionStore();
 
   const { addModule, addElement, addToast, updateToast, removeToast, elements } = useCanvasStore();
@@ -63,10 +68,12 @@ export default function TutorPanel() {
 
   const [input, setInput] = useState("");
   const [showHistory, setShowHistory] = useState(false);
+  const [bubbleDismissed, setBubbleDismissed] = useState(false);
   const [autoSpeak] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const initialized = useRef(false);
+  const autoExploreStarted = useRef(false);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -89,14 +96,20 @@ export default function TutorPanel() {
       });
     }
 
-    const greeting = files.length > 0
-      ? `Hey! I've loaded your material on "${query}". I've set up the canvas and I'm ready to build an interactive learning space for you. Say "begin" when you're ready, or ask me anything specific!`
-      : `Hey! I'm Synapse. Today we're exploring "${query}". I'll create visuals, equations, and diagrams on the canvas as we go. Say "begin" when you're ready, or ask me anything!`;
+    const greeting = `Hey! I'm Synapse, and I'm ready to explore "${query}" with you. How would you like to learn?`;
 
     addMessage({
       id: "welcome",
       role: "tutor",
       content: greeting,
+      timestamp: Date.now(),
+    });
+
+    // Mode picker is shown as a special "choose" message
+    addMessage({
+      id: "mode-pick",
+      role: "system",
+      content: "__MODE_PICKER__",
       timestamp: Date.now(),
     });
 
@@ -162,14 +175,15 @@ export default function TutorPanel() {
       try {
         const history = messages
           .filter((m) => m.role !== "system")
-          .slice(-10)
+          .slice(-12)
           .map((m) => ({
             role: m.role === "tutor" ? ("assistant" as const) : ("user" as const),
             content: m.content,
           }));
 
+        // Strategy agent — only for guided mode with existing session context
         let strategyHint: string | undefined;
-        if (sessionContext) {
+        if (sessionContext && learningMode === "guided") {
           try {
             const stratRes = await fetch("/api/strategy", {
               method: "POST",
@@ -186,23 +200,15 @@ export default function TutorPanel() {
               const stratData = await stratRes.json();
               const d = stratData.decision;
               if (d) {
-                strategyHint = `Action: ${d.action}. ${d.reasoning} ${d.suggestedPrompt}`;
-                if (d.conceptsToTrack?.length) {
-                  updateContext({
-                    ...sessionContext,
-                    questionsAsked: sessionContext.questionsAsked + 1,
-                    lastActivityAt: Date.now(),
-                  });
-                }
-                if (d.shouldAdvanceModule) {
-                  updateContext({
-                    ...sessionContext,
-                    currentModuleIndex: Math.min(
-                      sessionContext.currentModuleIndex + 1,
-                      sessionContext.totalModules - 1,
-                    ),
-                  });
-                }
+                strategyHint = `${d.action}: ${d.suggestedPrompt}`;
+                updateContext({
+                  ...sessionContext,
+                  questionsAsked: sessionContext.questionsAsked + 1,
+                  lastActivityAt: Date.now(),
+                  currentModuleIndex: d.shouldAdvanceModule
+                    ? Math.min(sessionContext.currentModuleIndex + 1, sessionContext.totalModules - 1)
+                    : sessionContext.currentModuleIndex,
+                });
               }
             }
           } catch {
@@ -224,6 +230,7 @@ export default function TutorPanel() {
                 : undefined),
             mode: "tutor",
             strategyHint,
+            learningMode,
           }),
         });
 
@@ -294,6 +301,7 @@ export default function TutorPanel() {
       documentContext,
       autoSpeak,
       isMuted,
+      learningMode,
       addMessage,
       setStreaming,
       setSpeaking,
@@ -317,6 +325,18 @@ export default function TutorPanel() {
     }
   }, [pendingVoiceText, isStreaming, isSpeaking, sendMessage, setPendingVoiceText, setSpeaking]);
 
+  // Auto-explore mode: AI teaches the full topic without user intervention
+  useEffect(() => {
+    if (learningMode !== "auto" || autoExploreStarted.current || !bridgeDone || isStreaming) return;
+    autoExploreStarted.current = true;
+
+    const autoPrompt = files.length > 0
+      ? `Teach me everything about "${query}" using my uploaded material. Cover all the key concepts with visuals and equations on the canvas.`
+      : `Teach me everything about "${query}". Cover all the key concepts with visuals and equations on the canvas.`;
+
+    sendMessage(autoPrompt);
+  }, [learningMode, bridgeDone, isStreaming, query, files, sendMessage]);
+
   const handleSend = () => {
     if (!input.trim()) return;
     sendMessage(input);
@@ -324,7 +344,44 @@ export default function TutorPanel() {
   };
 
   const latestTutor = [...messages].reverse().find((m) => m.role === "tutor");
-  const latestUser = [...messages].reverse().find((m) => m.role === "user");
+  const latestUser = [...messages].reverse().find(
+    (m) => m.role === "user" && m.content !== "Auto Explore",
+  );
+
+  const lastShownTutorId = useRef<string | null>(null);
+  if (latestTutor && latestTutor.id !== lastShownTutorId.current) {
+    lastShownTutorId.current = latestTutor.id;
+    if (bubbleDismissed) setBubbleDismissed(false);
+  }
+  const showModePicker = learningMode === null && messages.some((m) => m.content === "__MODE_PICKER__");
+
+  const handlePickMode = (mode: "guided" | "auto") => {
+    setLearningMode(mode);
+
+    const label = mode === "guided" ? "Guided Learning" : "Auto Explore";
+    addMessage({
+      id: `mode-${Date.now()}`,
+      role: "user",
+      content: label,
+      timestamp: Date.now(),
+    });
+
+    if (mode === "guided") {
+      const msg = `Great choice! I'll guide you step by step through "${query}". What part are you most curious about? Or just say "start from the basics" and I'll take it from there.`;
+      addMessage({ id: `guide-ack-${Date.now()}`, role: "tutor", content: msg, timestamp: Date.now() });
+      if (autoSpeak && !isMuted) {
+        setSpeaking(true);
+        speak(msg, () => setSpeaking(false));
+      }
+    } else {
+      const msg = `Let me build out the complete learning space for "${query}". Sit back — I'll create all the visuals, equations, and notes on the canvas.`;
+      addMessage({ id: `auto-ack-${Date.now()}`, role: "tutor", content: msg, timestamp: Date.now() });
+      if (autoSpeak && !isMuted) {
+        setSpeaking(true);
+        speak(msg, () => setSpeaking(false));
+      }
+    }
+  };
 
   return (
     <div className="absolute bottom-0 left-0 right-0 z-30 flex flex-col items-center pointer-events-none pb-5 px-4">
@@ -345,6 +402,7 @@ export default function TutorPanel() {
               >
                 {messages.map((msg) => {
                   if (msg.role === "system") {
+                    if (msg.content === "__MODE_PICKER__") return null;
                     return (
                       <div key={msg.id} className="text-center">
                         <span className="text-[10px] text-black/20 font-medium">
@@ -384,9 +442,9 @@ export default function TutorPanel() {
           )}
         </AnimatePresence>
 
-        {/* Latest conversation bubble (tutor message) */}
+        {/* Latest conversation bubble (tutor message) — compact, scrollable, dismissible */}
         <AnimatePresence mode="wait">
-          {latestTutor && !showHistory && (
+          {latestTutor && !showHistory && !bubbleDismissed && (
             <motion.div
               key={latestTutor.id}
               initial={{ opacity: 0, y: 12, scale: 0.97 }}
@@ -404,31 +462,87 @@ export default function TutorPanel() {
                 </div>
               )}
 
-              {/* Tutor response */}
-              <div className="relative">
-                <div className="bg-[#1c1c1e]/[0.92] backdrop-blur-2xl text-white/90 rounded-2xl px-5 py-4 shadow-2xl">
-                  <div className="flex items-start gap-3">
-                    <div className="w-6 h-6 rounded-full bg-white/[0.08] flex items-center justify-center flex-shrink-0 mt-0.5">
-                      <Sparkles className="w-3 h-3 text-white/50" />
+              {/* Tutor response — max height with scroll */}
+              <div className="relative group">
+                <div className="bg-[#1c1c1e]/[0.92] backdrop-blur-2xl text-white/90 rounded-2xl shadow-2xl overflow-hidden">
+                  {/* Header with controls */}
+                  <div className="flex items-center gap-2 px-4 pt-3 pb-1">
+                    <div className="w-5 h-5 rounded-full bg-white/[0.08] flex items-center justify-center flex-shrink-0">
+                      <Sparkles className="w-2.5 h-2.5 text-white/50" />
                     </div>
-                    <p className="text-[14px] leading-relaxed flex-1">
-                      {renderInlineMarkdown(latestTutor.content)}
-                    </p>
+                    <span className="text-[11px] text-white/30 font-medium flex-1">Synapse</span>
                     {!isSpeaking && (
                       <button
                         onClick={() => {
                           setSpeaking(true);
                           speak(latestTutor.content, () => setSpeaking(false));
                         }}
-                        className="w-7 h-7 rounded-full bg-white/[0.08] flex items-center justify-center flex-shrink-0 text-white/30 hover:text-white/70 hover:bg-white/[0.15] transition-all"
+                        className="w-6 h-6 rounded-full bg-white/[0.06] flex items-center justify-center flex-shrink-0 text-white/25 hover:text-white/60 hover:bg-white/[0.12] transition-all"
                         title="Listen"
                       >
-                        <Volume2 className="w-3 h-3" />
+                        <Volume2 className="w-2.5 h-2.5" />
                       </button>
                     )}
+                    <button
+                      onClick={() => setBubbleDismissed(true)}
+                      className="w-6 h-6 rounded-full bg-white/[0.06] flex items-center justify-center flex-shrink-0 text-white/25 hover:text-white/60 hover:bg-white/[0.12] transition-all"
+                      title="Dismiss"
+                    >
+                      <X className="w-2.5 h-2.5" />
+                    </button>
+                  </div>
+
+                  {/* Scrollable content */}
+                  <div className="max-h-[30vh] overflow-y-auto px-4 pb-3 scrollbar-dark">
+                    <p className="text-[13px] leading-relaxed">
+                      {renderInlineMarkdown(latestTutor.content)}
+                    </p>
                   </div>
                 </div>
               </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Mode picker */}
+        <AnimatePresence>
+          {showModePicker && !showHistory && (
+            <motion.div
+              initial={{ opacity: 0, y: 12, scale: 0.95 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -8, scale: 0.95 }}
+              transition={{ type: "spring", damping: 22, stiffness: 300, delay: 0.15 }}
+              className="w-full mb-3 flex gap-3"
+            >
+              <button
+                onClick={() => handlePickMode("guided")}
+                className="flex-1 group bg-white border border-black/[0.08] rounded-2xl px-5 py-4 text-left hover:border-indigo-400/40 hover:shadow-md transition-all"
+              >
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center group-hover:bg-indigo-100 transition-colors">
+                    <GraduationCap className="w-4.5 h-4.5 text-indigo-500" />
+                  </div>
+                  <span className="text-[14px] font-semibold text-black/80">Guided Learning</span>
+                </div>
+                <p className="text-[12px] text-black/40 leading-relaxed">
+                  I'll guide you step by step, adapting to your questions and pace.
+                </p>
+              </button>
+
+              <button
+                onClick={() => handlePickMode("auto")}
+                className="flex-1 group bg-white border border-black/[0.08] rounded-2xl px-5 py-4 text-left hover:border-emerald-400/40 hover:shadow-md transition-all"
+              >
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-50 flex items-center justify-center group-hover:bg-emerald-100 transition-colors">
+                    <Compass className="w-4.5 h-4.5 text-emerald-500" />
+                  </div>
+                  <span className="text-[14px] font-semibold text-black/80">Auto Explore</span>
+                </div>
+                <p className="text-[12px] text-black/40 leading-relaxed">
+                  I'll teach the complete concept end-to-end with all visuals on the canvas.
+                </p>
+              </button>
             </motion.div>
           )}
         </AnimatePresence>

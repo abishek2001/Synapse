@@ -9,7 +9,6 @@ import type { AgentMessage, FriendResponse } from "@/lib/agents/types";
 import type { CanvasArtifact } from "@/lib/tools/types";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? "" });
-const MAX_TOOL_ROUNDS = 4;
 
 export async function POST(req: NextRequest) {
   try {
@@ -21,6 +20,7 @@ export async function POST(req: NextRequest) {
       documentContext,
       mode = "tutor",
       strategyHint,
+      learningMode,
     } = body as {
       query: string;
       persona: string;
@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
       documentContext?: string;
       mode: "tutor" | "friend";
       strategyHint?: string;
+      learningMode?: "guided" | "auto" | null;
     };
 
     if (!query) {
@@ -41,7 +42,7 @@ export async function POST(req: NextRequest) {
       return handleFriendMode(query);
     }
 
-    return handleTutorMode(query, persona, history, documentContext, strategyHint);
+    return handleTutorMode(query, persona, history, documentContext, strategyHint, learningMode);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("Chat API error:", message);
@@ -76,11 +77,12 @@ async function handleTutorMode(
   history: AgentMessage[],
   documentContext?: string,
   strategyHint?: string,
+  learningMode?: "guided" | "auto" | null,
 ) {
-  let systemPrompt = buildTutorSystemPrompt(persona, documentContext);
+  let systemPrompt = buildTutorSystemPrompt(persona, documentContext, learningMode);
 
   if (strategyHint) {
-    systemPrompt += `\n\nTEACHING STRATEGY HINT (from the orchestration layer):\n${strategyHint}\nFollow this guidance for your next response.`;
+    systemPrompt += `\n\nSTRATEGY HINT: ${strategyHint}`;
   }
 
   const messages: ChatCompletionMessageParam[] = [
@@ -96,21 +98,29 @@ async function handleTutorMode(
   const canvasAnnotations: DelegatedAnnotation[] = [];
   let finalExplanation = "";
 
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+  const isAuto = learningMode === "auto";
+  const maxRounds = isAuto ? 10 : 6;
+  const maxTokens = isAuto ? 4096 : 2048;
+
+  for (let round = 0; round < maxRounds; round++) {
+    // Force tool use on first round to ensure canvas gets populated
+    const shouldForceTools = round === 0 && artifacts.length === 0;
+    const toolChoice = shouldForceTools ? "required" as const : "auto" as const;
+
     const res = await openai.chat.completions.create({
       model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
       messages,
       tools: CANVAS_TOOLS,
-      tool_choice: "auto",
-      temperature: 0.7,
-      max_tokens: 1536,
+      tool_choice: toolChoice,
+      temperature: 0.6,
+      max_tokens: maxTokens,
     });
 
     const choice = res.choices[0];
     const assistantMsg = choice.message;
 
     if (assistantMsg.content) {
-      finalExplanation += (finalExplanation ? " " : "") + assistantMsg.content;
+      finalExplanation += (finalExplanation ? "\n\n" : "") + assistantMsg.content;
     }
 
     if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) {
@@ -131,27 +141,35 @@ async function handleTutorMode(
         fnArgs = {};
       }
 
-      const toolResult = await handleToolCall(fnName, fnArgs, documentContext);
+      try {
+        const toolResult = await handleToolCall(fnName, fnArgs, documentContext);
 
-      if (toolResult.artifact) {
-        artifacts.push(toolResult.artifact);
+        if (toolResult.artifact) {
+          artifacts.push(toolResult.artifact);
+        }
+
+        if (toolResult.annotations) {
+          canvasAnnotations.push(...toolResult.annotations);
+        }
+
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: toolResult.result,
+        });
+      } catch (toolErr) {
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: `[Tool error: ${toolErr instanceof Error ? toolErr.message : "failed"}]`,
+        });
       }
-
-      if (toolResult.annotations) {
-        canvasAnnotations.push(...toolResult.annotations);
-      }
-
-      messages.push({
-        role: "tool",
-        tool_call_id: toolCall.id,
-        content: toolResult.result,
-      });
     }
   }
 
   return NextResponse.json({
     type: "tutor",
-    tutor: { explanation: finalExplanation || "Let me show you on the canvas." },
+    tutor: { explanation: finalExplanation || "I've put some things on the canvas for you — take a look!" },
     artifacts,
     canvasAnnotations,
     rawResponse: finalExplanation,

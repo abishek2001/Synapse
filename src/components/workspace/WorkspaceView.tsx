@@ -7,7 +7,7 @@ import WorkspaceNavbar from "./WorkspaceNavbar";
 import ArtifactCanvas from "./ArtifactCanvas";
 import SourcesPanel from "./SourcesPanel";
 import CallFriendModal from "./CallFriendModal";
-import CanvasInputBar from "./CanvasInputBar";
+import TutorPanel from "./TutorPanel";
 import LeftSidebar from "./LeftSidebar";
 import RightSidebar from "./RightSidebar";
 import MockButton from "./MockButton";
@@ -223,29 +223,15 @@ export default function WorkspaceView() {
             }).catch(() => addLog("Embedding index skipped (keyword fallback active)", "info"))
           : Promise.resolve();
 
-        const tutorWarmup = fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query: `Briefly summarize the key concepts in "${displayQ}" in one sentence. Reply in under 20 words.`, persona: displayP, history: [], mode: "tutor" }),
-        });
-
-        const [, , tutorRes] = await Promise.all([studyPlanPromise, embedPromise, tutorWarmup]);
+        await Promise.all([studyPlanPromise, embedPromise]);
         const elapsed = Math.round(performance.now() - t0);
         setLatencyMs(elapsed);
-
-        try {
-          if (tutorRes.ok) {
-            const data = await tutorRes.json();
-            const preview = data.tutor?.explanation || data.rawResponse || "";
-            if (preview) addLog(`AI ready — "${preview.slice(0, 80)}${preview.length > 80 ? "..." : ""}"`, "success");
-            else addLog(`AI connected in ${elapsed}ms`, "success");
-            setContextCard((prev) => ({
-              ...prev,
-              tags: [{ label: displayP, color: "#7c3aed" }, { label: `${elapsed}ms`, color: "#06b6d4" }, { label: "Ready", color: "#10b981" }],
-              status: "AI Ready",
-            }));
-          }
-        } catch { addLog("AI warmup skipped", "info"); }
+        addLog(`AI engine ready in ${elapsed}ms`, "success");
+        setContextCard((prev) => ({
+          ...prev,
+          tags: [{ label: displayP, color: "#7c3aed" }, { label: `${elapsed}ms`, color: "#06b6d4" }, { label: "Ready", color: "#10b981" }],
+          status: "AI Ready",
+        }));
         updateStage(id, "done", `${displayP} online`);
 
       } else if (id === "canvas") {
@@ -355,8 +341,8 @@ export default function WorkspaceView() {
                 {/* Mock button */}
                 <MockButton />
 
-                {/* Canvas input bar */}
-                <CanvasInputBar />
+                {/* Tutor conversation bar + mode picker */}
+                <TutorPanel />
               </div>
 
               {/* Right sidebar — Transcript & Updates */}

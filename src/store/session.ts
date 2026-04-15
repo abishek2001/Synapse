@@ -39,6 +39,7 @@ interface SessionState {
   isMuted: boolean;
   pendingVoiceText: string | null;
 
+  learningMode: "guided" | "auto" | null;
   bridgeDone: boolean;
   tutorCollapsed: boolean;
   showSources: boolean;
@@ -46,6 +47,7 @@ interface SessionState {
   voiceMode: boolean;
   liveCaption: string;
 
+  setLearningMode: (mode: "guided" | "auto") => void;
   setBridgeDone: (v: boolean) => void;
   initSession: (query: string, persona: string, files: UploadedFile[]) => void;
   setDocuments: (docs: ParsedDocument[]) => void;
@@ -80,6 +82,7 @@ const initialState = {
   isListening: false,
   isMuted: false,
   pendingVoiceText: null as string | null,
+  learningMode: null as "guided" | "auto" | null,
   bridgeDone: false,
   tutorCollapsed: false,
   showSources: false,
@@ -124,6 +127,7 @@ export const useSessionStore = create<SessionState>((set) => ({
       return { messages: [...s.messages, msg] };
     }),
 
+  setLearningMode: (learningMode) => set({ learningMode }),
   setBridgeDone: (bridgeDone) => set({ bridgeDone }),
   setStreaming: (isStreaming) => set({ isStreaming }),
   setSceneConfig: (sceneConfig) => set({ sceneConfig }),

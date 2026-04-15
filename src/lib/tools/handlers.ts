@@ -56,48 +56,69 @@ async function handleGenerateVisual(
     style: VisualArtifact["style"];
   };
 
-  const svgPrompt = `Generate a handwritten-style SVG diagram for: "${description}"
-Style: ${style}
-Requirements:
-- Output ONLY valid SVG markup, nothing else
-- Use viewBox="0 0 500 380"
-- Light/white background style (the canvas is white/light gray)
-- Use a handwritten aesthetic: font-family="Caveat, Segoe Print, Comic Sans MS, cursive"
-- Colors: #1a1a2e for text, #7c3aed for primary/purple, #0ea5e9 for blue, #10b981 for green, #f97316 for orange, #ef4444 for red
-- Use slightly irregular shapes — rounded rectangles with rx=12, organic-looking arrows
-- Labels should feel like handwritten notes (font-size 16-18px, the handwriting font)
-- Include hand-drawn style arrows (slightly curved paths, not perfectly straight)
-- Add small annotations or notes in lighter gray (#94a3b8) as if scribbled
-- Keep it warm, inviting, and educational — like a whiteboard sketch
-- NO external references, NO images, NO scripts`;
+  const svgPrompt = `Create an SVG for: "${description}"
+Type: ${style}
 
-  const res = await openai.chat.completions.create({
-    model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
-    messages: [
-      { role: "system", content: "You are an SVG diagram generator that creates beautiful handwritten-style educational diagrams. They should look like they were drawn on a whiteboard or notebook — warm, organic, with a cursive/handwriting font. Output ONLY raw SVG markup. No markdown, no explanation, no code fences." },
-      { role: "user", content: svgPrompt },
-    ],
-    temperature: 0.5,
-    max_tokens: 2048,
-  });
+STRICT RULES:
+- Output ONLY the raw <svg>...</svg> tag. NO markdown, NO explanation.
+- viewBox="0 0 520 400"
+- font-family="Caveat, Segoe Print, cursive" for all text
+- Background: none (transparent)
+- Text color: #1e293b. Accent colors: #7c3aed (purple), #0ea5e9 (blue), #10b981 (green), #f97316 (orange)
+- Rounded rectangles: rx="10"
+- Arrows: use curved <path> elements with marker-end arrowheads
+- Font sizes: titles 20px bold, labels 16px, annotations 13px in #94a3b8
+- Keep shapes slightly imperfect (organic feel)
+- NO <image>, NO <script>, NO external URLs
+- Include at least 3-5 labeled elements with connections`;
 
-  let svg = res.choices[0]?.message?.content ?? "";
-  svg = svg.replace(/```(?:svg|xml)?\n?/g, "").replace(/```$/g, "").trim();
+  try {
+    const res = await openai.chat.completions.create({
+      model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+      messages: [
+        { role: "system", content: "You generate educational SVG diagrams. Output ONLY raw SVG markup — no markdown fences, no explanation text. The SVG should be clean, educational, and use a handwritten font style." },
+        { role: "user", content: svgPrompt },
+      ],
+      temperature: 0.5,
+      max_tokens: 2500,
+    });
 
-  const artifact: VisualArtifact = {
-    id: crypto.randomUUID(),
-    type: "visual",
-    title,
-    status: "pending",
-    description,
-    style,
-    svgContent: svg,
-  };
+    let svg = res.choices[0]?.message?.content ?? "";
+    svg = svg.replace(/```(?:svg|xml|html)?\n?/g, "").replace(/```$/g, "").trim();
 
-  return {
-    artifact,
-    result: `[Visual "${title}" generated and placed on canvas]`,
-  };
+    if (!svg.includes("<svg")) {
+      svg = `<svg viewBox="0 0 520 400" xmlns="http://www.w3.org/2000/svg"><text x="260" y="200" text-anchor="middle" font-family="Caveat, cursive" font-size="20" fill="#7c3aed">${title}</text></svg>`;
+    }
+
+    const artifact: VisualArtifact = {
+      id: crypto.randomUUID(),
+      type: "visual",
+      title,
+      status: "pending",
+      description,
+      style,
+      svgContent: svg,
+    };
+
+    return {
+      artifact,
+      result: `[Visual "${title}" generated — ${style} diagram placed on canvas]`,
+    };
+  } catch (err) {
+    const fallbackSvg = `<svg viewBox="0 0 520 400" xmlns="http://www.w3.org/2000/svg"><rect x="10" y="10" width="500" height="380" rx="12" fill="#f8f8fa" stroke="#e2e8f0"/><text x="260" y="200" text-anchor="middle" font-family="Caveat, cursive" font-size="22" fill="#7c3aed">${title}</text><text x="260" y="240" text-anchor="middle" font-family="Caveat, cursive" font-size="14" fill="#94a3b8">${description.slice(0, 60)}</text></svg>`;
+    return {
+      artifact: {
+        id: crypto.randomUUID(),
+        type: "visual",
+        title,
+        status: "pending",
+        description,
+        style,
+        svgContent: fallbackSvg,
+      },
+      result: `[Visual "${title}" — generated with fallback: ${err instanceof Error ? err.message : "error"}]`,
+    };
+  }
 }
 
 function handleGenerateGraph(
