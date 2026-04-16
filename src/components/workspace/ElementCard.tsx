@@ -10,6 +10,7 @@ import GraphCard from "../canvas/GraphCard";
 import NotationCard from "../canvas/NotationCard";
 import FlashcardCard from "../canvas/FlashcardCard";
 import LookupCard from "../canvas/LookupCard";
+import DiagramCard from "../canvas/DiagramCard";
 import Render3DCard from "../canvas/Render3DCard";
 import SimulationCard from "./SimulationCard";
 import type { CanvasTool } from "./InfiniteCanvas";
@@ -304,6 +305,7 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
       ) : (
         <div className="py-1">
           {artifact.type === "visual"     && <VisualCard artifact={artifact} />}
+          {artifact.type === "diagram"    && <DiagramCard artifact={artifact} />}
           {artifact.type === "graph"      && <GraphCard artifact={artifact} />}
           {artifact.type === "notation"   && <NotationCard artifact={artifact} dark={darkMode} />}
           {artifact.type === "lookup"     && <LookupCard artifact={artifact} />}

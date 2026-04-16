@@ -1,4 +1,4 @@
-export type ArtifactType = "visual" | "graph" | "notation" | "flashcard" | "lookup" | "simulation" | "render3d";
+export type ArtifactType = "visual" | "graph" | "notation" | "flashcard" | "lookup" | "simulation" | "render3d" | "diagram";
 
 export interface BaseArtifact {
   id: string;
@@ -96,6 +96,29 @@ export interface Render3DArtifact extends BaseArtifact {
   bg_color?: string;         // CSS hex background, default "#0a0b14"
 }
 
+// ── Diagram artifact ──────────────────────────────────────────────────────────
+
+export interface DiagramNode {
+  id: string;
+  label: string;
+  description?: string; // optional subtitle shown below label
+  color?: string;        // named color ("blue","purple","green","orange","red","gray") or hex
+  shape?: "rect" | "diamond" | "circle"; // defaults to "rect"
+}
+
+export interface DiagramEdge {
+  from: string;
+  to: string;
+  label?: string; // optional label shown at midpoint of edge
+}
+
+export interface DiagramArtifact extends BaseArtifact {
+  type: "diagram";
+  nodes: DiagramNode[];
+  edges: DiagramEdge[];
+  direction?: "LR" | "TB"; // left-to-right (default) or top-to-bottom
+}
+
 export type CanvasArtifact =
   | VisualArtifact
   | GraphArtifact
@@ -103,4 +126,5 @@ export type CanvasArtifact =
   | FlashcardArtifact
   | LookupArtifact
   | SimulationArtifact
-  | Render3DArtifact;
+  | Render3DArtifact
+  | DiagramArtifact;

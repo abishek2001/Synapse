@@ -1,4 +1,5 @@
 import type { ChatCompletionTool } from "openai/resources/chat/completions";
+import type { TeachingDecision } from "@/lib/agents/strategy";
 
 export const CANVAS_TOOLS: ChatCompletionTool[] = [
   {
@@ -284,4 +285,160 @@ Example (minimal): \`const mesh = new THREE.Mesh(new THREE.SphereGeometry(1,32,3
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "canvas_generate_diagram",
+      description:
+        "Generate an interactive node-edge diagram on the canvas. Each node is a separate interactive element with hover highlighting. Use this INSTEAD of canvas_generate_visual when the content has clearly defined entities and relationships: architecture diagrams, flowcharts, neural networks, process flows, state machines, concept maps with explicit connections, system hierarchies, data pipelines. Do NOT use for free-form sketches or when spatial layout isn't node-based.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: {
+            type: "string",
+            description: "Short title for the diagram",
+          },
+          nodes: {
+            type: "array",
+            description: "List of nodes in the diagram",
+            items: {
+              type: "object",
+              properties: {
+                id: {
+                  type: "string",
+                  description: "Unique identifier (no spaces, e.g. 'input_layer', 'cpu', 'step_1')",
+                },
+                label: {
+                  type: "string",
+                  description: "Display text shown inside the node",
+                },
+                description: {
+                  type: "string",
+                  description: "Optional subtitle shown below the label (e.g. '784 neurons', '2.4 GHz')",
+                },
+                color: {
+                  type: "string",
+                  description: "Color name or hex: 'blue', 'purple', 'green', 'orange', 'red', 'gray', 'yellow', 'pink', 'teal'",
+                },
+                shape: {
+                  type: "string",
+                  enum: ["rect", "diamond", "circle"],
+                  description: "Node shape — rect (default), diamond (for decisions), circle (for states/endpoints)",
+                },
+              },
+              required: ["id", "label"],
+            },
+          },
+          edges: {
+            type: "array",
+            description: "Connections between nodes",
+            items: {
+              type: "object",
+              properties: {
+                from: { type: "string", description: "Source node id" },
+                to: { type: "string", description: "Target node id" },
+                label: {
+                  type: "string",
+                  description: "Optional label shown on the edge (e.g. 'Yes', 'No', 'activates')",
+                },
+              },
+              required: ["from", "to"],
+            },
+          },
+          direction: {
+            type: "string",
+            enum: ["LR", "TB"],
+            description: "Layout direction: LR = left-to-right (default, good for processes/pipelines), TB = top-to-bottom (good for trees/hierarchies)",
+          },
+        },
+        required: ["title", "nodes", "edges"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "canvas_generate_simulation",
+      description:
+        "Generate an interactive 3D physics/chemistry/biology/math simulation on the canvas using Three.js. Use when the concept is dynamic or physical in nature and benefits from seeing it move: pendulums, orbital mechanics, wave interference, electric/magnetic fields, molecular dynamics, projectile motion, springs, fluid flow, diffusion, etc. Do NOT use for static concepts — use diagram or visual instead.",
+      parameters: {
+        type: "object",
+        properties: {
+          topic: {
+            type: "string",
+            description:
+              "The specific concept to simulate. Be precise: 'simple harmonic pendulum with damping', 'Coulomb force between two charges', 'double-slit interference pattern', 'planetary orbit around a star'. More specific = better simulation.",
+          },
+          context: {
+            type: "string",
+            description:
+              "Optional: additional context from the conversation that should inform the simulation (e.g. 'focus on the phase relationship between displacement and velocity', 'student is studying energy conservation')",
+          },
+        },
+        required: ["topic"],
+      },
+    },
+  },
 ];
+
+const TOOL_NAMES_BY_ACTION: Record<
+  TeachingDecision["action"],
+  { names: string[] | null; toolChoice: "auto" | "required" }
+> = {
+  // visualize — all visual artifact types, required to produce at least one
+  visualize: {
+    names: [
+      "canvas_generate_diagram",
+      "canvas_generate_visual",
+      "canvas_generate_graph",
+      "canvas_generate_notation",
+      "canvas_generate_simulation",
+      "canvas_generate_3d_render",
+      "canvas_delegate_task",
+    ],
+    toolChoice: "required",
+  },
+  // quiz — test understanding with flashcards or document lookup
+  quiz: {
+    names: ["flashcard_create", "knowledge_lookup"],
+    toolChoice: "required",
+  },
+  // deep_dive — all tools, must produce something
+  deep_dive: { names: null, toolChoice: "required" },
+  // explain — all tools, LLM decides whether to add an artifact
+  explain: { names: null, toolChoice: "auto" },
+  // simplify — skip simulation/deep tools, keep it simple
+  simplify: {
+    names: [
+      "canvas_generate_diagram",
+      "canvas_generate_visual",
+      "canvas_generate_notation",
+      "flashcard_create",
+      "canvas_delegate_task",
+    ],
+    toolChoice: "auto",
+  },
+  // summarize — consolidate with a concept map or key formulas
+  summarize: {
+    names: [
+      "canvas_generate_diagram",
+      "canvas_generate_notation",
+      "canvas_delegate_task",
+    ],
+    toolChoice: "auto",
+  },
+  // advance — move on, optionally drop a summary artifact
+  advance: { names: null, toolChoice: "auto" },
+};
+
+export function getToolsForAction(
+  action: TeachingDecision["action"],
+): { tools: ChatCompletionTool[]; toolChoice: "auto" | "required" } {
+  const spec = TOOL_NAMES_BY_ACTION[action] ?? { names: null, toolChoice: "auto" };
+  const tools = spec.names
+    ? CANVAS_TOOLS.filter(
+        (t) => t.type === "function" && spec.names!.includes(t.function.name),
+      )
+    : CANVAS_TOOLS;
+  return { tools, toolChoice: spec.toolChoice };
+}

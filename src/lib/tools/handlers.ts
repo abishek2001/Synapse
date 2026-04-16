@@ -6,9 +6,15 @@ import type {
   NotationArtifact,
   FlashcardArtifact,
   LookupArtifact,
+  DiagramArtifact,
+  DiagramNode,
+  DiagramEdge,
+  SimulationArtifact,
   Render3DArtifact,
 } from "./types";
 import { semanticSearch } from "@/lib/grounding/retrieval";
+import { SIMULATION_SYSTEM_PROMPT, buildSimulationPrompt } from "@/lib/simulation/prompt";
+import { sanitizeSimulationCode } from "@/lib/simulation/sanitize";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? "" });
 
@@ -41,10 +47,14 @@ export async function handleToolCall(
       return handleFlashcardCreate(args);
     case "knowledge_lookup":
       return handleKnowledgeLookup(args, documentContext);
-    case "canvas_generate_3d_render":
-      return handleGenerate3DRender(args);
     case "canvas_delegate_task":
       return handleDelegateTask(args);
+    case "canvas_generate_diagram":
+      return handleGenerateDiagram(args);
+    case "canvas_generate_simulation":
+      return handleGenerateSimulation(args);
+    case "canvas_generate_3d_render":
+      return handleGenerate3DRender(args);
     default:
       return { result: `Unknown tool: ${name}` };
   }
@@ -224,6 +234,88 @@ async function handleKnowledgeLookup(
   };
 }
 
+function handleDelegateTask(
+  args: Record<string, unknown>,
+): ToolCallResult {
+  const { task, annotations = [] } = args as {
+    task: string;
+    annotations: DelegatedAnnotation[];
+  };
+
+  const processed = annotations.map((ann, i) => ({
+    ...ann,
+    position: ann.position ?? {
+      x: 80 + (i % 3) * 220,
+      y: 400 + Math.floor(i / 3) * 150,
+    },
+    color: ann.color ?? (ann.type === "sticky" ? "#fef08a" : "#1a1a2e"),
+  }));
+
+  return {
+    annotations: processed,
+    result: `[Canvas task delegated: "${task}" — ${processed.length} annotation(s) placed]`,
+  };
+}
+
+function handleGenerateDiagram(
+  args: Record<string, unknown>,
+): { artifact: DiagramArtifact; result: string } {
+  const { title, nodes, edges, direction } = args as {
+    title: string;
+    nodes: DiagramNode[];
+    edges: DiagramEdge[];
+    direction?: "LR" | "TB";
+  };
+
+  const artifact: DiagramArtifact = {
+    id: crypto.randomUUID(),
+    type: "diagram",
+    title,
+    status: "pending",
+    nodes,
+    edges,
+    direction,
+  };
+
+  return {
+    artifact,
+    result: `[Diagram "${title}" generated — ${nodes.length} nodes, ${edges.length} edges]`,
+  };
+}
+
+async function handleGenerateSimulation(
+  args: Record<string, unknown>,
+): Promise<{ artifact: SimulationArtifact; result: string }> {
+  const { topic, context: ctx } = args as { topic: string; context?: string };
+
+  const res = await openai.chat.completions.create({
+    model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+    messages: [
+      { role: "system", content: SIMULATION_SYSTEM_PROMPT },
+      { role: "user", content: buildSimulationPrompt(topic, ctx) },
+    ],
+    temperature: 0.4,
+    max_tokens: 4096,
+  });
+
+  const raw = res.choices[0]?.message?.content ?? "";
+  const { code } = sanitizeSimulationCode(raw);
+
+  const artifact: SimulationArtifact = {
+    id: crypto.randomUUID(),
+    type: "simulation",
+    title: topic,
+    status: "pending",
+    topic,
+    code,
+  };
+
+  return {
+    artifact,
+    result: `[Simulation "${topic}" generated and placed on canvas]`,
+  };
+}
+
 function handleGenerate3DRender(
   args: Record<string, unknown>,
 ): { artifact: Render3DArtifact; result: string } {
@@ -248,29 +340,6 @@ function handleGenerate3DRender(
 
   return {
     artifact,
-    result: `[3D render "${title}" placed on canvas]`,
-  };
-}
-
-function handleDelegateTask(
-  args: Record<string, unknown>,
-): ToolCallResult {
-  const { task, annotations = [] } = args as {
-    task: string;
-    annotations: DelegatedAnnotation[];
-  };
-
-  const processed = annotations.map((ann, i) => ({
-    ...ann,
-    position: ann.position ?? {
-      x: 80 + (i % 3) * 220,
-      y: 400 + Math.floor(i / 3) * 150,
-    },
-    color: ann.color ?? (ann.type === "sticky" ? "#fef08a" : "#1a1a2e"),
-  }));
-
-  return {
-    annotations: processed,
-    result: `[Canvas task delegated: "${task}" — ${processed.length} annotation(s) placed]`,
+    result: `[3D render "${title}" generated and placed on canvas]`,
   };
 }
