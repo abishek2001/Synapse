@@ -189,80 +189,49 @@ export const CANVAS_TOOLS: ChatCompletionTool[] = [
     function: {
       name: "canvas_generate_3d_render",
       description:
-        "Generate an interactive 3D render on the canvas. STRONGLY PREFERRED for anything that has real spatial structure: anatomy (heart, lungs, respiratory system, brain, kidneys, bones, eye), cells/organelles, chemistry (molecules, crystal lattices, protein structures), physics (orbits, projectiles, fields), 3D geometry, mechanical assemblies, planets, and architecture. Whenever the topic is a 3D *thing* rather than a 2D process, choose this tool over canvas_generate_diagram or canvas_generate_visual.\n\nSOURCE PRIORITY — try these in order, fall through to the next only if the previous is unavailable:\n  1. `sketchfab_query` — server searches Sketchfab and embeds the best matching real model. Highest quality, no code needed. NEVER try to construct a Sketchfab URL yourself; just supply the search phrase.\n  2. `code` with GLTFLoader/OBJLoader pulling a model from a CORS-enabled open-source URL (raw.githubusercontent.com, cdn.jsdelivr.net/gh, modelviewer.dev sample assets, KhronosGroup glTF-Sample-Models, Three.js examples).\n  3. `code` with hand-written Three.js geometry — only if no real model is available.\nExactly one of `sketchfab_query` or `code` MUST be supplied.\nIf the server cannot find a Sketchfab match for your query, the tool call returns an error — when that happens, retry the same call with `code` instead.",
+        "Generate an interactive 3D render on the canvas. STRONGLY PREFERRED for anything that has real spatial structure: anatomy (heart, lungs, respiratory system, brain, kidneys, bones, eye), cells/organelles, chemistry (molecules, crystal lattices, protein structures), 3D geometry, mechanical assemblies, planets, and architecture. Whenever the topic is a 3D *thing* rather than a 2D process, choose this tool over canvas_generate_diagram or canvas_generate_visual.\n\nYou DO NOT write Three.js code yourself. You declare WHAT to render and the server-side renderer (a dedicated, well-prompted code-generation step with a high token budget) builds the scene.\n\nSOURCE STRATEGY (the server tries these in order):\n  1. If `sketchfab_query` is supplied, the server searches Sketchfab and embeds the best matching real public model. Highest quality, zero code generation.\n  2. If Sketchfab returns nothing usable (or `sketchfab_query` was omitted), the server uses `concept_brief` + `style_hints` to invoke a dedicated 3D scene generator that produces a high-quality custom Three.js scene at simulation-grade quality.\n\nALWAYS supply `concept_brief`. ALSO supply `sketchfab_query` whenever a real-world 3D object is being taught (anatomy, molecules, planets) — that way Tier 1 succeeds when possible and Tier 2 generates a great custom scene when it doesn't. For physics/abstract concepts (projectile, orbit, lattice), skip `sketchfab_query` and rely on the generator.",
       parameters: {
         type: "object",
         properties: {
           title: {
             type: "string",
-            description: "Short display title, e.g. 'Human Heart Anatomy', 'Respiratory System', 'DNA Double Helix'",
+            description: "Short display title, e.g. 'Human Heart Anatomy', 'Respiratory System', 'DNA Double Helix', 'Projectile Motion'",
           },
           topic: {
             type: "string",
-            description: "What is being rendered — used for the loading label and accessibility",
+            description: "What is being rendered (1-6 words). Used for the loading label and as the primary input to the scene generator.",
           },
           sketchfab_query: {
             type: "string",
-            description: `(TIER 1 — PREFERRED) A short, specific search phrase (2-6 words) describing the 3D object you want. The server hits the Sketchfab search API, picks the best public, embeddable, popular model and renders it in an iframe — you do NOT need to know any UIDs or URLs.
+            description: `(TIER 1 — when applicable) Short, specific search phrase (2-6 words) describing the 3D object you want. The server hits the Sketchfab search API and embeds the best public model. NEVER guess UIDs or URLs.
 
-GOOD QUERIES (specific + anatomically/scientifically accurate):
-- "human respiratory system anatomy"
-- "human heart cross section"
-- "DNA double helix structure"
-- "water molecule h2o"
-- "solar system planets"
-- "neuron cell anatomy"
-- "skeletal system human"
-- "kidney anatomy cross section"
+GOOD: "human respiratory system anatomy", "human heart cross section", "DNA double helix structure", "water molecule h2o", "solar system planets", "neuron cell anatomy".
+BAD (too vague): "biology", "science", "molecule", "cool 3d model".
 
-BAD QUERIES (too vague — search noise):
-- "biology" / "science" / "anatomy" / "molecule"
-- "cool 3d model"
-
-If no good match exists for the topic (rare scientific concepts, abstract math, custom physics setups), DO NOT use this field — fall through to TIER 2 (code with a loader) or TIER 3 (hand-written code).`,
+OMIT this field for abstract / dynamic concepts (projectile motion, orbital mechanics, wave interference, custom geometry, parametric surfaces) — Sketchfab won't have what you want and the generator will produce a better custom scene.`,
           },
-          code: {
+          concept_brief: {
             type: "string",
-            description: `(TIER 2 / TIER 3) Three.js JavaScript that builds the 3D scene. Required if \`sketchfab_query\` is not set, OR when retrying after a failed sketchfab_query. The following globals are pre-defined — do NOT redeclare them:
-- \`scene\` (THREE.Scene) — add all objects here
-- \`camera\` (THREE.PerspectiveCamera) — positioned at (0, 0.3*d, d) where d = camera_distance; reposition if needed
-- \`THREE\` — full Three.js r160 namespace
-- \`controls\` (OrbitControls) — rotate/zoom/pan already wired
-- \`renderer\` (THREE.WebGLRenderer) — shadow-maps enabled
+            description: `REQUIRED. 1-3 sentences describing exactly what the student should learn from looking at this 3D scene. Be concrete: name the parts, the relationships, the motion. The scene generator uses this to decide which objects to build, what to label, and what to animate.
 
-You can import addons via the bare-specifier importmap that's already injected: \`import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'\`, OBJLoader, MTLLoader, FBXLoader, DRACOLoader.
-
-TIER 2 — LOAD AN OPEN-SOURCE MODEL:
-- Prefer real \`.glb\` / \`.gltf\` / \`.obj\` files from CORS-enabled hosts:
-  - \`https://raw.githubusercontent.com/<user>/<repo>/<branch>/<path>.glb\`
-  - \`https://cdn.jsdelivr.net/gh/<user>/<repo>@<branch>/<path>.glb\`
-  - KhronosGroup glTF-Sample-Models (\`https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/<Name>/glTF-Binary/<Name>.glb\`)
-  - Google's \`<model-viewer>\` shared assets (\`https://modelviewer.dev/shared-assets/models/<Name>.glb\`)
-  - Three.js examples (\`https://threejs.org/examples/models/...\`)
-- Pattern: \`new GLTFLoader().load(URL, gltf => { gltf.scene.traverse(o => o.isMesh && (o.castShadow = o.receiveShadow = true)); /* center & scale: */ const box = new THREE.Box3().setFromObject(gltf.scene); const center = box.getCenter(new THREE.Vector3()); const size = box.getSize(new THREE.Vector3()); gltf.scene.position.sub(center); const fit = 3 / Math.max(size.x, size.y, size.z); gltf.scene.scale.setScalar(fit); scene.add(gltf.scene); });\`
-- Only use URLs you are confident exist; never invent paths.
-
-TIER 3 — HAND-WRITE A SCENE (fallback when no real model is reachable):
-Pre-added lights: AmbientLight 0.55, DirectionalLight sun (6,12,8), DirectionalLight blue fill (-6,-3,-6), PointLight violet accent (-5,6,-5).
-Optionally define \`function update(t) { ... }\` (t = elapsed seconds) for per-frame animation (rotation, pulsing, physics loops, etc.).
-Style guidance:
-- Anatomy: MeshPhongMaterial with realistic colors + slight transparency (opacity 0.85-0.95) for outer shells; add inner structures with lower opacity. Use Group hierarchies and label parts with userData.name.
-- Chemistry: SphereGeometry atoms + CylinderGeometry bonds; use CPK colors (C=0x404040, H=0xffffff, O=0xff3333, N=0x4444ff, S=0xffff33).
-- Physics: use update(t) for motion; add trajectory lines with THREE.Line + BufferGeometry.
-- Add a subtle grid helper or plane for spatial reference when appropriate.
-
-Example (TIER 3 minimal): \`const mesh = new THREE.Mesh(new THREE.SphereGeometry(1,32,32), new THREE.MeshPhongMaterial({color:0x7c3aed,shininess:80})); scene.add(mesh); function update(t){mesh.rotation.y=t;}\``,
+GOOD: "Show projectile motion of a sphere launched at 45° with v=10 m/s. Render the parabolic trajectory as a glowing arc, the moving body following the arc, a velocity vector tangent to the arc, and a ground grid for spatial reference."
+GOOD: "Show the four chambers of the human heart (LA, LV, RA, RV) with the great vessels (aorta, pulmonary trunk, venae cavae). Atria translucent so the chambers below are visible. Slow idle rotation."
+BAD: "A heart." / "Some physics."`,
+          },
+          style_hints: {
+            type: "string",
+            description: "Optional pedagogical or artistic guidance the generator should obey. Examples: 'highlight the SA node in yellow', 'show the trajectory in dashed purple', 'wireframe overlay on the protein backbone', 'use NaCl colors (Na purple, Cl green)'.",
           },
           camera_distance: {
             type: "number",
-            description: "Distance of camera from origin (code mode only). Default 5. Use 2-3 for small molecular models, 5-8 for anatomy, 10-20 for large structures or physics trajectories.",
+            description: "Distance of camera from origin. Default 5. Use 2-3 for small molecules, 5-8 for anatomy, 10-20 for large structures or physics trajectories.",
           },
           bg_color: {
             type: "string",
-            description: "Hex background color (code mode only). Default '#0a0b14' (dark navy). Use '#0f172a' for deep blue, '#111827' for dark gray. Prefer dark backgrounds for 3D renders.",
+            description: "Hex background color. Default '#0a0b14' (dark navy). Prefer dark backgrounds for 3D renders.",
           },
         },
-        required: ["title", "topic"],
+        required: ["title", "topic", "concept_brief"],
       },
     },
   },
@@ -416,15 +385,17 @@ const TOOL_NAMES_BY_ACTION: Record<
   TeachingDecision["action"],
   { names: string[] | null; toolChoice: "auto" | "required" }
 > = {
-  // visualize — all visual artifact types, required to produce at least one
+  // visualize — all visual artifact types, required to produce at least one.
+  // Ordering hint: lead with the richest representations (simulation, render3d, graph,
+  // notation) so the model considers them before falling into the flat-diagram default.
   visualize: {
     names: [
-      "canvas_generate_diagram",
-      "canvas_generate_visual",
-      "canvas_generate_graph",
-      "canvas_generate_notation",
       "canvas_generate_simulation",
       "canvas_generate_3d_render",
+      "canvas_generate_graph",
+      "canvas_generate_notation",
+      "canvas_generate_diagram",
+      "canvas_generate_visual",
       "canvas_delegate_task",
     ],
     toolChoice: "required",

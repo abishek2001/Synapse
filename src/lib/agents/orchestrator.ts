@@ -147,15 +147,16 @@ async function executeTutorTurn(
 
   // Inject strategy decision as a directive at the end of the system prompt
   if (decision) {
-    const artifactHint = decision.suggestedArtifacts.length > 0
-      ? `\nPrioritize these artifact types for this turn: ${decision.suggestedArtifacts.join(", ")}.`
-      : "";
+    const ranked = decision.suggestedArtifacts;
+    const artifactHint = ranked.length > 0
+      ? `\nArtifact priority (ranked, best first): [${ranked.join(", ")}]. Produce the top artifact. Add lower-ranked ones ONLY if they teach something the top one misses. Skip artifacts that don't fit; don't pad.`
+      : "\nNo artifacts required this turn.";
 
     systemPrompt += `\n\n## TEACHING STRATEGY FOR THIS TURN
 Action: ${decision.action}
 Reasoning: ${decision.reasoning}
 Instruction: ${decision.suggestedPrompt}${artifactHint}
-Follow this guidance. The artifact types listed are what the pedagogical layer determined would be most effective right now.`;
+The pedagogical layer matched this concept against six characteristics (does it move? is it 3D? is it an equation? is it a function? is it discrete parts? is it recall?) and ranked the artifacts by fit. Trust the ranking — it overrides your default biases (e.g. don't fall back to a flat diagram when a simulation is ranked first).`;
   }
 
   const messages: ChatCompletionMessageParam[] = [

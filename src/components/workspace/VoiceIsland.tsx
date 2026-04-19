@@ -138,28 +138,45 @@ export default function VoiceIsland() {
               transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
             />
 
-            <div className="flex items-center gap-[2px] flex-1 min-w-0">
-              {[...Array(12)].map((_, i) => (
-                <motion.div
-                  key={i}
-                  className={`w-[2px] rounded-full ${
-                    isListening
-                      ? "bg-red-400"
-                      : isStreaming
-                        ? "bg-amber-400/60"
-                        : "bg-green-400/70"
-                  }`}
-                  animate={{
-                    height: [2, 4 + Math.random() * 14, 2],
-                  }}
-                  transition={{
-                    duration: 0.35 + Math.random() * 0.35,
-                    repeat: Infinity,
-                    delay: i * 0.04,
-                    ease: "easeInOut",
-                  }}
-                />
-              ))}
+            <div className="flex items-center gap-[3px] flex-1 min-w-0 h-5 justify-center">
+              {isStreaming ? (
+                // Thinking: traveling shimmer across small dots — distinct from audio waveform
+                [...Array(9)].map((_, i) => (
+                  <motion.div
+                    key={i}
+                    className="w-[3px] h-[3px] rounded-full bg-amber-400"
+                    animate={{
+                      opacity: [0.2, 1, 0.2],
+                      scale: [0.8, 1.4, 0.8],
+                    }}
+                    transition={{
+                      duration: 1.2,
+                      repeat: Infinity,
+                      delay: i * 0.12,
+                      ease: "easeInOut",
+                    }}
+                  />
+                ))
+              ) : (
+                // Listening / Speaking: audio waveform bars
+                [...Array(12)].map((_, i) => (
+                  <motion.div
+                    key={i}
+                    className={`w-[2px] rounded-full ${
+                      isListening ? "bg-red-400" : "bg-green-400/70"
+                    }`}
+                    animate={{
+                      height: [2, 4 + Math.random() * 14, 2],
+                    }}
+                    transition={{
+                      duration: 0.35 + Math.random() * 0.35,
+                      repeat: Infinity,
+                      delay: i * 0.04,
+                      ease: "easeInOut",
+                    }}
+                  />
+                ))
+              )}
             </div>
 
             <span className="text-[9px] text-white/40 font-medium whitespace-nowrap tracking-wide">

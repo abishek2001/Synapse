@@ -126,9 +126,9 @@ Rendered by: `src/components/canvas/FlashcardCard.tsx`
 
 ### `canvas_generate_simulation`
 **Artifact type:** `simulation`
-**Handler:** `handleGenerateSimulation` — makes an LLM call to generate Three.js HTML
+**Handler:** `handleGenerateSimulation` — dedicated server-side generation via OpenAI **Responses API**.
 
-Interactive 3D physics/chemistry/biology simulation rendered in a sandboxed iframe. Code is sanitized before rendering.
+Interactive 3D physics/chemistry/biology simulation rendered in a sandboxed iframe. The handler routes through the Responses API with default model `gpt-5.4` (override via `OPENAI_SIMULATION_MODEL`), `reasoning.effort: "low"`, `text.verbosity: "high"`, `max_output_tokens: 12000`. Older non-GPT-5 models fall back to Chat Completions with `temperature: 0.4`. The system prompt (`src/lib/simulation/prompt.ts`) embeds a complete worked projectile-motion HTML file as a gold-standard few-shot — describing required quality wasn't enough to stop small models from emitting a single dot tracking position on a black square. Output is sanitized via `sanitizeSimulationCode` before rendering.
 
 ```ts
 // LLM emits:
@@ -136,7 +136,9 @@ Interactive 3D physics/chemistry/biology simulation rendered in a sandboxed ifra
   topic: string;    // specific concept — "simple harmonic pendulum with damping"
   context?: string; // optional conversation context to shape the simulation
 }
-// Handler generates: complete self-contained HTML (Three.js r128 from CDN)
+// Handler generates: complete self-contained HTML (Three.js r128 from CDN) with
+// trajectory/path geometry, animated body, live-updating vector indicator, drop
+// lines, ground reference, parameter sliders via postMessage, and HUD.
 ```
 
 Rendered by: `src/components/workspace/SimulationCard.tsx` (iframe sandbox)

@@ -14,6 +14,8 @@ import type {
 import { semanticSearch } from "@/lib/grounding/retrieval";
 import { SIMULATION_SYSTEM_PROMPT, buildSimulationPrompt } from "@/lib/simulation/prompt";
 import { sanitizeSimulationCode } from "@/lib/simulation/sanitize";
+import { RENDER3D_SYSTEM_PROMPT, buildRender3DPrompt } from "@/lib/render3d/prompt";
+import { sanitizeRender3DCode } from "@/lib/render3d/sanitize";
 import { openai } from "@/lib/openai-client";
 import { resolveSketchfabModel, buildEmbedUrl } from "@/lib/sketchfab";
 
@@ -287,17 +289,37 @@ async function handleGenerateSimulation(
 ): Promise<{ artifact: SimulationArtifact; result: string }> {
   const { topic, context: ctx } = args as { topic: string; context?: string };
 
-  const res = await openai.chat.completions.create({
-    model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
-    messages: [
-      { role: "system", content: SIMULATION_SYSTEM_PROMPT },
-      { role: "user", content: buildSimulationPrompt(topic, ctx) },
-    ],
-    temperature: 0.4,
-    max_tokens: 4096,
-  });
+  // Default to gpt-5.4 (Responses API) — same reasoning as render3d. Small models
+  // produce a tiny dot tracking position on a black square no matter the prompt.
+  const model = process.env.OPENAI_SIMULATION_MODEL ?? "gpt-5.4";
+  const isGpt5Family = /^gpt-5/i.test(model);
+  const userPrompt = buildSimulationPrompt(topic, ctx);
 
-  const raw = res.choices[0]?.message?.content ?? "";
+  let raw = "";
+  if (isGpt5Family) {
+    const res = await openai.responses.create({
+      model,
+      instructions: SIMULATION_SYSTEM_PROMPT,
+      input: userPrompt,
+      reasoning: { effort: "low" },
+      text: { verbosity: "high" },
+      // Reasoning + a full HTML simulation easily uses 4-6k tokens; budget headroom.
+      max_output_tokens: 12000,
+    });
+    raw = res.output_text ?? "";
+  } else {
+    const res = await openai.chat.completions.create({
+      model,
+      messages: [
+        { role: "system", content: SIMULATION_SYSTEM_PROMPT },
+        { role: "user", content: userPrompt },
+      ],
+      temperature: 0.4,
+      max_tokens: 6000,
+    });
+    raw = res.choices[0]?.message?.content ?? "";
+  }
+
   const { code } = sanitizeSimulationCode(raw);
 
   const artifact: SimulationArtifact = {
@@ -311,7 +333,7 @@ async function handleGenerateSimulation(
 
   return {
     artifact,
-    result: `[Simulation "${topic}" generated and placed on canvas]`,
+    result: `[Simulation "${topic}" generated (model: ${model}${isGpt5Family ? ", responses API + reasoning" : ""})]`,
   };
 }
 
@@ -321,26 +343,25 @@ async function handleGenerate3DRender(
   const {
     title,
     topic,
-    code,
     sketchfab_query,
-    embed_url, // legacy / direct-URL escape hatch — validated server-side
+    concept_brief,
+    style_hints,
     camera_distance,
     bg_color,
   } = args as {
     title: string;
     topic: string;
-    code?: string;
     sketchfab_query?: string;
-    embed_url?: string;
+    concept_brief?: string;
+    style_hints?: string;
     camera_distance?: number;
     bg_color?: string;
   };
 
-  // ── TIER 1: Sketchfab — resolve server-side so we never embed a hallucinated UID ──
+  // ── TIER 1: Sketchfab ── resolve server-side so we never embed a hallucinated UID.
   const query = sketchfab_query?.trim();
-  const directUrl = embed_url?.trim();
-  if (query || directUrl) {
-    const hit = await resolveSketchfabModel({ query, embedUrl: directUrl });
+  if (query) {
+    const hit = await resolveSketchfabModel({ query });
     if (hit) {
       const artifact: Render3DArtifact = {
         id: crypto.randomUUID(),
@@ -356,19 +377,69 @@ async function handleGenerate3DRender(
         result: `[3D render "${title}" placed — Sketchfab match: "${hit.name}" (uid ${hit.uid}, ${hit.likeCount} likes)]`,
       };
     }
-    // Sketchfab missed. If the model didn't supply code as a fallback, force it to retry.
-    if (!code) {
-      throw new Error(
-        `Sketchfab returned no embeddable model for "${query ?? directUrl}". Retry canvas_generate_3d_render with the \`code\` field instead — write a Three.js scene that loads a .glb from a CORS-enabled host (raw.githubusercontent.com, cdn.jsdelivr.net/gh, modelviewer.dev/shared-assets, KhronosGroup glTF-Sample-Models) or, as a last resort, hand-write the geometry.`,
-      );
-    }
-    // Sketchfab missed but the model did supply code — fall through to TIER 2/3.
   }
 
-  // ── TIER 2 / TIER 3: Three.js code path ──
+  // ── TIER 2: Dedicated server-side scene generator ──
+  // The tutor used to dash off Three.js as an inline tool argument; results were flat
+  // and ugly (a green parabola on a black square). Now we mirror handleGenerateSimulation:
+  // a fat focused system prompt, high token budget, low temp, optional stronger model
+  // via OPENAI_RENDER3D_MODEL.
+  if (!concept_brief) {
+    throw new Error(
+      "canvas_generate_3d_render: `concept_brief` is required when no Sketchfab match is available. Re-issue the tool call with a 1-3 sentence brief describing what to render and any key parts/motion.",
+    );
+  }
+
+  // Default to gpt-5.4 — per OpenAI's "Using GPT-5.4" guide it is the recommended
+  // default for code-heavy work and brings GPT-5.3-Codex's coding capability to the
+  // mainline frontier model. Override with OPENAI_RENDER3D_MODEL.
+  const model = process.env.OPENAI_RENDER3D_MODEL ?? "gpt-5.4";
+  const isGpt5Family = /^gpt-5/i.test(model);
+
+  const userPrompt = buildRender3DPrompt({
+    topic,
+    concept_brief,
+    style_hints,
+    camera_distance,
+    bg_color,
+  });
+
+  // GPT-5 family lives on the Responses API and uses reasoning + verbosity instead
+  // of temperature. Older models still go through chat.completions with temperature.
+  let raw = "";
+  if (isGpt5Family) {
+    const res = await openai.responses.create({
+      model,
+      instructions: RENDER3D_SYSTEM_PROMPT,
+      input: userPrompt,
+      // Low effort keeps latency reasonable while still giving the model time to
+      // structure a multi-element scene. Bump to "medium" if quality regresses.
+      reasoning: { effort: "low" },
+      // High verbosity → richer, more detailed code (matches the gold-standard
+      // density). For code generation this is the recommended setting.
+      text: { verbosity: "high" },
+      // Reasoning + a 100-200-line scene easily uses 3-5k tokens; budget headroom.
+      max_output_tokens: 8000,
+    });
+    raw = res.output_text ?? "";
+  } else {
+    const res = await openai.chat.completions.create({
+      model,
+      messages: [
+        { role: "system", content: RENDER3D_SYSTEM_PROMPT },
+        { role: "user", content: userPrompt },
+      ],
+      temperature: 0.4,
+      max_tokens: 4096,
+    });
+    raw = res.choices[0]?.message?.content ?? "";
+  }
+
+  const { code } = sanitizeRender3DCode(raw);
+
   if (!code) {
     throw new Error(
-      "canvas_generate_3d_render: must supply either `sketchfab_query` (preferred) or `code` (Three.js scene). Both are missing.",
+      "canvas_generate_3d_render: scene generator returned empty output. Retry the tool call with a more specific concept_brief.",
     );
   }
 
@@ -385,6 +456,6 @@ async function handleGenerate3DRender(
 
   return {
     artifact,
-    result: `[3D render "${title}" placed — source: three.js code]`,
+    result: `[3D render "${title}" placed — generated scene (model: ${model}${isGpt5Family ? ", responses API + reasoning" : ""})]`,
   };
 }

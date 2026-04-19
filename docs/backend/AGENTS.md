@@ -27,27 +27,49 @@ interface TeachingDecision {
 }
 ```
 
-### Action → Artifact mapping (from system prompt)
+### Artifact selection — concept-fit rubric (NOT topic shortcuts)
 
-| Action | Primary artifacts | Tool choice |
+The strategy prompt no longer maps "topic area → artifact". It applies a 6-question rubric to each concept and outputs `suggestedArtifacts` as an **ordered priority list, best first**:
+
+1. Does it move? (process unfolding in time/space) → `simulation`
+2. Is its 3D shape part of the answer? → `render3d`
+3. Is the insight an equation? → `notation`
+4. Is it a function or distribution? → `graph`
+5. Does it actually decompose into discrete named parts with meaningful edges? → `diagram`
+6. Already taught and we want recall? → `flashcard`
+
+A concept can score on multiple questions — they're listed in priority order, not exclusively. Common patterns:
+
+| Concept | Ranked artifacts | Why |
 |---|---|---|
-| `explain` | diagram, visual, notation (optional) | auto |
-| `visualize` | diagram, graph, simulation, visual | required |
-| `quiz` | flashcard, lookup | required |
-| `simplify` | visual, diagram, flashcard | auto |
-| `deep_dive` | notation, diagram, graph, simulation | required |
-| `summarize` | diagram (concept map), notation | auto |
-| `advance` | nothing, or one summary diagram | auto |
+| Projectile motion | `["simulation", "notation"]` | Motion under gravity; range/height formula complements |
+| Pendulum | `["simulation", "notation"]` | Swing animation; θ(t) = θ₀cos(ωt) |
+| Wave interference | `["simulation"]` | Overlapping wavefronts — pure animation |
+| Respiratory system overview | `["render3d", "diagram"]` | 3D lungs/airways; air-path flow as complement |
+| Newton's first law | `["notation", "simulation"]` | The principle is the equation; brief inertia sim |
+| Photosynthesis (chemistry) | `["notation", "diagram"]` | Balanced equation; light/dark reactions diagram |
+| Neural network architecture | `["diagram", "notation"]` | Discrete layers with real edges; activation math |
+| HTTP request lifecycle | `["diagram"]` | Discrete components, meaningful edges |
 
-### Key trigger rules (baked into system prompt)
+Action selection is **independent** of artifact selection:
 
-- "show me / draw / diagram" → `visualize`
-- Physics / motion / waves / orbits → suggest `simulation` in artifacts
-- Formula / equation / math → include `notation`
-- "quiz me / test me / flashcards" → `quiz`
-- "next / move on / got it" → `advance`
-- Confusion signals > 2 → `simplify`
-- 3+ exchanges without confusion → `quiz`
+- "show me / draw / diagram" → action `visualize`
+- "quiz me / test me / flashcards" → action `quiz`
+- "next / move on / got it" → action `advance`
+- Confusion signals > 2 → action `simplify`
+- 3+ exchanges without confusion → action `quiz`
+- Otherwise → action `explain`
+
+### Anti-patterns (baked into the prompt)
+
+The strategy prompt explicitly enumerates these to suppress them:
+
+- ❌ Projectile motion → diagram with boxes `Projectile → Trajectory → Parabola` (glossary, not physics)
+- ❌ Newton's first law → render3d of a ball (the insight is the principle)
+- ❌ Photosynthesis → render3d of a leaf (the insight is the reaction)
+- ❌ Listing every artifact for "comprehensiveness"
+
+The orchestrator wires `suggestedArtifacts` into the tutor prompt as: *"Artifact priority (ranked, best first): […]. Produce the top artifact. Add lower-ranked ones ONLY if they teach something the top one misses."* — so the tutor follows the ranking instead of falling back to its own diagram bias.
 
 ---
 
@@ -76,17 +98,22 @@ interface TeachingDecision {
 | `friend` | Casual, analogy-heavy, relatable |
 | `philosopher` | Deep, reflective, abstract, concept maps |
 
-### Tool descriptions in system prompt (all 8 tools)
+### Tool descriptions + self-check in system prompt (all 9 tools)
 
-The tutor system prompt explicitly describes when to use each tool. Key guidance:
-- **`canvas_generate_diagram`** — PREFERRED for anything with entities + relationships
-- **`canvas_generate_visual`** — Free-form SVG only; use when not node-based
-- **`canvas_generate_simulation`** — Dynamic/physical concepts (pendulums, waves, orbits)
-- **`canvas_generate_graph`** — Mathematical functions and data plots
-- **`canvas_generate_notation`** — LaTeX equations and derivations
-- **`flashcard_create`** — Active recall testing
-- **`knowledge_lookup`** — Semantic search in uploaded documents
-- **`canvas_delegate_task`** — Annotations, sticky notes, arrows on canvas
+The tutor system prompt lists each tool with the concept characteristic it serves, then runs an "ARTIFACT SELF-CHECK" the model must apply before calling any visual tool:
+
+1. Does it move? → `canvas_generate_simulation`
+2. Is its 3D shape part of the answer? → `canvas_generate_3d_render` (server resolves Sketchfab via `sketchfab_query`, otherwise generates a custom Three.js scene from `concept_brief`)
+3. Is the insight an equation? → `canvas_generate_notation`
+4. Is it a function or distribution? → `canvas_generate_graph`
+5. Discrete named parts with meaningful edges? → `canvas_generate_diagram`
+6. Else need a sketch? → `canvas_generate_visual`
+
+The prompt explicitly enumerates anti-patterns (e.g. *"NEVER produce a flat node diagram that just relabels the vocabulary words of the concept"*), with worked examples for projectile motion, pendulum, wave interference, Newton's first law, photosynthesis. It also tells the model to follow the strategy's `suggestedArtifacts` ordering and only stack additional artifacts when each one adds new understanding.
+
+For `canvas_generate_3d_render`, the tutor never writes Three.js. It declares `topic`, `concept_brief` (1-3 sentences naming the parts/relationships/motion the student should see), optional `sketchfab_query` (when a real-world 3D object exists on Sketchfab), and optional `style_hints`. `handleGenerate3DRender`:
+  1. If `sketchfab_query` is set → `resolveSketchfabModel` returns a verified Sketchfab `embed_url` → done.
+  2. Otherwise → OpenAI **Responses API** call with `RENDER3D_SYSTEM_PROMPT` + `buildRender3DPrompt` (see `src/lib/render3d/prompt.ts`). Default model **`gpt-5.4`** (overridable via `OPENAI_RENDER3D_MODEL`) with `reasoning.effort: "low"` and `text.verbosity: "high"` per OpenAI's GPT-5.4 guide for code-generation work. `max_output_tokens: 8000` budgets reasoning + a 100-200-line scene. The prompt encodes topic-specific palettes (physics/anatomy/chemistry/cells/celestial), explicit anti-patterns, AND embeds the hand-crafted Projectile and NaCl demos from `src/store/canvas.ts` verbatim as gold-standard few-shot examples — describing the quality bar wasn't enough; showing two complete worked scenes is what stops the model from falling back to a flat 2D parabola. Older non-GPT-5 models fall back to Chat Completions with `temperature: 0.4`.
 
 ---
 
