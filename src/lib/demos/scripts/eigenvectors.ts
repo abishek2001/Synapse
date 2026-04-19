@@ -13,6 +13,7 @@ export const eigenvectorsDemo: DemoScript = {
   description: "Geometric intuition, applications, and a live 2x2 explorer.",
   tags: ["3D", "Tree", "Math"],
   userPrompt: "Teach me eigenvectors and eigenvalues like I'm rusty.",
+  keywords: ["eigenvector", "eigenvalue", "eigendecomposition", "eigen"],
   modules: [
     // ─── Module 1: Vectors as transformations ────────────────────────────
     {
@@ -95,6 +96,11 @@ function update(t) {
 }`,
         },
       ],
+      nextPrompt: "Show me how to actually solve for them.",
+      annotations: [
+        { kind: "sticky", content: "A v = λ v\n(eigenvector eqn)", anchor: "top-right", color: "#fff7c2" },
+        { kind: "text",   content: "v = direction that doesn't rotate\nλ = how much it stretches", anchor: "below", offsetY: -10 },
+      ],
     },
 
     // ─── Module 2: Finding them ──────────────────────────────────────────
@@ -166,6 +172,11 @@ function update(t) {
           ],
         },
       ],
+      nextPrompt: "Why do we care — what is this used for?",
+      annotations: [
+        { kind: "sticky", content: "det(A − λI) = 0\n(characteristic eqn)", anchor: "right", color: "#dbeafe" },
+        { kind: "text",   content: "Solve for λ first,\nthen plug back to get v", anchor: "below", offsetY: -10 },
+      ],
     },
 
     // ─── Module 3: Where this shows up ───────────────────────────────────
@@ -234,6 +245,10 @@ function update(t) {
             <text x="280" y="137" text-anchor="middle" font-size="7" fill="#7c3aed" font-family="system-ui,sans-serif">Molecule modes</text>
           </svg>`,
         },
+      ],
+      nextPrompt: "Let me play with a live 2x2 matrix.",
+      annotations: [
+        { kind: "sticky", content: "PCA · PageRank · QM\nAll = eigen-problems", anchor: "top-right", color: "#e9d5ff" },
       ],
     },
 
@@ -350,6 +365,10 @@ function draw(){
 draw();
 <\/script></body></html>`,
         },
+      ],
+      annotations: [
+        { kind: "sticky", content: "Try [[2,1],[0,3]]\n→ λ = 2 and 3\n→ axis-aligned eigenvectors", anchor: "right", color: "#fff7c2" },
+        { kind: "text",   content: "Complex eigenvalues =\nrotation present", anchor: "below", offsetY: -10 },
       ],
     },
   ],

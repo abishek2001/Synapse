@@ -13,6 +13,7 @@ export const blackHoleDemo: DemoScript = {
   description: "Event horizons, spaghettification, the family of black holes.",
   tags: ["3D", "Tree", "Graphs", "Physics"],
   userPrompt: "How does a black hole actually work?",
+  keywords: ["black hole", "blackhole"],
   modules: [
     // ─── Module 1: What is a black hole? ─────────────────────────────────
     {
@@ -63,6 +64,11 @@ export const blackHoleDemo: DemoScript = {
             <text x="148" y="142" font-size="8" fill="rgba(0,0,0,0.55)" font-family="system-ui,sans-serif">Accretion disk</text>
           </svg>`,
         },
+      ],
+      nextPrompt: "Explain the math — what's the Schwarzschild radius?",
+      annotations: [
+        { kind: "sticky", content: "Event horizon =\npoint of no return", anchor: "top-right", color: "#fee2e2" },
+        { kind: "text",   content: "Light can't escape\nonce inside r_s", anchor: "below", offsetY: -10 },
       ],
     },
 
@@ -183,6 +189,11 @@ function update(t) {
           y_label: "v_escape (m/s)",
         },
       ],
+      nextPrompt: "What happens to me if I fall in?",
+      annotations: [
+        { kind: "sticky", content: "rₛ = 2GM/c²\n(Schwarzschild radius)", anchor: "right", color: "#fff7c2" },
+        { kind: "text",   content: "Earth → 9 mm\nSun → 3 km\nM87* → 38 billion km", anchor: "below", offsetY: -10 },
+      ],
     },
 
     // ─── Module 3: Spaghettification ──────────────────────────────────────
@@ -237,6 +248,11 @@ function update(t) {
             <text x="256" y="68" text-anchor="middle" font-size="8" fill="#ef4444" font-family="system-ui,sans-serif">Crossed</text>
           </svg>`,
         },
+      ],
+      nextPrompt: "Are all black holes the same?",
+      annotations: [
+        { kind: "sticky", content: "Tidal force ∝ 1/r³\n(grows fast near horizon)", anchor: "top-right", color: "#fce7f3" },
+        { kind: "text",   content: "Bigger BH → gentler stretch\n(supermassives let you in alive!)", anchor: "below", offsetY: -10 },
       ],
     },
 
@@ -335,6 +351,10 @@ function update(t) {
           </svg>`,
         },
       ],
+      nextPrompt: "How do we even know they exist if light can't escape?",
+      annotations: [
+        { kind: "sticky", content: "Stellar  ~ 5–100 M☉\nIntermediate ~ 10³–10⁵\nSupermassive ~ 10⁶–10¹⁰", anchor: "right", color: "#dbeafe" },
+      ],
     },
 
     // ─── Module 5: How we detect them ────────────────────────────────────
@@ -402,6 +422,10 @@ function update(t) {
           x_label: "Stellar velocity dispersion σ (km/s)",
           y_label: "BH mass (×10⁸ M☉)",
         },
+      ],
+      annotations: [
+        { kind: "sticky", content: "EHT (2019) — first photo\nLIGO (2015) — first merger heard", anchor: "right", color: "#e9d5ff" },
+        { kind: "text",   content: "M–σ relation:\nbigger galaxy ⇒ bigger central BH", anchor: "below", offsetY: -10 },
       ],
     },
   ],

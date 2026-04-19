@@ -9,7 +9,16 @@ import type { DemoScript } from "@/lib/demos/types";
 
 export default function DemoButton() {
   const { darkMode } = useUIStore();
-  const { activeScriptId, isPlaying, start, stop } = useDemoStore();
+  const script = useDemoStore((s) => s.script);
+  const isPlaying = useDemoStore((s) => s.isPlaying);
+  const queuedPrompt = useDemoStore((s) => s.queuedPrompt);
+  const currentModuleIdx = useDemoStore((s) => s.currentModuleIdx);
+  const start = useDemoStore((s) => s.start);
+  const stop = useDemoStore((s) => s.stop);
+  const activeScriptId = script?.id ?? null;
+  // "Active" means the demo is on rails — either streaming a module or sitting
+  // on a queued prompt waiting for the user. Treat both as "demo running".
+  const demoActive = !!script;
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -32,7 +41,7 @@ export default function DemoButton() {
   };
 
   const onMainClick = () => {
-    if (isPlaying) {
+    if (demoActive) {
       stop();
       return;
     }
@@ -42,6 +51,10 @@ export default function DemoButton() {
   const activeScript = activeScriptId
     ? DEMO_SCRIPTS.find((s) => s.id === activeScriptId)
     : null;
+  const totalModules = activeScript?.modules.length ?? 0;
+  const moduleProgress = activeScript
+    ? `${Math.min(currentModuleIdx + 1, totalModules)}/${totalModules}`
+    : "";
 
   return (
     <div
@@ -49,7 +62,7 @@ export default function DemoButton() {
       className="absolute right-4 bottom-32 z-40 hidden sm:flex flex-col items-end gap-2"
     >
       <AnimatePresence>
-        {open && !isPlaying && (
+        {open && !demoActive && (
           <motion.div
             initial={{ opacity: 0, y: 8, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -135,27 +148,35 @@ export default function DemoButton() {
         whileHover={{ scale: 1.04 }}
         whileTap={{ scale: 0.96 }}
         className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[10px] font-mono transition-all ${
-          isPlaying
+          demoActive
             ? "bg-violet-500/15 border-violet-500/40 text-violet-400"
             : darkMode
               ? "border-white/[0.10] text-white/40 hover:text-white/60 hover:border-white/20"
               : "border-black/[0.08] text-black/40 hover:text-black/60 hover:border-black/15"
         }`}
         style={{
-          backgroundColor: isPlaying
+          backgroundColor: demoActive
             ? undefined
             : darkMode
               ? "#1a1a2e"
               : "rgba(255,255,255,0.9)",
           backdropFilter: "blur(8px)",
         }}
-        title={isPlaying ? "Stop the running demo" : "Play a hardcoded demo (looks like real-time)"}
+        title={
+          demoActive
+            ? queuedPrompt
+              ? "Demo paused — submit the queued prompt to continue"
+              : "Stop the running demo"
+            : "Play a hardcoded demo (looks like real-time)"
+        }
       >
-        {isPlaying && (
-          <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
+        {demoActive && (
+          <span className={`w-1.5 h-1.5 rounded-full ${isPlaying ? "bg-violet-400 animate-pulse" : "bg-amber-300"}`} />
         )}
-        {isPlaying
-          ? `▶ ${activeScript?.title ?? "Demo"} · Click to Stop`
+        {demoActive
+          ? isPlaying
+            ? `▶ ${activeScript?.title ?? "Demo"} · ${moduleProgress}`
+            : `⏸ ${activeScript?.title ?? "Demo"} · ${moduleProgress} · Click to Stop`
           : "[DEMO] Play Session"}
       </motion.button>
     </div>

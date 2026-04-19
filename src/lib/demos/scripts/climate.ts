@@ -14,6 +14,7 @@ export const climateDemo: DemoScript = {
   description: "How a degree of warming ripples through Earth's systems.",
   tags: ["3D", "Tree", "Graphs", "Earth"],
   userPrompt: "Walk me through how climate change cascades through Earth's systems.",
+  keywords: ["climate", "climate change", "global warming", "greenhouse"],
   modules: [
     // ─── Module 1: Greenhouse effect ─────────────────────────────────────
     {
@@ -112,6 +113,11 @@ function update(t) {
             "Power radiated per unit area. Doubling T means 16× the radiation — the planet equilibrates fast, but greenhouse gases shift where that equilibrium lands.",
         },
       ],
+      nextPrompt: "What does the data actually show?",
+      annotations: [
+        { kind: "sticky", content: "GHG → trap IR\n→ surface warms", anchor: "top-right", color: "#fff7c2" },
+        { kind: "text",   content: "Without GHGs:\nEarth would be ~ −18 °C", anchor: "below", offsetY: -10 },
+      ],
     },
 
     // ─── Module 2: The data ──────────────────────────────────────────────
@@ -156,6 +162,11 @@ function update(t) {
           x_label: "Year",
           y_label: "ΔT vs 1850 (°C)",
         },
+      ],
+      nextPrompt: "What are the downstream impacts?",
+      annotations: [
+        { kind: "sticky", content: "Pre-industrial: 280 ppm\nToday: ~ 425 ppm\n+50% in 200 years", anchor: "right", color: "#fee2e2" },
+        { kind: "text",   content: "Mauna Loa (1958–today)\nKeeling curve = our fingerprint", anchor: "below", offsetY: -10 },
       ],
     },
 
@@ -238,6 +249,11 @@ function update(t) {
           </svg>`,
         },
       ],
+      nextPrompt: "What are we actually doing about it?",
+      annotations: [
+        { kind: "sticky", content: "Cascading impacts:\nice → seas → coasts\nheat → crops → food", anchor: "top-right", color: "#fce7f3" },
+        { kind: "text",   content: "Tipping points are\nIRREVERSIBLE on human timescales", anchor: "below", offsetY: -10 },
+      ],
     },
 
     // ─── Module 4: What works ────────────────────────────────────────────
@@ -312,6 +328,11 @@ function update(t) {
           y_label: "Gt CO₂/yr",
         },
       ],
+      nextPrompt: "Show me the carbon cycle.",
+      annotations: [
+        { kind: "sticky", content: "Net-zero by 2050\n→ keeps us below ~ 1.5 °C", anchor: "right", color: "#dcfce7" },
+        { kind: "text",   content: "Solar + wind already\ncheaper than new coal", anchor: "below", offsetY: -10 },
+      ],
     },
 
     // ─── Module 5: The carbon cycle ──────────────────────────────────────
@@ -347,6 +368,10 @@ function update(t) {
             { from: "human", to: "atm", label: "burned" },
           ],
         },
+      ],
+      annotations: [
+        { kind: "sticky", content: "Slow cycle: rocks ⇌ atm\n(millions of years)\nFast cycle: bio ⇌ atm\n(years)", anchor: "right", color: "#fff7c2" },
+        { kind: "text",   content: "We're moving fossil C\ninto the fast cycle\n→ that's the imbalance", anchor: "below", offsetY: -10 },
       ],
     },
   ],

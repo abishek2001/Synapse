@@ -6,6 +6,7 @@ import { Send, Mic, MicOff, Square, Volume2, VolumeX, ChevronUp, ChevronDown, Sp
 import { useSessionStore } from "@/store/session";
 import { useUIStore } from "@/store/ui";
 import { useGroundingStore } from "@/store/grounding";
+import { useDemoStore } from "@/store/demo";
 import { useAIChat } from "@/hooks/useAIChat";
 import { startListening, stopListening, isRecognitionSupported } from "@/lib/voice/speech";
 import { classifyCommand, dispatchCanvasCommand } from "@/lib/voice/commands";
@@ -33,6 +34,13 @@ export default function CanvasInputBar() {
 
   const { darkMode } = useUIStore();
   const { sendMessage, stop, toggleMessage, playingMessageId, isStreaming, latestTutor } = useAIChat();
+  // Demo playback hooks — when a hardcoded demo is running, the input bar
+  // intercepts Send to advance the next module instead of hitting the API.
+  const demoScript = useDemoStore((s) => s.script);
+  const demoQueuedPrompt = useDemoStore((s) => s.queuedPrompt);
+  const demoIsPlaying = useDemoStore((s) => s.isPlaying);
+  const demoAdvance = useDemoStore((s) => s.advance);
+  const demoActive = !!demoScript;
   const [input, setInput] = useState("");
   const [bubbleExpanded, setBubbleExpanded] = useState(false);
   const [voicePickerAnchor, setVoicePickerAnchor] = useState<DOMRect | null>(null);
@@ -149,9 +157,31 @@ export default function CanvasInputBar() {
     }
   }, [moduleQueue, isStreaming, pendingVoiceText, sendMessage, shiftModuleQueue]);
 
+  // Auto-fill the input pill whenever the demo store stages the next prompt.
+  // The user just clicks Send to fire the next programmed module.
+  useEffect(() => {
+    if (demoQueuedPrompt) setInput(demoQueuedPrompt);
+  }, [demoQueuedPrompt]);
+
   const handleSend = () => {
     if (!input.trim() || isStreaming) return;
-    // If user is typing without picking a mode, default to guided
+    // Demo interception: when a demo is active, ANY submit advances the next
+    // hardcoded module — even if the user edited the queued prompt. Keeps the
+    // demo on rails without confusing branches.
+    if (demoActive) {
+      // Persist the typed prompt to the transcript so the bubble + sidebar
+      // light up like a real follow-up question.
+      const text = input.trim();
+      useSessionStore.getState().addMessage({
+        id: crypto.randomUUID(),
+        role: "user",
+        content: text,
+        timestamp: Date.now(),
+      });
+      setInput("");
+      demoAdvance();
+      return;
+    }
     if (learningMode === null) setLearningMode("guided");
     sendMessage(input.trim());
     setInput("");
@@ -604,13 +634,22 @@ export default function CanvasInputBar() {
                     <Mic className="w-3.5 h-3.5" />
                   </button>
                 )}
-                <button
+                <motion.button
                   onClick={handleSend}
                   disabled={!input.trim()}
-                  className={`w-7 h-7 rounded-full flex items-center justify-center transition-all flex-shrink-0 disabled:opacity-20 ${sendActive} text-white`}
+                  animate={demoQueuedPrompt && !demoIsPlaying ? { scale: [1, 1.12, 1] } : { scale: 1 }}
+                  transition={demoQueuedPrompt && !demoIsPlaying
+                    ? { repeat: Infinity, duration: 1.4, ease: "easeInOut" }
+                    : { duration: 0.18 }}
+                  className={`w-7 h-7 rounded-full flex items-center justify-center transition-all flex-shrink-0 disabled:opacity-20 ${sendActive} text-white ${
+                    demoQueuedPrompt && !demoIsPlaying
+                      ? "shadow-[0_0_12px_rgba(124,58,237,0.55)] ring-2 ring-violet-400/60"
+                      : ""
+                  }`}
+                  title={demoQueuedPrompt && !demoIsPlaying ? "Send to play next module" : undefined}
                 >
                   <Send className="w-3 h-3" />
-                </button>
+                </motion.button>
               </>
             )}
           </div>

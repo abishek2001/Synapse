@@ -25,6 +25,8 @@ import { useSessionStore } from "@/store/session";
 import { useGroundingStore } from "@/store/grounding";
 import { useUIStore } from "@/store/ui";
 import { useCanvasStore } from "@/store/canvas";
+import { useDemoStore } from "@/store/demo";
+import { DEMO_SCRIPTS } from "@/lib/demos";
 import { createSessionContext } from "@/lib/grounding/session-context";
 import { preloadKokoro } from "@/lib/voice/kokoro";
 import { useViewport } from "@/hooks/useViewport";
@@ -136,6 +138,21 @@ export default function WorkspaceView() {
   useEffect(() => {
     if (bridgeInitRef.current) return;
     bridgeInitRef.current = true;
+
+    // ── Demo handoff ──────────────────────────────────────────────────────
+    // If the landing page matched a demo keyword (or another flow queued one),
+    // skip the bridge entirely and start the hardcoded demo immediately.
+    const pendingId = useDemoStore.getState().consumePending();
+    if (pendingId) {
+      const script = DEMO_SCRIPTS.find((s) => s.id === pendingId);
+      if (script) {
+        setShowBridge(false);
+        // Defer one tick so the workspace mounts before playback begins
+        // (otherwise the input bar / canvas haven't subscribed yet).
+        setTimeout(() => useDemoStore.getState().start(script), 60);
+        return;
+      }
+    }
 
     const displayQ = query;
     const displayP = persona;

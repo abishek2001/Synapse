@@ -7,6 +7,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useSessionStore, type UploadedFile } from "@/store/session";
 import { useCanvasStore } from "@/store/canvas";
 import { useGroundingStore } from "@/store/grounding";
+import { useDemoStore } from "@/store/demo";
+import { matchDemoByQuery } from "@/lib/demos/match";
 import { isLikelyUrl, stripUrl, detectUrls } from "@/lib/utils/detect-url";
 import { startListening, stopListening, isRecognitionSupported } from "@/lib/voice/speech";
 
@@ -41,6 +43,26 @@ export default function InputBar() {
 
   const handleEnter = async () => {
     if (!query.trim()) return;
+
+    // Demo keyword shortcut — typing "black hole", "heart", "projectile",
+    // "eigenvector", "climate", or "dna" jumps straight into the matching
+    // hardcoded demo (skips the bridge + real AI). Useful for stage demos.
+    const demo = matchDemoByQuery(query);
+    if (demo) {
+      try {
+        const { archiveCurrentSession } = await import("@/lib/session-archive");
+        archiveCurrentSession();
+      } catch {}
+      clearCanvas();
+      resetGrounding();
+      // Initialize a session so /workspace doesn't bounce us back to /.
+      // Using the demo title keeps the workspace navbar / archive labels sane.
+      initSession(demo.title, persona.id, [], []);
+      useDemoStore.getState().queueScript(demo.id);
+      router.push("/workspace");
+      return;
+    }
+
     const uploaded: UploadedFile[] = await Promise.all(
       files.map((f) =>
         new Promise<UploadedFile>((resolve, reject) => {

@@ -14,6 +14,7 @@ export const dnaDemo: DemoScript = {
   description: "From the double helix to the tree of life and live selection.",
   tags: ["3D", "Tree", "Biology"],
   userPrompt: "How does DNA actually code for life?",
+  keywords: ["dna", "evolution", "genome", "double helix"],
   modules: [
     // ─── Module 1: The double helix ──────────────────────────────────────
     {
@@ -128,6 +129,11 @@ function update(t) {
           ],
         },
       ],
+      nextPrompt: "How does DNA actually code for proteins?",
+      annotations: [
+        { kind: "sticky", content: "A — T   (2 bonds)\nG — C   (3 bonds)\nbase pairing rules", anchor: "top-right", color: "#fff7c2" },
+        { kind: "text",   content: "Each strand is a perfect template\nfor copying the other", anchor: "below", offsetY: -10 },
+      ],
     },
 
     // ─── Module 2: From code to protein ──────────────────────────────────
@@ -176,6 +182,11 @@ function update(t) {
           annotation:
             "Each codon is 3 bases. 4 letters give 64 combinations, mapping onto 20 amino acids plus 3 stop codons. The redundancy buffers against single-base mutations.",
         },
+      ],
+      nextPrompt: "How do we know all life shares one ancestor?",
+      annotations: [
+        { kind: "sticky", content: "DNA → RNA → Protein\n(central dogma)", anchor: "right", color: "#dbeafe" },
+        { kind: "text",   content: "3 bases = 1 amino acid\n(64 codons, 20 aa)\n→ redundant code", anchor: "below", offsetY: -10 },
       ],
     },
 
@@ -234,6 +245,10 @@ function update(t) {
             <text x="288" y="225" text-anchor="middle" font-size="9" fill="#7c3aed" font-weight="700" font-family="system-ui,sans-serif">Mammalia → Primates → Us</text>
           </svg>`,
         },
+      ],
+      nextPrompt: "How does selection actually drive evolution?",
+      annotations: [
+        { kind: "sticky", content: "Same code in every cell\nfrom bacteria to whales\n→ shared ancestry", anchor: "top-right", color: "#dcfce7" },
       ],
     },
 
@@ -348,6 +363,11 @@ loop();
 <\/script></body></html>`,
         },
       ],
+      nextPrompt: "How big is the human genome?",
+      annotations: [
+        { kind: "sticky", content: "Most mutations: neutral\nFew: harmful (left tail)\nRarer still: beneficial", anchor: "right", color: "#fff7c2" },
+        { kind: "text",   content: "Selection = differential\nreproduction over time", anchor: "below", offsetY: -10 },
+      ],
     },
 
     // ─── Module 5: Genome scale ──────────────────────────────────────────
@@ -413,6 +433,10 @@ loop();
             <text x="126" y="125" font-size="8" fill="rgba(0,0,0,0.55)" font-family="system-ui,sans-serif">Introns: most genes</text>
           </svg>`,
         },
+      ],
+      annotations: [
+        { kind: "sticky", content: "3 BILLION base pairs\n~ 2 m of DNA per cell\n→ packed into 6 µm nucleus", anchor: "right", color: "#fff7c2" },
+        { kind: "text",   content: "Only ~1.5% codes for proteins\n→ rest is regulatory + junk", anchor: "below", offsetY: -10 },
       ],
     },
   ],
