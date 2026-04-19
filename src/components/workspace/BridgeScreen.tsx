@@ -270,13 +270,18 @@ export default function BridgeScreen({
         transition={{ delay: 0.3, duration: 0.5 }}
         className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center gap-3"
       >
-        {/* Progress bar */}
-        <div className="w-48 h-[2px] rounded-full bg-black/[0.06] overflow-hidden">
-          <motion.div
-            className="h-full rounded-full bg-violet-500"
-            animate={{ width: `${pct}%` }}
-            transition={{ duration: 0.6, ease: "easeOut" }}
-          />
+        {/* Progress bar with % */}
+        <div className="flex items-center gap-3">
+          <div className="w-48 h-[2px] rounded-full bg-black/[0.06] overflow-hidden">
+            <motion.div
+              className="h-full rounded-full bg-violet-500"
+              animate={{ width: `${pct}%` }}
+              transition={{ duration: 0.6, ease: "easeOut" }}
+            />
+          </div>
+          <span className="text-[10.5px] text-black/40 font-mono tabular-nums w-10 text-right">
+            {pct}%
+          </span>
         </div>
 
         <div className="flex items-center gap-2.5">

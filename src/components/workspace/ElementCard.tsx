@@ -26,9 +26,11 @@ class CardErrorBoundary extends Component<EBProps, EBState> {
     return this.props.children;
   }
 }
-import { X, GripHorizontal } from "lucide-react";
+import { X, GripHorizontal, RefreshCw, Lightbulb, MessageCircle, Send } from "lucide-react";
+import { AnimatePresence } from "framer-motion";
 import { useCanvasStore, type CanvasElement } from "@/store/canvas";
 import { useUIStore } from "@/store/ui";
+import { useSessionStore } from "@/store/session";
 import VisualCard from "../canvas/VisualCard";
 import GraphCard from "../canvas/GraphCard";
 import NotationCard from "../canvas/NotationCard";
@@ -37,6 +39,7 @@ import LookupCard from "../canvas/LookupCard";
 import DiagramCard from "../canvas/DiagramCard";
 import Render3DCard from "../canvas/Render3DCard";
 import SimulationCard from "./SimulationCard";
+import CitationChips from "../canvas/CitationChips";
 import SkeletonCard from "../canvas/SkeletonCard";
 import type { CanvasTool } from "./InfiniteCanvas";
 
@@ -64,6 +67,33 @@ function computeCounterScale(canvasScale: number, birthScale: number): number {
 export default function ElementCard({ element, isSelected, onSelect, canvasScale, currentTool, onGroupHover }: Props) {
   const { moveElement, removeElement, updateElementText, updateStickyContent, setElementHeight } = useCanvasStore();
   const { darkMode } = useUIStore();
+  const setPendingVoiceText = useSessionStore((s) => s.setPendingVoiceText);
+
+  const requestRegenerate = useCallback(() => {
+    if (!element.artifact) return;
+    const title = element.artifact.title || element.artifact.type;
+    setPendingVoiceText(`Please regenerate the ${element.artifact.type} "${title}" — try a fresh approach to it.`);
+  }, [element.artifact, setPendingVoiceText]);
+
+  const requestExplainDifferently = useCallback(() => {
+    if (!element.artifact) return;
+    const title = element.artifact.title || element.artifact.type;
+    setPendingVoiceText(`Explain the ${element.artifact.type} "${title}" differently — pick a new angle, new metaphor, or break it down for a beginner.`);
+  }, [element.artifact, setPendingVoiceText]);
+
+  // Inline mini-chat targeted at this specific artifact
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatText, setChatText] = useState("");
+  const submitChat = useCallback(() => {
+    const txt = chatText.trim();
+    if (!txt || !element.artifact) return;
+    const title = element.artifact.title || element.artifact.type;
+    setPendingVoiceText(
+      `About the ${element.artifact.type} "${title}" — ${txt}`,
+    );
+    setChatText("");
+    setChatOpen(false);
+  }, [chatText, element.artifact, setPendingVoiceText]);
 
   // Measure actual rendered height so GroupBoundary can use real dimensions.
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -352,14 +382,85 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
             drag
           </span>
         </div>
-        <button onClick={(e) => { e.stopPropagation(); removeElement(element.id); }}
-          className="flex items-center justify-center w-6 h-6 rounded-md transition-colors"
-          style={{ backgroundColor: darkMode ? "rgba(20,20,40,0.88)" : "rgba(255,255,255,0.94)",
+        <div
+          className="flex items-center gap-0.5 rounded-md overflow-hidden"
+          style={{
+            backgroundColor: darkMode ? "rgba(20,20,40,0.88)" : "rgba(255,255,255,0.94)",
             backdropFilter: "blur(8px)",
-            border: darkMode ? "1px solid rgba(255,255,255,0.07)" : "1px solid rgba(0,0,0,0.07)" }}>
-          <X className="w-3 h-3" style={{ color: darkMode ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.3)" }} />
-        </button>
+            border: darkMode ? "1px solid rgba(255,255,255,0.07)" : "1px solid rgba(0,0,0,0.07)",
+          }}
+        >
+          <button
+            onClick={(e) => { e.stopPropagation(); requestRegenerate(); }}
+            className={`flex items-center justify-center w-6 h-6 transition-colors ${darkMode ? "text-white/45 hover:text-violet-300 hover:bg-white/[0.08]" : "text-black/45 hover:text-violet-600 hover:bg-black/[0.04]"}`}
+            title="Regenerate"
+          >
+            <RefreshCw className="w-3 h-3" />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); requestExplainDifferently(); }}
+            className={`flex items-center justify-center w-6 h-6 transition-colors ${darkMode ? "text-white/45 hover:text-amber-300 hover:bg-white/[0.08]" : "text-black/45 hover:text-amber-600 hover:bg-black/[0.04]"}`}
+            title="Explain differently"
+          >
+            <Lightbulb className="w-3 h-3" />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); setChatOpen((v) => !v); }}
+            className={`flex items-center justify-center w-6 h-6 transition-colors ${chatOpen ? (darkMode ? "text-violet-300 bg-white/[0.08]" : "text-violet-600 bg-black/[0.04]") : darkMode ? "text-white/45 hover:text-cyan-300 hover:bg-white/[0.08]" : "text-black/45 hover:text-cyan-600 hover:bg-black/[0.04]"}`}
+            title="Ask about this"
+          >
+            <MessageCircle className="w-3 h-3" />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); removeElement(element.id); }}
+            className={`flex items-center justify-center w-6 h-6 transition-colors ${darkMode ? "text-white/35 hover:text-red-400 hover:bg-white/[0.08]" : "text-black/30 hover:text-red-500 hover:bg-black/[0.04]"}`}
+            title="Delete"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        </div>
       </div>
+
+      {/* Inline mini-chat popover — anchored above the artifact */}
+      <AnimatePresence>
+        {chatOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: 4, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 4, scale: 0.96 }}
+            transition={{ duration: 0.15 }}
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="absolute -top-16 right-0 z-20 flex items-center gap-1.5 px-2 py-1.5 rounded-xl shadow-lg"
+            style={{
+              backgroundColor: darkMode ? "rgba(20,20,40,0.96)" : "rgba(255,255,255,0.98)",
+              border: darkMode ? "1px solid rgba(255,255,255,0.10)" : "1px solid rgba(0,0,0,0.08)",
+              backdropFilter: "blur(10px)",
+              minWidth: 280,
+            }}
+          >
+            <input
+              autoFocus
+              value={chatText}
+              onChange={(e) => setChatText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") { e.preventDefault(); submitChat(); }
+                if (e.key === "Escape") { e.preventDefault(); setChatOpen(false); }
+              }}
+              placeholder="Ask about this artifact..."
+              className={`flex-1 bg-transparent text-[12px] outline-none placeholder:opacity-40 ${darkMode ? "text-white/85" : "text-black/85"}`}
+            />
+            <button
+              onClick={submitChat}
+              disabled={!chatText.trim()}
+              className={`w-6 h-6 rounded-lg flex items-center justify-center transition-all ${chatText.trim() ? "bg-violet-500 text-white hover:bg-violet-600" : darkMode ? "bg-white/[0.06] text-white/30" : "bg-black/[0.05] text-black/30"}`}
+              title="Send"
+            >
+              <Send className="w-3 h-3" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Entrance animation wrapper */}
       <motion.div
@@ -378,6 +479,7 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
               <CardErrorBoundary type="flashcard">
                 <FlashcardCard artifact={artifact} />
               </CardErrorBoundary>
+              <CitationChips citations={artifact.citations} dark={darkMode} />
             </div>
           </div>
         ) : (
@@ -389,6 +491,9 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
             {artifact.type === "lookup"     && <CardErrorBoundary type="lookup"><LookupCard artifact={artifact} /></CardErrorBoundary>}
             {artifact.type === "simulation" && <CardErrorBoundary type="simulation"><SimulationCard artifact={artifact} expanded /></CardErrorBoundary>}
             {artifact.type === "render3d"   && <CardErrorBoundary type="render3d"><Render3DCard artifact={artifact} /></CardErrorBoundary>}
+            <div className="px-3">
+              <CitationChips citations={artifact.citations} dark={darkMode} />
+            </div>
           </div>
         )}
       </motion.div>

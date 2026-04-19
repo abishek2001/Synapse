@@ -11,6 +11,8 @@ import CanvasInputBar from "./CanvasInputBar";
 import LeftSidebar from "./LeftSidebar";
 import RightSidebar from "./RightSidebar";
 import MockButton from "./MockButton";
+import ModuleTimeline from "./ModuleTimeline";
+import QuizMeMode from "./QuizMeMode";
 import BridgeScreen, {
   buildStages,
   type BridgeStage,
@@ -93,6 +95,27 @@ export default function WorkspaceView() {
   // Start downloading the Kokoro TTS model in the background so it's
   // ready by the time the user clicks Speak for the first time.
   useEffect(() => { preloadKokoro(); }, []);
+
+  // Periodically snapshot the active session into the archive so the
+  // /library page reflects the latest progress (every 30s, also on unload).
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        const { touchActiveSession } = await import("@/lib/session-archive");
+        touchActiveSession();
+      } catch {}
+    };
+    const interval = setInterval(tick, 30_000);
+    const beforeUnload = () => { void tick(); };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      window.removeEventListener("beforeunload", beforeUnload);
+    };
+  }, []);
 
   useEffect(() => {
     if (bridgeInitRef.current) return;
@@ -391,6 +414,9 @@ export default function WorkspaceView() {
               <div className="flex-1 min-w-0 relative">
                 <ArtifactCanvas ref={artifactCanvasRef} topic={displayTitle} intro={introText} />
 
+                {/* Module timeline (floating, top-center) */}
+                <ModuleTimeline />
+
                 {/* Sources panel (floating, top-right) */}
                 {showSources && files.length > 0 && (
                   <div className="absolute top-3 right-3 z-30 pointer-events-auto">
@@ -400,6 +426,9 @@ export default function WorkspaceView() {
 
                 {/* Mock button */}
                 <MockButton />
+
+                {/* Quiz Me — only renders if there are flashcards on the canvas */}
+                <QuizMeMode />
 
                 {/* Canvas input bar */}
                 <CanvasInputBar />

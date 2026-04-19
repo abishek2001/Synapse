@@ -3,6 +3,7 @@
 import { FileText, X } from "lucide-react";
 import { motion } from "framer-motion";
 import type { UploadedFile } from "@/store/session";
+import { useUIStore } from "@/store/ui";
 
 interface SourcesPanelProps {
   files: UploadedFile[];
@@ -16,18 +17,32 @@ function formatSize(bytes: number) {
 }
 
 export default function SourcesPanel({ files, onClose }: SourcesPanelProps) {
+  const darkMode = useUIStore((s) => s.darkMode);
+
+  const surface = darkMode
+    ? "bg-[#0d0d18]/90 border-white/[0.08]"
+    : "bg-white/90 border-black/[0.06]";
+  const heading = darkMode ? "text-white/55" : "text-black/50";
+  const closeBtn = darkMode
+    ? "bg-white/[0.06] text-white/40 hover:text-white/80"
+    : "bg-black/[0.04] text-black/25 hover:text-black/60";
+  const rowHover = darkMode ? "hover:bg-white/[0.04]" : "hover:bg-black/[0.03]";
+  const fileIcon = darkMode ? "text-white/30" : "text-black/25";
+  const fileName = darkMode ? "text-white/75" : "text-black/60";
+  const fileMeta = darkMode ? "text-white/35" : "text-black/25";
+
   return (
     <motion.div
       initial={{ opacity: 0, y: -8 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -8 }}
-      className="w-56 bg-white/90 backdrop-blur-2xl border border-black/[0.06] rounded-2xl overflow-hidden shadow-xl"
+      className={`w-56 backdrop-blur-2xl border rounded-2xl overflow-hidden shadow-xl ${surface}`}
     >
       <div className="flex items-center justify-between px-3 py-2.5">
-        <span className="text-[11px] font-medium text-black/50">Sources</span>
+        <span className={`text-[11px] font-medium ${heading}`}>Sources</span>
         <button
           onClick={onClose}
-          className="w-5 h-5 rounded-full bg-black/[0.04] flex items-center justify-center text-black/25 hover:text-black/60 transition-all"
+          className={`w-5 h-5 rounded-full flex items-center justify-center transition-all ${closeBtn}`}
         >
           <X className="w-2.5 h-2.5" />
         </button>
@@ -37,14 +52,14 @@ export default function SourcesPanel({ files, onClose }: SourcesPanelProps) {
         {files.map((file, i) => (
           <div
             key={i}
-            className="flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-black/[0.03] transition-colors"
+            className={`flex items-center gap-2.5 px-2.5 py-2 rounded-xl transition-colors ${rowHover}`}
           >
-            <FileText className="w-3.5 h-3.5 text-black/25 flex-shrink-0" />
+            <FileText className={`w-3.5 h-3.5 flex-shrink-0 ${fileIcon}`} />
             <div className="min-w-0">
-              <p className="text-[11px] font-medium text-black/60 truncate">
+              <p className={`text-[11px] font-medium truncate ${fileName}`}>
                 {file.name}
               </p>
-              <p className="text-[9px] text-black/25">{formatSize(file.size)}</p>
+              <p className={`text-[9px] ${fileMeta}`}>{formatSize(file.size)}</p>
             </div>
           </div>
         ))}

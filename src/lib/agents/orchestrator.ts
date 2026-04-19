@@ -6,7 +6,7 @@ import { getTeachingDecision, type TeachingDecision } from "./strategy";
 import { observeTurn } from "./observer";
 import { CANVAS_TOOLS, getToolsForAction } from "@/lib/tools/schemas";
 import { handleToolCall, type DelegatedAnnotation } from "@/lib/tools/handlers";
-import type { CanvasArtifact } from "@/lib/tools/types";
+import type { CanvasArtifact, ArtifactCitation, LookupArtifact } from "@/lib/tools/types";
 import type {
   AgentMessage,
   FriendResponse,
@@ -182,6 +182,9 @@ Follow this guidance. The artifact types listed are what the pedagogical layer d
   const canvasAnnotations: DelegatedAnnotation[] = [];
   const toolCallNames: string[] = [];
   const toolCallArgs: Record<string, unknown>[] = [];
+  // Citations gathered from any knowledge_lookup calls earlier in this turn —
+  // attached to subsequent artifacts so the user can trace where ideas came from.
+  const turnCitations: ArtifactCitation[] = [];
   // Map from tool call id → pending element id so we can resolve skeletons
   const pendingIdMap = new Map<string, string>();
   let finalExplanation = "";
@@ -252,6 +255,19 @@ Follow this guidance. The artifact types listed are what the pedagogical layer d
       try {
         const toolResult = await handleToolCall(fnName, fnArgs, documentContext);
         if (toolResult.artifact) {
+          // If this was a knowledge_lookup, accumulate its citations for later artifacts
+          if (fnName === "knowledge_lookup" && toolResult.artifact.type === "lookup") {
+            const lookup = toolResult.artifact as LookupArtifact;
+            for (const r of lookup.results) {
+              turnCitations.push({ source: r.source, excerpt: r.text.slice(0, 140) });
+            }
+          } else if (turnCitations.length > 0) {
+            // Tag this artifact with all retrieval citations from earlier in the turn
+            toolResult.artifact = {
+              ...toolResult.artifact,
+              citations: [...(toolResult.artifact.citations ?? []), ...turnCitations],
+            } as CanvasArtifact;
+          }
           artifacts.push(toolResult.artifact);
           const pendingId = pendingIdMap.get(toolCall.id);
           if (pendingId) {

@@ -1,11 +1,19 @@
 export type ArtifactType = "visual" | "graph" | "notation" | "flashcard" | "lookup" | "simulation" | "render3d" | "diagram";
 
+export interface ArtifactCitation {
+  source: string;          // e.g. "doc.pdf, p.3" or "Course Notes, §2.1"
+  excerpt?: string;        // optional snippet (~120 chars)
+  score?: number;          // retrieval relevance score (0..1)
+}
+
 export interface BaseArtifact {
   id: string;
   type: ArtifactType;
   title: string;
   status: "pending" | "rendered" | "error";
   position?: { x: number; y: number };
+  /** Optional citations from knowledge_lookup retrievals in the same turn. */
+  citations?: ArtifactCitation[];
 }
 
 export interface VisualArtifact extends BaseArtifact {

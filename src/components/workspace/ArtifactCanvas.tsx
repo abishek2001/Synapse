@@ -2,6 +2,7 @@
 
 import { useCanvasStore, type CanvasElement, type CanvasStroke, ELEM_WIDTHS, estimateElemH } from "@/store/canvas";
 import { useUIStore } from "@/store/ui";
+import { useSessionStore } from "@/store/session";
 import { AnimatePresence, motion } from "framer-motion";
 import { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from "react";
 import ElementCard from "./ElementCard";
@@ -540,22 +541,34 @@ function CanvasTitle({ topic, dark }: { topic: string; dark: boolean }) {
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-      className="absolute pointer-events-none select-none"
-      style={{ left: 80, top: TITLE_Y }}
+      className="absolute pointer-events-none select-none flex flex-col items-center"
+      style={{
+        left: "50%",
+        top: TITLE_Y,
+        transform: "translateX(-50%)",
+      }}
     >
       <h1
-        className="leading-tight"
+        className="leading-tight text-center whitespace-nowrap"
         style={{
           fontFamily: "var(--font-caveat), 'Segoe Print', cursive",
-          fontSize: 48, fontWeight: 700, letterSpacing: "-0.01em",
+          // Scale font with viewport — clamp prevents tiny on small screens / huge on 4K
+          fontSize: "clamp(32px, 4.5vw, 64px)",
+          fontWeight: 700,
+          letterSpacing: "-0.01em",
           color: dark ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.45)",
         }}
       >
         {topic}
       </h1>
       <div
-        className="mt-1 h-[2px] rounded-full"
-        style={{ width: Math.min(topic.length * 22, 600), backgroundColor: dark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)" }}
+        className="mt-1 rounded-full mx-auto"
+        style={{
+          // Scale underline width AND thickness with viewport
+          width: `clamp(${Math.min(topic.length * 14, 280)}px, ${Math.min(topic.length * 1.4, 36)}vw, ${Math.min(topic.length * 24, 720)}px)`,
+          height: "clamp(2px, 0.32vw, 4px)",
+          backgroundColor: dark ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.10)",
+        }}
       />
     </motion.div>
   );
@@ -608,6 +621,14 @@ function CanvasIntroText({ intro, dark }: { intro: string; dark: boolean }) {
 }
 
 function EmptyHint({ dark }: { dark: boolean }) {
+  const isStreaming = useSessionStore((s) => s.isStreaming);
+  const learningMode = useSessionStore((s) => s.learningMode);
+
+  // While streaming the first turn, show the onboarding ghost
+  if (isStreaming) {
+    return <OnboardingGhost dark={dark} mode={learningMode} />;
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -622,6 +643,91 @@ function EmptyHint({ dark }: { dark: boolean }) {
       <p className="text-[11px] mt-1 italic" style={{ color: dark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.12)" }}>
         Double-click to zoom · Right-click for options · P for pen
       </p>
+    </motion.div>
+  );
+}
+
+/* ── Onboarding Ghost — 3-step pulse while first turn is streaming ───────── */
+function OnboardingGhost({ dark, mode }: { dark: boolean; mode: "guided" | "auto" | null }) {
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setStep((s) => (s + 1) % 3), 1500);
+    return () => clearInterval(id);
+  }, []);
+
+  const steps = [
+    { label: "Synapse is thinking", icon: "·" },
+    { label: mode === "auto" ? "Architecting your canvas" : "Drawing your first concept", icon: "✦" },
+    { label: "Almost there", icon: "→" },
+  ];
+
+  const muted = dark ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.22)";
+  const accent = "rgba(124,58,237,0.85)";
+  const ghostFill = dark ? "rgba(124,58,237,0.10)" : "rgba(124,58,237,0.06)";
+  const ghostStroke = dark ? "rgba(124,58,237,0.30)" : "rgba(124,58,237,0.28)";
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4 }}
+      className="absolute pointer-events-none select-none"
+      style={{ left: 84, top: ARTIFACTS_Y }}
+    >
+      {/* Ghost artifact rectangles */}
+      <div className="flex gap-3 mb-5">
+        {[0, 1, 2].map((i) => (
+          <motion.div
+            key={i}
+            initial={{ opacity: 0, scale: 0.92 }}
+            animate={{
+              opacity: step >= 1 ? [0.4, 0.8, 0.4] : 0.18,
+              scale: 1,
+            }}
+            transition={{
+              duration: 1.8,
+              delay: i * 0.15,
+              repeat: Infinity,
+              ease: "easeInOut",
+            }}
+            style={{
+              width: 160,
+              height: 100,
+              backgroundColor: ghostFill,
+              border: `1px dashed ${ghostStroke}`,
+              borderRadius: 12,
+            }}
+          />
+        ))}
+      </div>
+
+      {/* Step indicator */}
+      <div className="flex items-center gap-3">
+        <div className="flex gap-1.5">
+          {[0, 1, 2].map((i) => (
+            <motion.div
+              key={i}
+              animate={{
+                backgroundColor: step === i ? accent : muted,
+                scale: step === i ? 1.4 : 1,
+              }}
+              transition={{ duration: 0.3 }}
+              style={{ width: 6, height: 6, borderRadius: 3 }}
+            />
+          ))}
+        </div>
+        <motion.span
+          key={step}
+          initial={{ opacity: 0, x: -4 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.3 }}
+          className="text-[13px] font-medium"
+          style={{ color: dark ? "rgba(255,255,255,0.55)" : "rgba(0,0,0,0.55)" }}
+        >
+          {steps[step].label}
+          <span className="ml-1.5 text-violet-500">{steps[step].icon}</span>
+        </motion.span>
+      </div>
     </motion.div>
   );
 }

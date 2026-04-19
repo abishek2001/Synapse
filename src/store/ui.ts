@@ -24,6 +24,9 @@ interface UIState {
   contextMenu: ContextMenuState | null;
   /** Current canvas zoom level — synced from InfiniteCanvas.onTransformChange */
   canvasScale: number;
+  /** Source string of the citation the user just clicked — drives TOC pulse/scroll. */
+  highlightedSource: string | null;
+  highlightedSourceTs: number;
 
   toggleDarkMode: () => void;
   setLeftSidebarOpen: (v: boolean) => void;
@@ -35,6 +38,8 @@ interface UIState {
   openContextMenu: (state: ContextMenuState) => void;
   closeContextMenu: () => void;
   setCanvasScale: (v: number) => void;
+  highlightSource: (source: string) => void;
+  clearHighlightedSource: () => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -46,6 +51,8 @@ export const useUIStore = create<UIState>((set) => ({
   doubtPopup: null,
   contextMenu: null,
   canvasScale: 1,
+  highlightedSource: null,
+  highlightedSourceTs: 0,
 
   toggleDarkMode: () => set((s) => ({ darkMode: !s.darkMode })),
   setLeftSidebarOpen: (leftSidebarOpen) => set({ leftSidebarOpen }),
@@ -58,4 +65,6 @@ export const useUIStore = create<UIState>((set) => ({
   openContextMenu: (contextMenu) => set({ contextMenu }),
   closeContextMenu: () => set({ contextMenu: null }),
   setCanvasScale: (canvasScale) => set({ canvasScale }),
+  highlightSource: (source) => set({ highlightedSource: source, highlightedSourceTs: Date.now() }),
+  clearHighlightedSource: () => set({ highlightedSource: null }),
 }));

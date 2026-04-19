@@ -55,6 +55,14 @@ export default function InputBar() {
     // Extract any URLs embedded in the query text
     const detectedUrls = detectUrls(query);
 
+    // Snapshot the previous session into the archive before we wipe the stores
+    try {
+      const { archiveCurrentSession } = await import("@/lib/session-archive");
+      archiveCurrentSession();
+    } catch (err) {
+      console.warn("[archive] snapshot failed", err);
+    }
+
     clearCanvas();
     resetGrounding();
     initSession(query, persona.id, uploaded, detectedUrls);

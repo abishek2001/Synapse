@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, BookOpen, Phone, PanelLeftOpen, PanelRightOpen, Sun, Moon } from "lucide-react";
+import { ArrowLeft, BookOpen, Phone, PanelLeftOpen, PanelRightOpen, Sun, Moon, Download } from "lucide-react";
 import { useUIStore } from "@/store/ui";
+import VoiceIsland from "./VoiceIsland";
+import { downloadStudyGuide } from "@/lib/export-session";
 
 interface WorkspaceNavbarProps {
   title: string;
@@ -36,7 +38,12 @@ export default function WorkspaceNavbar({
     : "bg-black/[0.06] text-black/60";
 
   return (
-    <div className={`flex-shrink-0 flex items-center justify-between px-3 h-11 z-40 border-b ${surface}`}>
+    <div className={`relative flex-shrink-0 flex items-center justify-between px-3 h-11 z-40 border-b ${surface}`}>
+      {/* Voice notch — Apple-style, drops down from the top edge */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 z-50 pointer-events-auto">
+        <VoiceIsland />
+      </div>
+
       {/* Left */}
       <div className="flex items-center gap-1.5">
         {onToggleSidebar && (
@@ -74,6 +81,15 @@ export default function WorkspaceNavbar({
             Sources
           </button>
         )}
+
+        {/* Export study guide */}
+        <button
+          onClick={downloadStudyGuide}
+          title="Export session as study guide (Markdown)"
+          className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${btn}`}
+        >
+          <Download className="w-3.5 h-3.5" />
+        </button>
 
         {/* Dark mode toggle */}
         <button

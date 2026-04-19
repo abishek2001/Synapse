@@ -5,6 +5,7 @@ import { LayoutList } from "lucide-react";
 import { useCanvasStore } from "@/store/canvas";
 import { useUIStore } from "@/store/ui";
 import { useSessionStore } from "@/store/session";
+import { useEffect, useMemo, useRef } from "react";
 
 const ARTIFACT_ICONS: Record<string, string> = {
   visual: "🎨",
@@ -25,8 +26,48 @@ interface LeftSidebarProps {
 
 export default function LeftSidebar({ open, onZoomToGroup }: LeftSidebarProps) {
   const { groups, elements } = useCanvasStore();
-  const { darkMode } = useUIStore();
+  const { darkMode, highlightedSource, highlightedSourceTs, clearHighlightedSource } = useUIStore();
   const { docHeadings } = useSessionStore();
+
+  // Find which heading best matches the highlighted source string. We compare
+  // case-insensitively, looking for headings whose text appears in the source
+  // (or vice-versa) — so "doc.pdf, p.3" can map to a "Section 3" heading.
+  const matchedHeadingIndex = useMemo<number>(() => {
+    if (!highlightedSource) return -1;
+    const src = highlightedSource.toLowerCase();
+    let best = -1;
+    let bestScore = 0;
+    docHeadings.forEach((h, i) => {
+      const hLower = h.toLowerCase();
+      // Direct substring match (either way)
+      if (src.includes(hLower) || hLower.includes(src)) {
+        const score = Math.min(hLower.length, src.length);
+        if (score > bestScore) { best = i; bestScore = score; }
+      }
+      // Page-number heuristic: source has "p.5" or "page 5" → match if heading has "5"
+      const pageMatch = src.match(/p\.?\s*(\d+)|page\s+(\d+)|§\s*([\d.]+)/i);
+      if (pageMatch) {
+        const num = pageMatch[1] || pageMatch[2] || pageMatch[3];
+        if (num && hLower.includes(num)) {
+          if (3 > bestScore) { best = i; bestScore = 3; }
+        }
+      }
+    });
+    return best;
+  }, [highlightedSource, docHeadings]);
+
+  // Auto-clear the highlight after 3 seconds
+  const headingRefs = useRef<(HTMLDivElement | null)[]>([]);
+  useEffect(() => {
+    if (matchedHeadingIndex >= 0) {
+      const node = headingRefs.current[matchedHeadingIndex];
+      if (node) node.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    if (highlightedSource) {
+      const id = setTimeout(() => clearHighlightedSource(), 3000);
+      return () => clearTimeout(id);
+    }
+  }, [highlightedSourceTs, matchedHeadingIndex, highlightedSource, clearHighlightedSource]);
 
   const surface = darkMode ? "#0a0a18" : "#ffffff";
   const border = darkMode ? "border-white/[0.05]" : "border-black/[0.06]";
@@ -69,12 +110,25 @@ export default function LeftSidebar({ open, onZoomToGroup }: LeftSidebarProps) {
               <p className={`px-2 py-1 text-[9px] font-semibold tracking-widest uppercase ${headerText}`}>
                 Document
               </p>
-              {docHeadings.slice(0, 20).map((heading, i) => (
-                <div key={i} className={`px-2 py-1.5 flex items-center gap-2`}>
-                  <div className={`w-1 h-1 rounded-full flex-shrink-0 ${darkMode ? "bg-white/20" : "bg-black/20"}`} />
-                  <p className={`text-[11px] leading-tight truncate ${mutedText}`}>{heading}</p>
-                </div>
-              ))}
+              {docHeadings.slice(0, 20).map((heading, i) => {
+                const isMatch = i === matchedHeadingIndex;
+                return (
+                  <motion.div
+                    key={i}
+                    ref={(el) => { headingRefs.current[i] = el; }}
+                    animate={isMatch ? {
+                      backgroundColor: darkMode
+                        ? ["rgba(139,92,246,0)", "rgba(139,92,246,0.18)", "rgba(139,92,246,0)"]
+                        : ["rgba(139,92,246,0)", "rgba(139,92,246,0.13)", "rgba(139,92,246,0)"],
+                    } : { backgroundColor: "rgba(0,0,0,0)" }}
+                    transition={{ duration: 1.6, repeat: isMatch ? 1 : 0, ease: "easeInOut" }}
+                    className={`px-2 py-1.5 flex items-center gap-2 rounded-md`}
+                  >
+                    <div className={`w-1 h-1 rounded-full flex-shrink-0 ${isMatch ? "bg-violet-500" : darkMode ? "bg-white/20" : "bg-black/20"}`} />
+                    <p className={`text-[11px] leading-tight truncate ${isMatch ? (darkMode ? "text-violet-300 font-semibold" : "text-violet-700 font-semibold") : mutedText}`}>{heading}</p>
+                  </motion.div>
+                );
+              })}
               {groups.length > 0 && (
                 <div className={`mx-2 mt-2 mb-1 border-t ${border}`} />
               )}
