@@ -14,7 +14,7 @@ app/page.tsx
 - **Reads**: nothing (local state only)
 - **Writes**: on submit — calls `useCanvasStore.clearCanvas()`, `useGroundingStore.reset()`, then `useSessionStore.initSession(query, persona, files)` in that order, then navigates
 - **Features**: text input, file upload, persona selector, URL detection feedback, mic button (Web Speech API)
-- **Navigation**: pushes `/workspace?q=...&persona=...` on submit
+- **Navigation**: pushes `/workspace` on submit (no query string — session lives in the store, not the URL)
 - **Session hygiene**: canvas and grounding are always wiped before a new session so old elements/study-plan never bleed in
 
 ---
@@ -32,7 +32,8 @@ app/workspace/page.tsx (Suspense wrapper)
               │     └── canvas-area
               │           ├── ArtifactCanvas
               │           │     ├── InfiniteCanvas
-              │           │     │     ├── CanvasTitle
+              │           │     │     ├── CanvasIntroText (when intro is set, no elements yet)
+              │           │     │     ├── EmptyHint (when canvas is empty)
               │           │     │     ├── GroupBoundary × N   ← rendered below elements
               │           │     │     ├── FlowArrows (SVG)
               │           │     │     ├── ElementCard × N     ← artifact / text / sticky
@@ -52,8 +53,9 @@ app/workspace/page.tsx (Suspense wrapper)
 ## Component Reference
 
 ### `WorkspaceView` (`src/components/workspace/WorkspaceView.tsx`)
-- **Reads**: `useSessionStore`, `useGroundingStore`, `useUIStore`
+- **Reads**: `useSessionStore` (incl. `sessionId`, `query`, `persona`), `useGroundingStore`, `useUIStore`
 - **Responsibilities**: bridge loading sequence, layout composition, workspace container
+- **Routing**: no longer reads URL query params. If `!sessionId || !query`, calls `router.replace("/")` to send the user back to the landing page. The session is the source of truth — refresh/back/forward all rehydrate from `localStorage["synapse-session"]` via Zustand persistence.
 
 ### `BridgeScreen` (`src/components/workspace/BridgeScreen.tsx`)
 - **Props**: `query, persona, stages, logs, contextCard, latencyMs, fileNames`
@@ -88,7 +90,8 @@ app/workspace/page.tsx (Suspense wrapper)
 - **Reads**: `useCanvasStore` (elements, groups, connections, toasts, selectedElementIds), `useUIStore`
 - **State**: `tool`, `canvasScale`, `hoveredGroupId`
 - **Writes**: `selectElements`, `toggleElementSelected`, `clearSelection`, `addElement`, `moveElement`, `removeElement`
-- **Ref handle** (`ArtifactCanvasHandle`): `zoomToGroup(groupId: string)` — computes bounds via `computeGroupBounds` and calls `canvasHandleRef.current?.zoomToRect`. Used by `WorkspaceView` to wire TOC navigation.
+- **Ref handle** (`ArtifactCanvasHandle`): `zoomToGroup(groupId: string)` — computes bounds via `computeGroupBounds` and calls `canvasHandleRef.current?.zoomToRect(..., 60, 1.0)` (clamped to 100% min scale so small groups don't get artificially magnified). Used by `WorkspaceView` to wire TOC navigation.
+- **Auto-zoom on new AI group**: when `groups.length` increases by 1 it calls `zoomToRect(..., 80, 1.0)` so newly added modules sit at natural scale (only shrinking if too large to fit).
 - **Key logic**:
   - `handleElementSelect(id, multi)` — if element is grouped, selects/toggles the **entire group**
   - `hoveredGroupId` — set by `onGroupHover` from each element; passed to `GroupBoundary` as `isHovered`
@@ -97,7 +100,7 @@ app/workspace/page.tsx (Suspense wrapper)
 
 ### `InfiniteCanvas` (`src/components/workspace/InfiniteCanvas.tsx`)
 - **Props**: `children, onCanvasClick?, onDoubleClick?, onRightClick?, onShiftClick?, onBoxSelect?, externalTool?, onToolChange?, darkMode?, onStrokeComplete?, strokeColor?, onTransformChange?`
-- **Ref handle** (`InfiniteCanvasHandle`): `getTransform(), panBy(), screenToWorld(), worldToScreen(), zoomToRect(), fitAll()`
+- **Ref handle** (`InfiniteCanvasHandle`): `getTransform(), panBy(), screenToWorld(), worldToScreen(), zoomToRect(x, y, w, h, padding=80, minScale=0), fitAll()`. `minScale` clamps the computed fit-to-rect scale so callers can prevent zooming past natural size — `s = max(fitScale, minScale)`.
 - **Tool type**: `"interaction" | "select" | "hand" | "text" | "sticky" | "pen"`
 - **Event delegation**: returns early (no capture) when `e.target.closest("[data-element-id]")` — gives element React handlers uncontested pointer ownership
 - **Rubber-band**: drawn in Select mode over empty canvas; fires `onBoxSelect(x1, y1, x2, y2)` in world coords
@@ -127,7 +130,8 @@ app/workspace/page.tsx (Suspense wrapper)
 
 ### `GroupBoundary` (`src/components/workspace/GroupBoundary.tsx`)
 - **Props**: `group, elements, hasSelectedMember, isHovered, canvasScale`
-- **Visual**: rounded rect with group name label; border highlights when `isHovered || hasSelectedMember`
+- **Visual**: rounded rect with a handwritten Caveat heading at top-left (`group.name`); border highlights when `isHovered || hasSelectedMember`. Padding: `PAD_X=20, PAD_TOP=52, PAD_BOTTOM=20` — the larger top pad reserves space for the heading.
+- **Counter-scaled heading**: `fontSize = 15 * (1/canvasScale)` when zoomed in past 1× (and the heading's top/left padding scales the same way). This keeps the title readable at natural size at any zoom — same trick `ElementCard` applies to artifact content.
 - **Interaction**: `pointer-events-none` — no toolbar buttons. Group controls live in `SelectionBar`.
 - **Bounds computation**: uses `canvasScale` to compute each element's visual world-space edges — `right = el.x + el.w * counterScale`, `bottom = el.y + el.h * counterScale` — so the boundary shrinks with content when zoomed in past 1×
 - **Exports**: `computeGroupBounds(groupId, elements, canvasScale?)` — returns visual world-space bounding box `{x, y, w, h}` used for zoom-to-fit and hit testing. `canvasScale` defaults to `1` if omitted.
@@ -151,14 +155,20 @@ app/workspace/page.tsx (Suspense wrapper)
 - **Wiring**: `WorkspaceView` passes `(groupId) => artifactCanvasRef.current?.zoomToGroup(groupId)` as `onZoomToGroup`
 
 ### `CanvasInputBar` (`src/components/workspace/CanvasInputBar.tsx`)
-- **Reads**: `useSessionStore` (messages, voiceMode, liveCaption, isSpeaking, speakReady, followUpQuestions, etc.)
-- **Writes**: `setVoiceMode`, `setLiveCaption`, `sendMessage`, `speakLatest` via `useAIChat`
-- **Modes**: normal (full input bar) | voice (floating pulse pill + live caption)
-- **Follow-up chip tiers**:
-  - Tier 1 (violet) — `questionsForUser` from the tutor's structured response; prepended first
-  - Tier 2 (neutral) — `followUpQuestions` from the strategy agent; appended after tier-1
-  - Chips clear immediately on click; deduplication applied between tiers
-- **Speak button**: a `Volume2` button appears above the send button when `speakReady === true` (AI response is ready but TTS hasn't auto-played). Clicking calls `speakLatest()` which triggers TTS and clears `speakReady`.
+- **Reads**: `useSessionStore` (`voiceMode, liveCaption, isSpeaking, speakReady, followUpQuestions, learningMode, messages, query, pendingVoiceText, moduleQueue`), `useAIChat` (`sendMessage, speakLatest, isStreaming, latestTutor`)
+- **Writes**: `setVoiceMode, setLiveCaption, setFollowUpQuestions, setLearningMode, setPendingVoiceText, setModuleQueue, shiftModuleQueue` (session store); `sendMessage, speakLatest` (`useAIChat`)
+- **Modes**: normal (column of cards above an input pill) | voice (floating pulse pill + live caption)
+- **Layout (top → bottom inside the bottom-center column, `max-w-xl`)**:
+  1. **Mode picker card** (one-shot) — shown when `learningMode === null && messages.length === 0 && !isStreaming`. Two buttons: **Guided** (`BookOpen`, neutral) and **Auto Explore** (`Wand2`, violet accent). Picking a mode calls `handlePickMode(mode)` which sets `learningMode` and either fires a single comprehensive prompt (auto, no plan) or queues every module from `useGroundingStore.studyPlan` into `moduleQueue` (auto, multi-module plan), or just sends the topic as the first message (guided).
+  2. **Dismissible Synapse bubble** — shown when `latestTutor && !showModePicker && !bubbleDismissed`. Compact dark card with a `Sparkles` Synapse badge, an inline Speak button (when `speakReady && !isSpeaking`), an X to dismiss, and a `max-h-[30vh]` scrollable body containing `latestTutor.content`. A `useEffect` resurfaces the bubble (clears `bubbleDismissed`) whenever a new tutor message arrives (tracked via `lastShownTutorId` ref).
+  3. **Follow-up chips** — `followUpQuestions.slice(0, 2)` rendered as tier-1 violet chips. Hidden during streaming or when the mode picker is showing. Clicking a chip clears the array and sends the question.
+  4. **Single-line input pill** — text input + (streaming spinner | speak/mic/send buttons).
+- **YouTube-style live captions** (rendered outside the column, fixed position): `bottom-28 left-1/2`, dark translucent pill with white text, shown only while `isSpeaking && liveCaption`. Replaces the older "snippet card above the input bar" — captions now appear as a TV-style overlay over the canvas during TTS playback.
+- **Auto-prompt effects**:
+  - When `pendingVoiceText` is set and not streaming → calls `sendMessage(pendingVoiceText)` and clears it.
+  - When `moduleQueue.length > 0` and not streaming → shifts the head of the queue and sends it. Used by Auto Explore mode to chain through every module of a multi-module study plan.
+- **Defaulting**: if the user types into the pill or clicks a chip without picking a mode, `learningMode` is silently set to `"guided"`.
+- **Speak button** (in input pill): `Volume2` appears when `speakReady === true`. Clicking calls `speakLatest()` and clears `speakReady`.
 
 ### `RightSidebar` (`src/components/workspace/RightSidebar.tsx`)
 - **Props**: `open: boolean, onToggle: () => void`
@@ -202,10 +212,11 @@ app/workspace/page.tsx (Suspense wrapper)
   - `thinking` — no UI action
   - `artifact_pending` → `addPendingElement` → `SkeletonCard` appears immediately
   - `artifact_done` → `resolvePendingElement` → skeleton replaced by real artifact
-  - `tutor_response` → stores `writtenText`/`spokenText`/`questionsForUser` in refs; `addMessage(writtenText)` to transcript; sets tier-1 chips from `questionsForUser`
+  - `tutor_response` → stores `moduleTitle`/`writtenText`/`spokenText`/`questionsForUser` in refs; `addMessage(writtenText)` to transcript; sets tier-1 chips from `questionsForUser`
   - `follow_up` → appends tier-2 chips (strategy suggestions); deduplicates against tier-1
-  - `done` → `applyPatch`, calls `addModule(label, resolvedArtifacts, undefined, writtenText)`, sets `speakReady = true`
+  - `done` → `applyPatch`, calls `addModule(label, resolvedArtifacts, undefined, writtenText)` where `label = moduleTitleRef.current || truncate(userQuery, 50)`, sets `speakReady = true`
   - `error` → adds error tutor message
+- **Module title source**: `moduleTitle` comes from the tutor's structured JSON response (3-6 word topic title). Falls back to the truncated user query if the tutor didn't emit one. This becomes the `group.name` shown by `GroupBoundary`.
 - **Delayed speech**: on `done`, sets `speakReady = true`. User clicks the Speak button → `speakLatest()` speaks `spokenText` (not `writtenText`).
 - **`speakLatest()`**: reads `spokenTextRef.current`, calls `speak()` with a word-boundary callback that updates `liveCaption` word-by-word via `SpeechSynthesisUtterance.onboundary`; clears `liveCaption` on end. Sets `speakReady = false`.
 
@@ -223,13 +234,16 @@ app/workspace/page.tsx (Suspense wrapper)
 - **Persistence**: Zustand `persist` middleware writes `{ elements, groups, connections, updates }` to `localStorage` under key `synapse-canvas`. Transient state (`toasts`, `strokes`, `selectedElementIds`, `isMockMode`) is excluded.
 
 ### `useSessionStore` (`src/store/session.ts`)
-- **Key state**: `query, persona, files, urls, messages, isStreaming, voiceMode, liveCaption, followUpQuestions, speakReady, docHeadings`
-- **Key actions**: `initSession, addMessage, setVoiceMode, setLiveCaption, setFollowUpQuestions, setSpeakReady, setDocHeadings`
+- **Key state**: `query, persona, sessionId, files, urls, messages, isStreaming, voiceMode, liveCaption, followUpQuestions, speakReady, docHeadings, learningMode, moduleQueue, pendingVoiceText`
+- **Key actions**: `initSession, addMessage, setVoiceMode, setLiveCaption, setFollowUpQuestions, setSpeakReady, setDocHeadings, setLearningMode, setModuleQueue, shiftModuleQueue, setPendingVoiceText`
 - **`urls`**: URLs submitted alongside the query (extracted from InputBar text via `detectUrls`)
 - **`followUpQuestions`**: array of 2-3 suggested next questions; displayed as chips above the input bar
 - **`speakReady`**: true when AI response is ready but TTS hasn't played yet; triggers Speak button in `CanvasInputBar`
 - **`docHeadings`**: H1/H2 headings extracted from all parsed/fetched documents during the bridge sequence; used by `LeftSidebar` as a document outline before any canvas groups exist
-- **Persistence**: Zustand `persist` middleware writes `{ query, persona, sessionId, canvasTitle, messages, urls, followUpQuestions, docHeadings }` to `localStorage` under key `synapse-session`. Heavy payloads (`files`, `documents`, `documentContext`) and transient UI flags are excluded.
+- **`learningMode`**: `"guided" | "auto" | null`. `null` triggers the mode picker in `CanvasInputBar` on the first message of a session. Forwarded to `/api/chat` so the orchestrator can pick the right system prompt and tool budget (`auto` → 8 tool rounds, 4096 tokens, `tool_choice: "required"`; `guided` → 4 rounds, 1536 tokens).
+- **`moduleQueue`**: ordered list of prompts to fire one-by-one as `isStreaming` clears. Used by Auto Explore mode to walk the user through every module of a multi-module `studyPlan` without further input.
+- **`pendingVoiceText`**: single-shot prompt that `CanvasInputBar` will dispatch on the next non-streaming tick. Used by `handlePickMode` and voice flows.
+- **Persistence**: Zustand `persist` middleware writes `{ query, persona, sessionId, canvasTitle, messages, urls, followUpQuestions, docHeadings }` to `localStorage` under key `synapse-session`. Heavy payloads (`files`, `documents`, `documentContext`) and transient UI flags (incl. `learningMode`, `moduleQueue`, `pendingVoiceText`) are excluded.
 
 ### `useUIStore` (`src/store/ui.ts`)
 - **Key state**: `leftSidebarOpen, doubtPopup, contextMenu, darkMode, canvasScale`

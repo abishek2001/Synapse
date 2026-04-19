@@ -1,6 +1,6 @@
 # User Journey Flows
 
-## Flow 1 — Topic Entry (Standard)
+## Flow 1 — Topic Entry (Standard, Guided Mode)
 
 **Entry point**: Landing page `/`
 
@@ -9,24 +9,46 @@
 3. User selects persona from selector (default: Professor).
 4. User clicks "Enter Synapse" or presses Enter.
 5. `InputBar.handleSubmit` calls `useSessionStore.initSession(query, persona, [])`.
-6. Router pushes `/workspace?q=Quantum+Entanglement&persona=professor`.
-7. `WorkspaceView` mounts. `BridgeScreen` appears (full-screen overlay).
+6. Router pushes `/workspace` (no query string — session lives in the store).
+7. `WorkspaceView` mounts. If `sessionId` and `query` are present in the store, the bridge runs; otherwise it `router.replace("/")` back to the landing page.
+8. `BridgeScreen` appears (full-screen overlay).
    - Whiteboard animation: 5 group boxes draw in via SVG `pathLength`, connected by direction-aware arrows.
    - Staged progress bar at bottom tracks AI pipeline stages.
-8. BridgeScreen exits with `exit={{ opacity:0, scale:0.98 }}`.
-9. Workspace `motion.div` animates in.
-10. Canvas starts in **Interaction** mode. `CanvasInputBar` mounts with a welcome message.
-11. User types a question. `CanvasInputBar` calls `useAIChat.sendMessage(text)`.
-12. Canvas context serialized (existing element titles/types) and sent to `/api/chat`.
-13. SSE stream opens. Events arrive in order:
+9. BridgeScreen exits with `exit={{ opacity:0, scale:0.98 }}`.
+10. Workspace `motion.div` animates in. Canvas starts in **Interaction** mode.
+11. **Mode picker card** appears in `CanvasInputBar` (because `learningMode === null && messages.length === 0`). Two options: **Guided** (step-by-step) | **Auto Explore** (full picture).
+12. User picks **Guided** → `setLearningMode("guided")` → `setPendingVoiceText(topic)` → `CanvasInputBar`'s pending-text effect fires `sendMessage(topic)` on the next non-streaming tick.
+13. Canvas context serialized (existing element titles/types) and sent to `/api/chat` along with `learningMode: "guided"`.
+14. SSE stream opens. Events arrive in order:
     - `thinking` → no visible action
     - `artifact_pending` → `addPendingElement` → `SkeletonCard` appears at next canvas position
     - `artifact_done` → `resolvePendingElement` → skeleton replaced by real artifact
-    - `tutor_response` → `writtenText` added to transcript + placed as text element on canvas; `questionsForUser` → tier-1 (violet) chips
-    - `follow_up` → tier-2 (neutral) strategy chips appended above `CanvasInputBar`
-    - `done` → contextPatch applied, artifacts grouped via `addModule(title, artifacts, undefined, writtenText)`, `speakReady = true`
-14. Speak button appears in `CanvasInputBar`. User clicks → TTS plays the explanation.
-15. Clicking a follow-up chip → `sendMessage(chip text)` → new turn begins.
+    - `tutor_response` → `moduleTitle` cached, `writtenText` added to transcript + placed as text element on canvas; `questionsForUser` → tier-1 (violet) chips (max 2)
+    - `follow_up` → tier-2 (neutral) strategy chips appended (currently filtered to max 2 tier-1 only by the input bar)
+    - `done` → contextPatch applied, artifacts grouped via `addModule(label, artifacts, undefined, writtenText)` where `label = moduleTitle || truncate(query, 50)`, `speakReady = true`
+15. The new group's heading is the `moduleTitle` (handwritten Caveat font on `GroupBoundary`). Canvas auto-zooms to the new group at natural (100%) scale.
+16. **Synapse bubble** appears in `CanvasInputBar` showing `latestTutor.content` with an inline Speak button and an X to dismiss.
+17. User clicks **Speak** (in the bubble or the input pill) → TTS plays `spokenText`. While speaking, a YouTube-style caption pill appears at fixed `bottom-28` over the canvas, updating word-by-word via `SpeechSynthesisUtterance.onboundary`.
+18. Clicking a follow-up chip → `sendMessage(chip text)` → new turn begins. If user types instead of picking a mode, `learningMode` silently defaults to `"guided"`.
+
+---
+
+## Flow 1b — Topic Entry (Auto Explore Mode)
+
+**Entry point**: Landing page `/` (same as Flow 1, diverges at the mode picker)
+
+1. Steps 1–11 of Flow 1.
+2. User picks **Auto Explore** → `setLearningMode("auto")` → `handlePickMode("auto")`:
+   - Reads `useGroundingStore.studyPlan` (built during the bridge sequence).
+   - **If plan has multiple modules**: builds a queue from all modules — `[topic, "Continue with: ${m2.title} — ${m2.description}", ...]` — and stores it in `moduleQueue`.
+   - **Otherwise**: stores a single comprehensive prompt in `pendingVoiceText` (`"Give me a comprehensive walkthrough of: ${topic}. Use multiple artifacts…"`).
+3. `CanvasInputBar` effects fire:
+   - The `pendingVoiceText` effect (if set) sends the single comprehensive prompt.
+   - The `moduleQueue` effect (if non-empty) shifts the head off the queue and sends it as soon as `isStreaming` clears.
+4. Each turn flows through `/api/chat` with `learningMode: "auto"`. The orchestrator uses the `AUTO_RULES` system prompt block (3-6 artifacts per turn, generous tool budget — 8 tool rounds, 4096 tokens, `tool_choice: "required"`).
+5. Each completed turn becomes a new group on the canvas with its own `moduleTitle` heading. Canvas auto-zooms to each new group as it lands.
+6. The queue drains turn-by-turn — once `moduleQueue.length === 0` the user is back to manual control.
+7. Bubble + captions + chips behave the same as Flow 1.
 
 ---
 
@@ -71,7 +93,7 @@
 3. User clicks "Enter Synapse".
 4. `detectUrls(query)` extracts all URLs from the text.
 5. `initSession(query, persona, files, urls)` called — URLs stored in `useSessionStore.urls`.
-6. Router pushes `/workspace?q=...&persona=...`.
+6. Router pushes `/workspace` (no query string).
 7. `WorkspaceView` mounts. Bridge sequence runs:
    - If `urls.length > 0`, bridge shows "source" stage: "Fetching [hostname]…" in the log.
    - Each URL is fetched via `POST /api/fetch-url` → Jina Reader converts to clean markdown.
@@ -101,27 +123,30 @@
 **Entry point**: Any workspace session
 
 1. As canvas groups/elements are added, Zustand `persist` middleware auto-writes `{ elements, groups, connections, updates }` to `localStorage["synapse-canvas"]`.
-2. Session metadata (`query, persona, messages, canvasTitle, urls`) auto-persists to `localStorage["synapse-session"]`.
+2. Session metadata (`query, persona, sessionId, canvasTitle, messages, urls, followUpQuestions, docHeadings`) auto-persists to `localStorage["synapse-session"]`.
 3. User closes tab / navigates away.
-4. User returns to `/workspace?q=...`.
+4. User returns to `/workspace`.
 5. Both stores hydrate from `localStorage` before first render — canvas and conversation history are restored.
-6. Heavy payloads (file base64, document text) are excluded from persistence (not stored in localStorage).
+6. If the session store hydrated with `sessionId` and `query`, the workspace renders immediately. Otherwise `WorkspaceView`'s `useEffect` calls `router.replace("/")` to send the user back to the landing page.
+7. Heavy payloads (file base64, document text) and transient UI state (`learningMode`, `moduleQueue`, `pendingVoiceText`) are excluded from persistence.
 
 ---
 
-## Flow 3b — Delayed Speech & Follow-Up Chips
+## Flow 3e — Delayed Speech, Captions & Chips
 
 **Entry point**: Workspace, after AI response arrives
 
-1. AI turn completes: `done` SSE event fires.
+1. AI turn completes: `done` SSE event fires. `addModule(label, artifacts, undefined, writtenText)` runs — `label` is the AI's `moduleTitle` (or truncated user query as fallback).
 2. `speakReady = true` in session store.
-3. `Volume2` (Speak) button appears to the left of the Send button in `CanvasInputBar`.
-4. 2-3 follow-up chips appear above the input pill (e.g. "How does this relate to X?", "Show me an example").
-5. User clicks **Speak** → `speakLatest()` → TTS reads the explanation aloud.
-6. While speaking: `isSpeaking = true` → RightSidebar auto-opens.
-7. `speak()` fires `SpeechSynthesisUtterance.onboundary` on each word → word-boundary callback calls `setLiveCaption(word)` → caption strip in RightSidebar updates word-by-word in real time.
-8. Speaking ends → `setSpeaking(false)` + `setLiveCaption("")` → caption strip collapses.
-9. User clicks a **chip** → `sendMessage(chip text)` → new turn. Chips disappear immediately.
+3. **Synapse bubble** appears in `CanvasInputBar`'s column (between the mode picker slot and the chips), showing `latestTutor.content`. Inline Speak (`Volume2`) and Dismiss (`X`) controls in the bubble header.
+4. **Speak button** also appears in the input pill (`Volume2`) to the left of Send.
+5. Up to 2 tier-1 (violet) follow-up chips appear above the input pill.
+6. User clicks **Speak** → `speakLatest()` → TTS reads `spokenText` aloud (not `writtenText`).
+7. While speaking: `isSpeaking = true`. RightSidebar auto-opens (its own effect). A **YouTube-style caption pill** also renders at fixed `bottom-28 left-1/2` over the canvas — dark translucent background, white 17px text — independent of any sidebar.
+8. `speak()` fires `SpeechSynthesisUtterance.onboundary` on each word → word-boundary callback calls `setLiveCaption(word)` → both the RightSidebar caption strip and the canvas caption pill update word-by-word in real time.
+9. Speaking ends → `setSpeaking(false)` + `setLiveCaption("")` → both caption surfaces fade out.
+10. User clicks a **chip** → `sendMessage(chip text)` → new turn. Chips disappear immediately.
+11. User clicks the bubble's **X** → `setBubbleDismissed(true)` → bubble hides until the next tutor message arrives (a `useEffect` watching `latestTutor.id` re-shows it).
 
 ---
 
@@ -173,9 +198,9 @@
 
 ## Flow 7 — Mock Demo
 
-**Entry point**: Workspace (fresh, no query needed)
+**Entry point**: Workspace (fresh session required — set one via `InputBar` or `initSession` first, then `WorkspaceView` will not bounce you back to `/`)
 
-1. Developer navigates to `/workspace?q=demo`.
+1. Developer enters any topic via `InputBar` (e.g. "demo") to satisfy the `sessionId/query` guard, then lands on `/workspace`.
 2. `BridgeScreen` runs and exits.
 3. `[DEV] Mock Canvas` button visible `absolute bottom-20 right-4`.
 4. Developer clicks the button → `loadMockData()` populates canvas with grouped elements.

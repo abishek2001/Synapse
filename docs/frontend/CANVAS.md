@@ -123,7 +123,8 @@ Elements can be grouped into a `CanvasGroup`. When `element.groupId` is set:
 - **Click any member** (select mode) → selects ALL group members
 - **Shift-click any member** (select mode) → toggles all group members in/out of selection
 - **Ungroup** → available in `SelectionBar` when all selected elements share the same `groupId`
-- **Group boundary** → rendered as a rounded rect with a label; `pointer-events-none` (no toolbar buttons on the boundary itself)
+- **Group boundary** → rendered as a rounded rect with a handwritten heading at top-left; `pointer-events-none` (no toolbar buttons on the boundary itself)
+- **Group heading** → the `group.name` is rendered as a Caveat (handwritten) heading at top-left of the boundary. The font is **counter-scaled** (`fontSize = 15 / canvasScale` when zoomed in past 1×) so the title stays readable at natural size regardless of zoom — same trick `ElementCard` uses for artifact content. Source: `moduleTitle` from the tutor's structured response, falling back to the truncated user query (see `useAIChat`).
 
 ---
 
@@ -168,9 +169,11 @@ In **Select** mode, dragging over empty canvas draws a selection rectangle. On r
 Connections between groups are stored in `useCanvasStore().connections`.
 
 Rendered by the `FlowArrows` SVG component:
-- **Path**: Cubic bezier. Edge selection is direction-aware — horizontal connections exit right/enter left; vertical connections exit bottom/enter top
-- **Default**: `stroke="rgba(124,58,237,0.22)"` dashed, animated `stroke-dashoffset`
-- **Highlighted** (source or target group is selected): `stroke="rgba(124,58,237,0.7)"` solid
+- **Edge selection — nearest-faces**: For each connection, `FlowArrows` measures the four edge-pair gaps between the two group bounds (right→left, left→right, bottom→top, top→bottom) and picks the smallest non-negative gap. That pair becomes the start/end anchors. If the boxes overlap on both axes, falls back to a center-to-center dominant-axis anchor. This generalizes the old "horizontal exits right, vertical exits bottom" rule to any spatial relationship.
+- **Path — quadratic bezier with one perpendicular control point**: `M start Q control end`, where the control point sits at the line midpoint offset perpendicularly by `min(distance × 0.15, 40)` px. A quadratic bezier with one control point is **mathematically incapable of changing direction more than once**, so the curve cannot S-bend even when groups are misaligned.
+- **Bounds use `canvasScale`**: `computeGroupBounds` is called with the live canvas scale so the start/end anchors match the counter-scaled visual positions of group boundaries.
+- **Default**: `stroke="rgba(124,58,237,0.18)"`, `strokeWidth=1.5`, dashed, animated `stroke-dashoffset`. Arrowhead `fa-arrow` (5×5).
+- **Highlighted** (source or target group is selected): `stroke="rgba(124,58,237,0.6)"` solid. Arrowhead `fa-arrow-hi` (same geometry, fuller fill).
 
 ---
 
@@ -179,8 +182,9 @@ Rendered by the `FlowArrows` SVG component:
 - **Zoom range**: 10% – 400% (`MIN_ZOOM = 0.1`, `MAX_ZOOM = 4`)
 - **Zoom**: mouse scroll wheel (centered on cursor), trackpad pinch (`ctrlKey` wheel), `Ctrl`+scroll
 - **Pan**: Space + drag (temporary hand mode — restores previous tool on release), middle-mouse drag, Hand tool drag, two-finger trackpad scroll
-- **Zoom to new group**: when `groups.length` increases by 1 (AI adds a single module), the canvas zooms to that group so it appears at a comfortable readable size
-- **Fit all**: when `groups.length` increases by more than 1 (mock data load, initial restore) — fits all content in view
+- **Zoom to new group**: when `groups.length` increases by 1 (AI adds a single module), the canvas zooms to that group at **natural (100%) scale**, only shrinking if the group doesn't fit. Implemented via `zoomToRect(..., padding=80, minScale=1.0)` — `s = max(fitScale, 1.0)`. Small new groups never get zoomed in to artificial sizes.
+- **TOC zoom-to-group** (sidebar click): also clamped to `minScale=1.0` for the same reason.
+- **Fit all**: when `groups.length` increases by more than 1 (mock data load, initial restore) — fits all content in view (no min-scale clamp).
 
 ### Gesture / scroll discrimination (wheel events)
 
