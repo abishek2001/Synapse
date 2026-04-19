@@ -233,6 +233,7 @@ export function useAIChat() {
           if (elId) {
             resolvePendingElement(elId, event.artifact as CanvasArtifact);
             pendingMap.current.delete(event.pendingId);
+            import("@/lib/voice/sfx").then((m) => m.playSfx("artifact-added")).catch(() => {});
           }
           break;
         }
@@ -366,15 +367,12 @@ export function useAIChat() {
     if (!text) return;
     setSpeakReady(false);
     setSpeaking(true);
-    const { setLiveCaption } = useSessionStore.getState();
-    speak(
-      text,
-      () => {
-        setSpeaking(false);
-        setLiveCaption("");
-      },
-      (word) => setLiveCaption(word),
-    );
+    const { setLiveCaption, persona } = useSessionStore.getState();
+    speak(text, {
+      persona,
+      onEnd: () => { setSpeaking(false); setLiveCaption(""); },
+      onWordBoundary: (word) => setLiveCaption(word),
+    });
   }, [setSpeaking, setSpeakReady]);
 
   // Cancel the in-flight chat request. Server-side OpenAI calls receive the

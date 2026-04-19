@@ -51,6 +51,7 @@ export default function CanvasInputBar() {
   // ── Mode picker handler ────────────────────────────────────────────────────
   const handlePickMode = (mode: "guided" | "auto") => {
     setLearningMode(mode);
+    import("@/lib/voice/sfx").then((m) => m.playSfx("mode-picked")).catch(() => {});
     const topic = (query || "").trim();
     if (!topic) return;
 

@@ -30,7 +30,7 @@ export default function CallFriendModal({ onClose }: CallFriendModalProps) {
         const text = data.friend?.analogy || data.rawResponse || "Think of it like throwing a ball so fast it never comes back down — that's basically what an orbit is.";
         setAnalogy(text);
         setStatus("connected");
-        speak(text);
+        speak(text, { persona: "friend" });
       } else {
         setAnalogy("Think of it like throwing a ball so fast it never comes back down — that's basically what an orbit is.");
         setStatus("connected");

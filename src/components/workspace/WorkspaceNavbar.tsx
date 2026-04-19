@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, BookOpen, Phone, PanelLeftOpen, PanelRightOpen, Sun, Moon, Download } from "lucide-react";
+import { ArrowLeft, BookOpen, Phone, PanelLeftOpen, PanelRightOpen, Sun, Moon, Download, Music, Music2 } from "lucide-react";
 import { useUIStore } from "@/store/ui";
 import VoiceIsland from "./VoiceIsland";
 import { downloadStudyGuide } from "@/lib/export-session";
+import { startFocusMusic, stopFocusMusic, isFocusMusicPlaying } from "@/lib/voice/focus-music";
+import { useState, useEffect } from "react";
 
 interface WorkspaceNavbarProps {
   title: string;
@@ -26,6 +28,21 @@ export default function WorkspaceNavbar({
   sidebarOpen,
 }: WorkspaceNavbarProps) {
   const { darkMode, toggleDarkMode, rightSidebarOpen, setRightSidebarOpen } = useUIStore();
+  const [musicOn, setMusicOn] = useState(false);
+  const [musicLoading, setMusicLoading] = useState(false);
+  useEffect(() => { setMusicOn(isFocusMusicPlaying()); }, []);
+
+  const toggleMusic = async () => {
+    if (musicOn) {
+      stopFocusMusic();
+      setMusicOn(false);
+      return;
+    }
+    setMusicLoading(true);
+    const ok = await startFocusMusic();
+    setMusicLoading(false);
+    setMusicOn(ok);
+  };
 
   const surface = darkMode
     ? "bg-[#0a0a18] border-white/[0.05] text-white/40"
@@ -81,6 +98,16 @@ export default function WorkspaceNavbar({
             Sources
           </button>
         )}
+
+        {/* Focus music toggle */}
+        <button
+          onClick={toggleMusic}
+          disabled={musicLoading}
+          title={musicOn ? "Stop focus music" : "Play ambient focus music"}
+          className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${musicOn ? btnActive : btn} ${musicLoading ? "opacity-50" : ""}`}
+        >
+          {musicOn ? <Music2 className="w-3.5 h-3.5" /> : <Music className="w-3.5 h-3.5" />}
+        </button>
 
         {/* Export study guide */}
         <button

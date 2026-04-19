@@ -102,7 +102,7 @@ export default function TutorPanel() {
     if (autoSpeak && !isMuted) {
       setTimeout(() => {
         setSpeaking(true);
-        speak(greeting, () => setSpeaking(false));
+        speak(greeting, { persona, onEnd: () => setSpeaking(false) });
       }, 800);
     }
   }, [query, files, documentContext, addMessage, autoSpeak, isMuted, setSpeaking]);
@@ -232,7 +232,7 @@ export default function TutorPanel() {
 
           if (autoSpeak && !isMuted) {
             setSpeaking(true);
-            speak(data.tutor.explanation, () => setSpeaking(false));
+            speak(data.tutor.explanation, { persona, onEnd: () => setSpeaking(false) });
           }
         }
 
@@ -406,7 +406,7 @@ export default function TutorPanel() {
                       <button
                         onClick={() => {
                           setSpeaking(true);
-                          speak(latestTutor.content, () => setSpeaking(false));
+                          speak(latestTutor.content, { persona, onEnd: () => setSpeaking(false) });
                         }}
                         className="w-7 h-7 rounded-full bg-white/[0.08] flex items-center justify-center flex-shrink-0 text-white/30 hover:text-white/70 hover:bg-white/[0.15] transition-all"
                         title="Listen"
