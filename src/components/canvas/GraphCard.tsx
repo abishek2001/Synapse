@@ -34,10 +34,12 @@ function VarSlider({
   variable,
   value,
   onChange,
+  dark = false,
 }: {
   variable: GraphVariable;
   value: number;
   onChange: (v: number) => void;
+  dark?: boolean;
 }) {
   const isPi = variable.step_unit === "π";
   const displayVal = isPi ? formatPiValue(value) : value.toFixed(value % 1 === 0 ? 0 : 2);
@@ -46,7 +48,7 @@ function VarSlider({
 
   return (
     <div className="flex items-center gap-2 min-w-0">
-      <span className="text-[10px] text-black/40 shrink-0 w-[60px] truncate">{variable.label}</span>
+      <span className={`text-[10px] shrink-0 w-[60px] truncate ${dark ? "text-white/55" : "text-black/40"}`}>{variable.label}</span>
       <input
         type="range"
         min={variable.min}
@@ -62,12 +64,12 @@ function VarSlider({
         aria-valuenow={value}
       />
       <span
-        className="text-[10px] font-mono text-violet-600 shrink-0 text-right"
+        className={`text-[10px] font-mono shrink-0 text-right ${dark ? "text-violet-300" : "text-violet-600"}`}
         style={{ minWidth: isPi ? 36 : 28 }}
       >
         {displayVal}
       </span>
-      <span className="text-[10px] text-black/25 shrink-0">
+      <span className={`text-[10px] shrink-0 ${dark ? "text-white/35" : "text-black/25"}`}>
         / {steps} steps
       </span>
     </div>
@@ -76,7 +78,7 @@ function VarSlider({
 
 // ─── Main dispatcher ──────────────────────────────────────────────────────────
 
-export default function GraphCard({ artifact }: { artifact: GraphArtifact }) {
+export default function GraphCard({ artifact, dark = false }: { artifact: GraphArtifact; dark?: boolean }) {
   const [vars, setVars] = useState<Record<string, number>>(() =>
     Object.fromEntries((artifact.variables ?? []).map(v => [v.name, v.default]))
   );
@@ -96,11 +98,11 @@ export default function GraphCard({ artifact }: { artifact: GraphArtifact }) {
   const isLineFam = graphType === "line" || graphType === "area" || graphType === "scatter" || graphType === "trend" || graphType === "forecast" || graphType === "parametric";
 
   // All chart renderers are hooked unconditionally (hooks rules) — only the active one renders
-  const { canvasRef: lineRef, rangesRef } = useLineChart({ artifact, vars, onTooltip, tooltipX });
-  const barRef = useBarChart(artifact, vars);
-  const pieRef = usePieChart(artifact);
-  const polarRef = usePolarChart(artifact, vars);
-  const distRef = useDistributionChart(artifact);
+  const { canvasRef: lineRef, rangesRef } = useLineChart({ artifact, vars, onTooltip, tooltipX, dark });
+  const barRef = useBarChart(artifact, vars, dark);
+  const pieRef = usePieChart(artifact, dark);
+  const polarRef = usePolarChart(artifact, vars, dark);
+  const distRef = useDistributionChart(artifact, dark);
 
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = lineRef.current;
@@ -123,13 +125,16 @@ export default function GraphCard({ artifact }: { artifact: GraphArtifact }) {
 
   return (
     <div className="w-full space-y-1">
-      <h3 className="text-[13px] font-semibold text-black/65">{artifact.title}</h3>
+      <h3 className={`text-[13px] font-semibold ${dark ? "text-white/85" : "text-black/65"}`}>{artifact.title}</h3>
 
       {/* Slider bank */}
       {hasVars && (
         <div
           className="space-y-1.5 rounded-lg px-3 py-2"
-          style={{ background: "rgba(124,58,237,0.04)", border: "1px solid rgba(124,58,237,0.1)" }}
+          style={{
+            background: dark ? "rgba(124,58,237,0.10)" : "rgba(124,58,237,0.04)",
+            border: dark ? "1px solid rgba(124,58,237,0.22)" : "1px solid rgba(124,58,237,0.1)",
+          }}
         >
           {(artifact.variables ?? []).map(v => (
             <VarSlider
@@ -137,6 +142,7 @@ export default function GraphCard({ artifact }: { artifact: GraphArtifact }) {
               variable={v}
               value={vars[v.name] ?? v.default}
               onChange={val => setVar(v.name, val)}
+              dark={dark}
             />
           ))}
         </div>

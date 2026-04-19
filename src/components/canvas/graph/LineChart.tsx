@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import type { GraphArtifact } from "@/lib/tools/types";
+import { chartTheme } from "./theme";
 
 const COLORS = ["#7c3aed", "#0ea5e9", "#10b981", "#f97316", "#ec4899", "#eab308"];
 export const W = 340, H = 200, PAD = 40;
@@ -11,6 +12,7 @@ type Props = {
   vars: Record<string, number>;
   onTooltip: (t: { x: number; y: number; values: { label: string; y: number; color: string }[] } | null) => void;
   tooltipX: number | undefined;
+  dark?: boolean;
 };
 
 function evalFn(fn: string, x: number, varValues: Record<string, number>): number {
@@ -31,10 +33,11 @@ function linReg(pts: { x: number; y: number }[]): { slope: number; intercept: nu
   return { slope, intercept: my - slope * mx };
 }
 
-export function useLineChart({ artifact, vars, onTooltip, tooltipX }: Props) {
+export function useLineChart({ artifact, vars, onTooltip, tooltipX, dark = false }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rangesRef = useRef({ xMin: 0, xMax: 1, yMin: 0, yMax: 1 });
   const graphType = artifact.graph_type;
+  const theme = chartTheme(dark);
 
   const resolveVars = (v: Record<string, number>) => {
     const out: Record<string, number> = {};
@@ -97,7 +100,7 @@ export function useLineChart({ artifact, vars, onTooltip, tooltipX }: Props) {
     ctx.clearRect(0, 0, W, H);
 
     // Grid
-    ctx.strokeStyle = "rgba(0,0,0,0.05)";
+    ctx.strokeStyle = theme.grid;
     ctx.lineWidth = 0.5;
     for (let i = 0; i <= 5; i++) {
       ctx.beginPath(); ctx.moveTo(PAD + (i / 5) * plotW, PAD); ctx.lineTo(PAD + (i / 5) * plotW, PAD + plotH); ctx.stroke();
@@ -105,7 +108,7 @@ export function useLineChart({ artifact, vars, onTooltip, tooltipX }: Props) {
     }
 
     // Zero axes
-    ctx.strokeStyle = "rgba(0,0,0,0.15)"; ctx.lineWidth = 1;
+    ctx.strokeStyle = theme.axis; ctx.lineWidth = 1;
     if (yMin <= 0 && yMax >= 0) {
       const y0 = toY(0);
       ctx.beginPath(); ctx.moveTo(PAD, y0); ctx.lineTo(PAD + plotW, y0); ctx.stroke();
@@ -116,7 +119,7 @@ export function useLineChart({ artifact, vars, onTooltip, tooltipX }: Props) {
     }
 
     // Axis labels
-    ctx.fillStyle = "rgba(0,0,0,0.3)";
+    ctx.fillStyle = theme.axisLabel;
     ctx.font = "10px Inter, system-ui, sans-serif";
     ctx.textAlign = "center";
     for (let i = 0; i <= 4; i++) {
@@ -269,7 +272,7 @@ export function useLineChart({ artifact, vars, onTooltip, tooltipX }: Props) {
       const color = s.color || COLORS[idx % COLORS.length];
       ctx.fillStyle = color;
       ctx.fillRect(PAD + 6, legendY - 4, 12, 2.5);
-      ctx.fillStyle = "rgba(0,0,0,0.5)";
+      ctx.fillStyle = theme.legendLabel;
       ctx.font = "10px Inter, system-ui, sans-serif";
       ctx.fillText(s.label, PAD + 22, legendY);
       legendY += 14;
@@ -292,7 +295,7 @@ export function useLineChart({ artifact, vars, onTooltip, tooltipX }: Props) {
           const cy = toY(y);
           if (cy < PAD - 8 || cy > PAD + plotH + 8) return;
           ctx.beginPath(); ctx.arc(screenX, cy, 4, 0, Math.PI * 2);
-          ctx.fillStyle = "white"; ctx.fill();
+          ctx.fillStyle = theme.tooltipDotFill; ctx.fill();
           ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
           tooltipVals.push({ label: s.label, y, color });
         } catch { /* skip */ }
@@ -303,7 +306,7 @@ export function useLineChart({ artifact, vars, onTooltip, tooltipX }: Props) {
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [artifact, vars, tooltipX]);
+  }, [artifact, vars, tooltipX, dark]);
 
   return { canvasRef, rangesRef };
 }

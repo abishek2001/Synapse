@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import type { GraphArtifact } from "@/lib/tools/types";
+import { chartTheme } from "./theme";
 
 const COLORS = ["#7c3aed", "#0ea5e9", "#10b981", "#f97316", "#ec4899", "#eab308"];
 const W = 340, H = 200;
@@ -13,8 +14,9 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-export function usePieChart(artifact: GraphArtifact) {
+export function usePieChart(artifact: GraphArtifact, dark = false) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const theme = chartTheme(dark);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -51,7 +53,7 @@ export function usePieChart(artifact: GraphArtifact) {
       ctx.closePath();
       ctx.fillStyle = hexToRgba(s.color, 0.88);
       ctx.fill();
-      ctx.strokeStyle = "rgba(255,255,255,0.6)"; ctx.lineWidth = 1.5;
+      ctx.strokeStyle = theme.pieDivider; ctx.lineWidth = 1.5;
       ctx.stroke();
       angle += sweep;
     });
@@ -59,7 +61,7 @@ export function usePieChart(artifact: GraphArtifact) {
     // Donut hole
     ctx.beginPath();
     ctx.arc(cx, cy, innerR, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(255,255,255,0.92)";
+    ctx.fillStyle = theme.pieHole;
     ctx.fill();
 
     // Legend
@@ -68,7 +70,7 @@ export function usePieChart(artifact: GraphArtifact) {
     slices.forEach(s => {
       ctx.fillStyle = hexToRgba(s.color, 0.88);
       ctx.beginPath(); ctx.arc(legendX, legendY - 3, 5, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = "rgba(0,0,0,0.55)";
+      ctx.fillStyle = theme.legendLabel;
       ctx.font = "11px Inter, system-ui, sans-serif";
       ctx.textAlign = "left";
       const pct = ((Math.abs(s.value) / total) * 100).toFixed(1);
@@ -76,7 +78,7 @@ export function usePieChart(artifact: GraphArtifact) {
       legendY += 18;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [artifact]);
+  }, [artifact, dark]);
 
   return canvasRef;
 }

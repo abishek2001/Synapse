@@ -332,6 +332,18 @@ counterScale = VISUAL_SCALE_CAP / canvasScale
 
 ---
 
+## Artifact Dark Mode
+
+`useUIStore.darkMode` flips the canvas background between light/dark, and `ElementCard` threads `dark={darkMode}` into every artifact card that supports it. Three categories:
+
+1. **Re-themed in dark mode** — `GraphCard` (+ all five chart hooks via `chartTheme(dark)`), `FlashcardCard`, `LookupCard`, `NotationCard`. Series colors / accent hues are preserved across themes; only chrome (grid, axis labels, legend, card chrome, body text) flips so artifact identity stays consistent.
+2. **Soft-paper fallback** — `VisualCard`. The AI-authored SVG sketch can't be recoloured, so in dark mode the SVG is mounted inside a soft off-white paper panel (`#f5f1e8`, faint border, subtle shadow). Reads as paper pinned on the dark canvas — readable without burning the user's eyes with pure white.
+3. **Always-dark by design** — `DiagramCard`, `SimulationCard`, `Render3DCard`. They render on their own intrinsically dark surface (`rgba(12,12,24)` / `#0a0b14`) and look correct on either canvas. They don't accept a `dark` prop.
+
+Charts use a dedicated palette helper at `src/components/canvas/graph/theme.ts` because canvas-drawn pixels can't pick up CSS variables — colors are baked at paint time, so the helper returns the right `grid` / `axis` / `axisLabel` / `legendLabel` / `pieHole` / `pieDivider` strings based on the `dark` flag and each chart hook re-runs its `useEffect` when `dark` changes.
+
+---
+
 ## Dot Grid Background
 
 ```css

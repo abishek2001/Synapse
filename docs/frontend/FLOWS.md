@@ -52,17 +52,20 @@
 
 ---
 
-## Flow 2 — Voice Doubt
+## Flow 2 — Voice Doubt (continuous conversation loop)
 
 **Entry point**: Workspace with at least one group visible
 
 1. User clicks the mic button in `CanvasInputBar`.
-2. `setVoiceMode(true)` called. Input bar collapses to pulsing purple pill.
+2. `setVoiceLoopActive(true)` is called alongside `setVoiceMode(true)` — the loop flag stays on across the entire turn (listen → think → speak → listen). Input bar collapses to pulsing purple pill.
 3. `startListening` begins with interim callback → `setLiveCaption(interim)`.
 4. Caption bar appears above the pill showing live text.
 5. User speaks: *"What happens when two entangled particles are observed simultaneously?"*
-6. Speech recognition fires final result. `sendMessage(final)` called. `setVoiceMode(false)`.
+6. Speech recognition fires final result. `sendMessage(final)` called. `setVoiceMode(false)` (the floating pill collapses; the input bar reappears with a violet "loop on" mic icon so the user can tell — and stop — the conversation at any time).
 7. AI processes query → new grouped `ElementCard` components appear on canvas.
+8. When the turn finishes (`done` SSE → `setSpeakReady(true)`), `CanvasInputBar`'s auto-play effect fires `playMessage(latestTutor)` automatically — same path as a manual Speak click, so live captions, the bubble icon swap, and `playingMessageId` all light up the same way. Each tutor message ID is auto-played at most once (`autoPlayedIdRef`).
+9. When TTS playback ends (`isSpeaking` falling edge), a 350 ms beat passes, then `beginListening()` re-opens the mic. The floating purple pill returns and the user can immediately ask their next question.
+10. The loop ends — and the violet mic indicator clears — on any explicit "I'm done" action: clicking the floating pill, clicking the violet mic icon in the input bar, sending a typed message, picking a follow-up chip, hitting the Stop button on a streaming turn, or stopping the auto-playback by clicking the speaker button. There's also a 600 ms safety-net effect that re-opens the mic if the loop ends up idle (e.g. an errored turn that produced no tutor message and no playback).
 
 ---
 

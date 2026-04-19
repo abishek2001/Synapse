@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import type { GraphArtifact } from "@/lib/tools/types";
+import { chartTheme } from "./theme";
 
 const COLORS = ["#7c3aed", "#0ea5e9", "#10b981", "#f97316", "#ec4899", "#eab308"];
 const W = 340, H = 200, PAD_V = 24, PAD_H = 40;
@@ -37,8 +38,9 @@ function kde(vals: number[], bandwidth: number, x: number): number {
   return vals.reduce((sum, v) => sum + Math.exp(-0.5 * ((x - v) / bandwidth) ** 2), 0) / (vals.length * bandwidth * Math.sqrt(2 * Math.PI));
 }
 
-export function useDistributionChart(artifact: GraphArtifact) {
+export function useDistributionChart(artifact: GraphArtifact, dark = false) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const theme = chartTheme(dark);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -67,12 +69,12 @@ export function useDistributionChart(artifact: GraphArtifact) {
     const toY = (v: number) => PAD_V + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
 
     // Grid
-    ctx.strokeStyle = "rgba(0,0,0,0.05)"; ctx.lineWidth = 0.5;
+    ctx.strokeStyle = theme.grid; ctx.lineWidth = 0.5;
     for (let i = 0; i <= 4; i++) {
       const gy = PAD_V + (i / 4) * plotH;
       ctx.beginPath(); ctx.moveTo(PAD_H, gy); ctx.lineTo(PAD_H + plotW, gy); ctx.stroke();
     }
-    ctx.fillStyle = "rgba(0,0,0,0.3)"; ctx.font = "10px Inter, system-ui, sans-serif"; ctx.textAlign = "right";
+    ctx.fillStyle = theme.axisLabel; ctx.font = "10px Inter, system-ui, sans-serif"; ctx.textAlign = "right";
     for (let i = 0; i <= 4; i++) {
       const val = yMin + ((4 - i) / 4) * (yMax - yMin);
       ctx.fillText(val.toFixed(1), PAD_H - 4, PAD_V + (i / 4) * plotH + 3);
@@ -101,13 +103,13 @@ export function useDistributionChart(artifact: GraphArtifact) {
       const toDY = (d: number) => PAD_V + plotH - (d / maxD) * plotH;
 
       // Grid
-      ctx.strokeStyle = "rgba(0,0,0,0.05)"; ctx.lineWidth = 0.5;
+      ctx.strokeStyle = theme.grid; ctx.lineWidth = 0.5;
       for (let i = 0; i <= 4; i++) {
         const gy = PAD_V + (i / 4) * plotH;
         ctx.beginPath(); ctx.moveTo(PAD_H, gy); ctx.lineTo(PAD_H + plotW, gy); ctx.stroke();
       }
       // x-axis labels (value)
-      ctx.fillStyle = "rgba(0,0,0,0.3)"; ctx.font = "10px Inter, system-ui, sans-serif";
+      ctx.fillStyle = theme.axisLabel; ctx.font = "10px Inter, system-ui, sans-serif";
       ctx.textAlign = "center";
       for (let i = 0; i <= 4; i++) {
         const val = xMin + (i / 4) * (xMax - xMin);
@@ -118,7 +120,7 @@ export function useDistributionChart(artifact: GraphArtifact) {
       ctx.fillText("density", PAD_H - 4, PAD_V + 6);
 
       // Zero line
-      ctx.strokeStyle = "rgba(0,0,0,0.12)"; ctx.lineWidth = 1;
+      ctx.strokeStyle = theme.axis; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(PAD_H, PAD_V + plotH); ctx.lineTo(PAD_H + plotW, PAD_V + plotH); ctx.stroke();
 
       // Draw each series
@@ -157,7 +159,7 @@ export function useDistributionChart(artifact: GraphArtifact) {
       series.forEach((s, idx) => {
         const color = s.color || COLORS[idx % COLORS.length];
         ctx.fillStyle = color; ctx.fillRect(lx, ly - 5, 12, 2.5);
-        ctx.fillStyle = "rgba(0,0,0,0.5)"; ctx.font = "10px Inter, system-ui, sans-serif"; ctx.textAlign = "left";
+        ctx.fillStyle = theme.legendLabel; ctx.font = "10px Inter, system-ui, sans-serif"; ctx.textAlign = "left";
         ctx.fillText(s.label, lx + 16, ly);
         ly += 14;
       });
@@ -197,7 +199,7 @@ export function useDistributionChart(artifact: GraphArtifact) {
         ctx.beginPath(); ctx.moveTo(cx - capW / 2, toY(wHigh)); ctx.lineTo(cx + capW / 2, toY(wHigh)); ctx.stroke();
 
         // Label
-        ctx.fillStyle = "rgba(0,0,0,0.45)"; ctx.font = "10px Inter, system-ui, sans-serif"; ctx.textAlign = "center";
+        ctx.fillStyle = theme.legendLabel; ctx.font = "10px Inter, system-ui, sans-serif"; ctx.textAlign = "center";
         ctx.fillText(s.label, cx, H - 8);
       });
     } else {
@@ -239,12 +241,12 @@ export function useDistributionChart(artifact: GraphArtifact) {
         ctx.fillStyle = color; ctx.fill();
 
         // Label
-        ctx.fillStyle = "rgba(0,0,0,0.45)"; ctx.font = "10px Inter, system-ui, sans-serif"; ctx.textAlign = "center";
+        ctx.fillStyle = theme.legendLabel; ctx.font = "10px Inter, system-ui, sans-serif"; ctx.textAlign = "center";
         ctx.fillText(s.label, cx, H - 8);
       });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [artifact]);
+  }, [artifact, dark]);
 
   return canvasRef;
 }

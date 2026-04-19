@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Send, Mic, MicOff, Square, Volume2, VolumeX, ChevronUp, ChevronDown, Sparkles, BookOpen, Wand2 } from "lucide-react";
 import { useSessionStore } from "@/store/session";
@@ -23,13 +23,17 @@ interface CanvasInputBarProps {
 export default function CanvasInputBar({ onReturnToGroup }: CanvasInputBarProps = {}) {
   const {
     voiceMode,
+    voiceLoopActive,
     liveCaption,
     isSpeaking,
+    isMuted,
+    speakReady,
     followUpQuestions,
     learningMode,
     messages,
     query,
     setVoiceMode,
+    setVoiceLoopActive,
     setLiveCaption,
     setFollowUpQuestions,
     setLearningMode,
@@ -41,7 +45,7 @@ export default function CanvasInputBar({ onReturnToGroup }: CanvasInputBarProps 
   } = useSessionStore();
 
   const { darkMode } = useUIStore();
-  const { sendMessage, stop, toggleMessage, playingMessageId, isStreaming, latestTutor } = useAIChat();
+  const { sendMessage, stop, toggleMessage, playMessage, playingMessageId, isStreaming, latestTutor } = useAIChat();
   // Demo playback hooks — when a hardcoded demo is running, the input bar
   // intercepts Send to advance the next module instead of hitting the API.
   const demoScript = useDemoStore((s) => s.script);
@@ -96,6 +100,11 @@ export default function CanvasInputBar({ onReturnToGroup }: CanvasInputBarProps 
 
   const handleSpeakerClick = () => {
     if (!playableTutor) return;
+    // If the user manually stops a voice-loop auto-playback, treat that as an
+    // explicit "I'm done listening" — don't restart the mic afterwards.
+    if (voiceLoopActive && playingMessageId === playableTutor.id) {
+      setVoiceLoopActive(false);
+    }
     toggleMessage(playableTutor);
   };
 
@@ -193,6 +202,9 @@ export default function CanvasInputBar({ onReturnToGroup }: CanvasInputBarProps 
 
   const handleSend = () => {
     if (!input.trim() || isStreaming) return;
+    // Typing means the user has switched off the voice conversation —
+    // suppress any pending auto-play / auto-listen.
+    if (voiceLoopActive) setVoiceLoopActive(false);
     // Demo interception: when a demo is active, ANY submit advances the next
     // hardcoded module — even if the user edited the queued prompt. Keeps the
     // demo on rails without confusing branches.
@@ -217,32 +229,111 @@ export default function CanvasInputBar({ onReturnToGroup }: CanvasInputBarProps 
 
   const handleChipClick = (q: string) => {
     if (isStreaming) return;
+    if (voiceLoopActive) setVoiceLoopActive(false);
     if (learningMode === null) setLearningMode("guided");
     setFollowUpQuestions([]); // clear chips immediately on click
     sendMessage(q);
   };
 
+  // Begin a fresh listening session. Used both by the user-initiated mic
+  // click and by the voice-loop auto-restart that fires after TTS playback
+  // ends. Returns true when the recogniser was successfully spun up.
+  const beginListening = useCallback((): boolean => {
+    const started = startListening(
+      (text) => {
+        // Final transcript → send as a normal turn. Voice mode collapses
+        // back to the input pill so the bubble + caption surfaces are
+        // visible while the AI thinks. The loop restart effect will
+        // re-open the mic after TTS ends.
+        sendMessage(text);
+        setVoiceMode(false);
+        setLiveCaption("");
+      },
+      () => {
+        // Recogniser ended without a final result (timeout / silence /
+        // user closed it). Drop the floating pill but leave the loop
+        // flag alone — if the user is still in loop mode, the restart
+        // effect handles whatever should happen next.
+        setVoiceMode(false);
+        setLiveCaption("");
+      },
+      (interim) => setLiveCaption(interim),
+    );
+    if (started) setVoiceMode(true);
+    return started;
+  }, [sendMessage, setVoiceMode, setLiveCaption]);
+
   const toggleVoice = () => {
     if (voiceMode) {
+      // User clicked the floating purple pill → exit the loop entirely.
       stopListening();
       setVoiceMode(false);
       setLiveCaption("");
+      setVoiceLoopActive(false);
     } else {
-      const started = startListening(
-        (text) => {
-          sendMessage(text);
-          setVoiceMode(false);
-          setLiveCaption("");
-        },
-        () => {
-          setVoiceMode(false);
-          setLiveCaption("");
-        },
-        (interim) => setLiveCaption(interim),
-      );
-      if (started) setVoiceMode(true);
+      // User opened the mic from the idle input bar → start a continuous
+      // voice conversation. The loop flag stays on across this turn,
+      // through the AI response, through TTS playback, and back to
+      // listening, until the user explicitly opts out.
+      setVoiceLoopActive(true);
+      const ok = beginListening();
+      if (!ok) setVoiceLoopActive(false);
     }
   };
+
+  // ── Voice loop: auto-play tutor → restart listening ──────────────────────
+  // Step 1: when the AI finishes a turn (`speakReady` flips true) and the
+  // loop is active, automatically play the tutor's `spokenText`. Mirrors what
+  // a manual click on the Speak button would do — going through the same
+  // `playMessage` path so all the existing TTS state (live captions,
+  // playingMessageId, etc.) lights up the same way.
+  const autoPlayedIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!voiceLoopActive) return;
+    if (!speakReady || isStreaming || isMuted) return;
+    if (!playableTutor || playingMessageId) return;
+    if (autoPlayedIdRef.current === playableTutor.id) return;
+    autoPlayedIdRef.current = playableTutor.id;
+    playMessage(playableTutor);
+  }, [voiceLoopActive, speakReady, isStreaming, isMuted, playableTutor, playingMessageId, playMessage]);
+
+  // Step 2: detect the falling edge of `isSpeaking`. When playback ends and
+  // the loop is still active, re-open the mic after a short beat so the
+  // hand-off feels like a natural turn boundary instead of a hot-mic bark.
+  const wasSpeakingRef = useRef(false);
+  useEffect(() => {
+    const wasSpeaking = wasSpeakingRef.current;
+    wasSpeakingRef.current = isSpeaking;
+    if (!wasSpeaking || isSpeaking) return;
+    if (!voiceLoopActive || voiceMode || isStreaming) return;
+    const t = setTimeout(() => {
+      // Re-check the latest state — anything could have changed during the
+      // delay (user typed, started another turn, toggled the loop off).
+      const s = useSessionStore.getState();
+      if (!s.voiceLoopActive || s.voiceMode || s.isStreaming) return;
+      const ok = beginListening();
+      if (!ok) setVoiceLoopActive(false);
+    }, 350);
+    return () => clearTimeout(t);
+  }, [isSpeaking, voiceLoopActive, voiceMode, isStreaming, beginListening, setVoiceLoopActive]);
+
+  // Safety net: if the loop is active but neither listening nor speaking nor
+  // streaming for any reason (e.g. an errored turn that produced no tutor
+  // message and no auto-play), fall back to listening so the conversation
+  // doesn't dead-end silently.
+  useEffect(() => {
+    if (!voiceLoopActive) return;
+    if (voiceMode || isSpeaking || isStreaming) return;
+    if (speakReady && playableTutor && !isMuted) return; // about to auto-play
+    const t = setTimeout(() => {
+      const s = useSessionStore.getState();
+      if (!s.voiceLoopActive || s.voiceMode || s.isSpeaking || s.isStreaming) return;
+      if (s.speakReady) return;
+      const ok = beginListening();
+      if (!ok) setVoiceLoopActive(false);
+    }, 600);
+    return () => clearTimeout(t);
+  }, [voiceLoopActive, voiceMode, isSpeaking, isStreaming, speakReady, playableTutor, isMuted, beginListening, setVoiceLoopActive]);
 
   // isSpeaking used for captions below
 
@@ -627,7 +718,13 @@ export default function CanvasInputBar({ onReturnToGroup }: CanvasInputBarProps 
             {/* While a turn is in flight: pulsing Stop button (cancels fetch + OpenAI calls) */}
             {isStreaming ? (
               <motion.button
-                onClick={stop}
+                onClick={() => {
+                  // Cancelling a voice-initiated turn also cancels the
+                  // surrounding voice loop — otherwise we'd silently re-open
+                  // the mic right after the user just told us to stop.
+                  if (voiceLoopActive) setVoiceLoopActive(false);
+                  stop();
+                }}
                 animate={{ scale: [1, 1.08, 1] }}
                 transition={{ repeat: Infinity, duration: 1.4, ease: "easeInOut" }}
                 className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 bg-red-500/90 hover:bg-red-500 text-white shadow-[0_0_12px_rgba(239,68,68,0.45)]"
@@ -669,8 +766,12 @@ export default function CanvasInputBar({ onReturnToGroup }: CanvasInputBarProps 
                 {recognitionOk.current && (
                   <button
                     onClick={toggleVoice}
-                    className={`w-7 h-7 rounded-full flex items-center justify-center transition-all flex-shrink-0 ${iconBtn}`}
-                    title="Voice input"
+                    className={`w-7 h-7 rounded-full flex items-center justify-center transition-all flex-shrink-0 ${
+                      voiceLoopActive
+                        ? "bg-violet-500/25 text-violet-400 hover:bg-violet-500/40"
+                        : iconBtn
+                    }`}
+                    title={voiceLoopActive ? "Voice conversation on — click to stop" : "Voice input"}
                   >
                     <Mic className="w-3.5 h-3.5" />
                   </button>

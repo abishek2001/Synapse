@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import type { GraphArtifact } from "@/lib/tools/types";
+import { chartTheme } from "./theme";
 
 const COLORS = ["#7c3aed", "#0ea5e9", "#10b981", "#f97316", "#ec4899", "#eab308"];
 const W = 340, H = 200, PAD_LEFT = 44, PAD_RIGHT = 16, PAD_TOP = 20, PAD_BOTTOM = 32;
@@ -13,8 +14,9 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-export function useBarChart(artifact: GraphArtifact, vars: Record<string, number>) {
+export function useBarChart(artifact: GraphArtifact, vars: Record<string, number>, dark = false) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const theme = chartTheme(dark);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -79,13 +81,13 @@ export function useBarChart(artifact: GraphArtifact, vars: Record<string, number
     const baseY = toY(0);
 
     // Grid
-    ctx.strokeStyle = "rgba(0,0,0,0.05)"; ctx.lineWidth = 0.5;
+    ctx.strokeStyle = theme.grid; ctx.lineWidth = 0.5;
     for (let i = 0; i <= 4; i++) {
       const gy = PAD_TOP + (i / 4) * plotH;
       ctx.beginPath(); ctx.moveTo(PAD_LEFT, gy); ctx.lineTo(PAD_LEFT + plotW, gy); ctx.stroke();
     }
     // Zero line
-    ctx.strokeStyle = "rgba(0,0,0,0.15)"; ctx.lineWidth = 1;
+    ctx.strokeStyle = theme.axis; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(PAD_LEFT, baseY); ctx.lineTo(PAD_LEFT + plotW, baseY); ctx.stroke();
 
     const nCats = categories.length;
@@ -108,7 +110,7 @@ export function useBarChart(artifact: GraphArtifact, vars: Record<string, number
     });
 
     // x-axis labels (category indices or values)
-    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.fillStyle = theme.axisLabel;
     ctx.font = "10px Inter, system-ui, sans-serif";
     ctx.textAlign = "center";
     categories.forEach((cat, ci) => {
@@ -129,14 +131,14 @@ export function useBarChart(artifact: GraphArtifact, vars: Record<string, number
       const color = s.color || COLORS[idx % COLORS.length];
       ctx.fillStyle = hexToRgba(color, 0.85);
       ctx.fillRect(lx, PAD_TOP + 4, 10, 7);
-      ctx.fillStyle = "rgba(0,0,0,0.45)";
+      ctx.fillStyle = theme.legendLabel;
       ctx.font = "10px Inter, system-ui, sans-serif";
       ctx.textAlign = "left";
       ctx.fillText(s.label, lx + 13, PAD_TOP + 11);
       lx += ctx.measureText(s.label).width + 26;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [artifact, vars]);
+  }, [artifact, vars, dark]);
 
   return canvasRef;
 }

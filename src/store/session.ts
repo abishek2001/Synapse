@@ -67,6 +67,14 @@ interface SessionState {
   showSources: boolean;
   showCallFriend: boolean;
   voiceMode: boolean;
+  /** Continuous voice-conversation loop. When true, the input bar will:
+   *   1. auto-play the next tutor message via TTS once it's ready, and
+   *   2. re-open the mic the moment that playback ends.
+   *  Started by clicking the mic from idle. Cleared by any explicit "I want to
+   *  type / I'm done" action: clicking the mic again, sending a typed message,
+   *  picking a chip, hitting Stop on a streaming turn, or manually stopping
+   *  the auto-playback. Transient — never persisted. */
+  voiceLoopActive: boolean;
   liveCaption: string;
   followUpQuestions: string[];
   speakReady: boolean; // explanation is ready but TTS hasn't auto-played — user clicks Speak
@@ -95,6 +103,7 @@ interface SessionState {
   setShowSources: (v: boolean) => void;
   setShowCallFriend: (v: boolean) => void;
   setVoiceMode: (v: boolean) => void;
+  setVoiceLoopActive: (v: boolean) => void;
   setLiveCaption: (text: string) => void;
   setFollowUpQuestions: (questions: string[]) => void;
   setSpeakReady: (v: boolean) => void;
@@ -129,6 +138,7 @@ const initialState = {
   showSources: false,
   showCallFriend: false,
   voiceMode: false,
+  voiceLoopActive: false,
   liveCaption: "",
   followUpQuestions: [] as string[],
   speakReady: false,
@@ -193,6 +203,7 @@ export const useSessionStore = create<SessionState>()(
   setShowSources: (showSources) => set({ showSources }),
   setShowCallFriend: (showCallFriend) => set({ showCallFriend }),
   setVoiceMode: (voiceMode) => set({ voiceMode }),
+  setVoiceLoopActive: (voiceLoopActive) => set({ voiceLoopActive }),
   setLiveCaption: (liveCaption) => set({ liveCaption }),
   setFollowUpQuestions: (followUpQuestions) => set({ followUpQuestions }),
   setSpeakReady: (speakReady) => set({ speakReady }),

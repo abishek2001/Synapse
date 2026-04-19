@@ -536,18 +536,18 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
                 : darkMode ? "0 4px 24px rgba(0,0,0,0.42)" : "0 2px 14px rgba(0,0,0,0.07)" }}>
             <div className="p-4">
               <CardErrorBoundary type="flashcard">
-                <FlashcardCard artifact={artifact} />
+                <FlashcardCard artifact={artifact} dark={darkMode} />
               </CardErrorBoundary>
               <CitationChips citations={artifact.citations} dark={darkMode} />
             </div>
           </div>
         ) : (
           <div className="py-1">
-            {artifact.type === "visual"     && <CardErrorBoundary type="visual"><VisualCard artifact={artifact} /></CardErrorBoundary>}
+            {artifact.type === "visual"     && <CardErrorBoundary type="visual"><VisualCard artifact={artifact} dark={darkMode} /></CardErrorBoundary>}
             {artifact.type === "diagram"    && <CardErrorBoundary type="diagram"><DiagramCard artifact={artifact} /></CardErrorBoundary>}
-            {artifact.type === "graph"      && <CardErrorBoundary type="graph"><GraphCard artifact={artifact} /></CardErrorBoundary>}
+            {artifact.type === "graph"      && <CardErrorBoundary type="graph"><GraphCard artifact={artifact} dark={darkMode} /></CardErrorBoundary>}
             {artifact.type === "notation"   && <CardErrorBoundary type="notation"><NotationCard artifact={artifact} dark={darkMode} /></CardErrorBoundary>}
-            {artifact.type === "lookup"     && <CardErrorBoundary type="lookup"><LookupCard artifact={artifact} /></CardErrorBoundary>}
+            {artifact.type === "lookup"     && <CardErrorBoundary type="lookup"><LookupCard artifact={artifact} dark={darkMode} /></CardErrorBoundary>}
             {artifact.type === "simulation" && <CardErrorBoundary type="simulation"><SimulationCard artifact={artifact} expanded height={element.frameH} /></CardErrorBoundary>}
             {artifact.type === "render3d"   && <CardErrorBoundary type="render3d"><Render3DCard artifact={artifact} height={element.frameH} /></CardErrorBoundary>}
             <div className="px-3">

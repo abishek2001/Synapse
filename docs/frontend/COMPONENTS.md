@@ -78,7 +78,7 @@ app/workspace/page.tsx (Suspense wrapper)
 - **`bg_color`** / **`camera_distance`**: optional fields controlling scene background and initial camera Z distance (code mode only)
 
 ### `GraphCard` (`src/components/canvas/GraphCard.tsx`)
-- **Props**: `artifact: GraphArtifact`
+- **Props**: `artifact: GraphArtifact, dark?: boolean`
 - **Chart types**: 12 types dispatched by `artifact.graph_type` — line, area, scatter, trend, forecast, parametric, bar, pie, polar, box, violin, density
 - **Sub-renderers** (in `src/components/canvas/graph/`):
   - `LineChart.tsx` — line/area/scatter/trend/forecast/parametric families (canvas hook)
@@ -86,8 +86,39 @@ app/workspace/page.tsx (Suspense wrapper)
   - `PieChart.tsx` — pie/donut (canvas hook)
   - `PolarChart.tsx` — polar r=f(θ) (canvas hook)
   - `DistributionChart.tsx` — box-and-whisker, violin KDE, and density KDE (canvas hook)
+  - `theme.ts` — `chartTheme(dark)` returns the dark-aware palette (grid / axis / axisLabel / legendLabel / pieHole / pieDivider / tooltipDotFill) used by every chart hook. Series colors stay constant — only chrome flips.
 - **Slider bank**: rendered when `artifact.variables` is set. Each `GraphVariable` maps to a range input. π-increment sliders (`step_unit: "π"`) display values as π fractions (π/4, π/2, π, ...) and pass `value × Math.PI` to expressions.
-- **Tooltip**: crosshair + floating tooltip on line-family charts only
+- **Tooltip**: crosshair + floating tooltip on line-family charts only (always rendered on a dark popover surface — works in both modes)
+- **Dark mode**: all chart chrome (grid, axes, tick labels, legend labels, donut hole) re-themes via `chartTheme(dark)`. The title and slider bank also flip to white-on-dark when `dark=true`. Plot data series keep the same hex colors so the chart's identity is preserved across themes.
+
+### `FlashcardCard` (`src/components/canvas/FlashcardCard.tsx`)
+- **Props**: `artifact: FlashcardArtifact, dark?: boolean`
+- **Visual**: progress bar + 3-D flip card (`rotateY` 0/180) + dot navigation + "Got it / Review again" buttons after flip
+- **Dark mode**: in `dark=true` the pastel face gradients shift to deeper, lower-luminance tints in the same hue family (violet/amber/emerald) so the floating cards don't glare against the dark canvas. All chrome (progress track, dot nav, prev/next buttons, action buttons, "+N more", reset CTA) gets a dark-mode variant. The pastel hue family is preserved so the semantic state (default / needs-review / known) still reads at a glance.
+
+### `VisualCard` (`src/components/canvas/VisualCard.tsx`)
+- **Props**: `artifact: VisualArtifact, dark?: boolean`
+- **Visual**: handwritten-style title + raw `artifact.svgContent` injected via `dangerouslySetInnerHTML`
+- **Dark mode**: the AI-generated SVG is authored with dark ink on a light surface and we cannot recolor it automatically. To keep the sketch readable without burning the eyes with pure white, in dark mode the SVG is mounted inside a soft **off-white "paper" panel** (`#f5f1e8`, rounded, faint border, subtle shadow). This visually frames the sketch as a paper artifact pinned on the dark canvas. The title flips to white-on-dark.
+
+### `LookupCard` (`src/components/canvas/LookupCard.tsx`)
+- **Props**: `artifact: LookupArtifact, dark?: boolean`
+- **Visual**: handwritten title + list of italicised quoted excerpts each with a left violet bar + "from <source>" caption
+- **Dark mode**: title, excerpt body, and source caption all switch to white/X opacity stops; left bar nudges to `purple-300/40` for better contrast on dark.
+
+### `NotationCard` (`src/components/canvas/NotationCard.tsx`)
+- **Props**: `artifact: NotationArtifact, dark?: boolean`
+- **Visual**: handwritten title + KaTeX-rendered LaTeX equation + optional handwritten annotation
+- **Dark mode**: title, KaTeX `currentColor`, and annotation all flip to white-on-dark stops. KaTeX color is propagated via the `--katex-color` CSS variable + container `color`.
+
+### `DiagramCard` / `SimulationCard` / `Render3DCard` (always-dark surfaces)
+- These three cards render on their own intrinsically dark surface (`rgba(12,12,24)` / `#0a0b14`). They look correct on the dark canvas and read as a deliberate "code panel" aesthetic on the light canvas, so they intentionally **do not** take a `dark` prop — both themes route to the same dark surface.
+
+### Dark-mode strategy (artifacts)
+- Cards that have a natural light/dark variant (`GraphCard`, `FlashcardCard`, `LookupCard`, `NotationCard`) take an explicit `dark?: boolean` prop and re-theme chrome + text. Series colors / accent hues are preserved across themes so artifact identity stays consistent.
+- `VisualCard` cannot be re-themed (the AI authors the SVG strokes) — in dark mode it's mounted inside a soft off-white paper panel for low-eye-strain readability.
+- `DiagramCard`, `SimulationCard`, `Render3DCard` are always dark by design — no recolor needed.
+- `ElementCard` reads `darkMode` from `useUIStore` and threads it as `dark={darkMode}` into every card that accepts the prop. The flashcard wrapper surface (`rgba(16,16,28)` vs `rgba(255,255,255)`) and citation chips already adapt via the same prop.
 
 ### `ArtifactCanvas` (`src/components/workspace/ArtifactCanvas.tsx`)
 - **Reads**: `useCanvasStore` (elements, groups, connections, selectedElementIds), `useUIStore`
@@ -190,8 +221,9 @@ app/workspace/page.tsx (Suspense wrapper)
 - **Width**: outer container is `max-w-3xl` (~768px) so the **follow-up question chips can stretch past the input pill's edges** and stay on one line — long suggestions like "Do you want to start with forces or with field lines?" used to wrap awkwardly when constrained to the input column. The mode picker, latest-tutor bubble, and input pill themselves clamp to `w-full max-w-xl` (~576px) so they keep their familiar size; only the chip row uses the full `max-w-3xl` width.
 - **Mode picker**: `grid-cols-1 sm:grid-cols-2` — stacks vertically on phones, side-by-side everywhere else.
 - **Latest tutor bubble**: collapsed by default — shows a single truncated line of the response next to the Synapse mark. Clicking the header (or the chevron) expands the bubble to its full scrollable body (`max-h-[30vh]`); clicking the chevron again collapses it. The bubble is **not dismissable** — it auto-resets to the collapsed state whenever a new tutor message arrives so the canvas stays uncluttered. The chevron is `ChevronUp` when collapsed (peek upward) / `ChevronDown` when expanded (push back down). The speaker button stops propagation so clicking it doesn't accidentally toggle the bubble.
-- **Reads**: `useSessionStore` (messages, voiceMode, liveCaption, isSpeaking, followUpQuestions, etc.), `useAIChat` (`playingMessageId`, `latestTutor`, `toggleMessage`)
-- **Writes**: `setVoiceMode`, `setLiveCaption`, `sendMessage`, `stop`, `toggleMessage` via `useAIChat`
+- **Reads**: `useSessionStore` (messages, voiceMode, voiceLoopActive, liveCaption, isSpeaking, isMuted, speakReady, followUpQuestions, etc.), `useAIChat` (`playingMessageId`, `latestTutor`, `toggleMessage`, `playMessage`)
+- **Writes**: `setVoiceMode`, `setVoiceLoopActive`, `setLiveCaption`, `sendMessage`, `stop`, `toggleMessage` / `playMessage` via `useAIChat`
+- **Voice loop**: when the user opens the mic from idle, `voiceLoopActive` flips on and stays on across the turn — listen → think → auto-play tutor TTS → re-open mic — until any explicit "I'm done" action (typing, chip click, Stop button, mic click again, manually stopping playback). See FLOWS.md → Flow 2 for the full state machine.
 - **Modes**: normal (full input bar) | voice (floating pulse pill + live caption)
 - **Follow-up chip tiers**:
   - Tier 1 (violet) — `questionsForUser` from the tutor's structured response; prepended first
@@ -337,8 +369,9 @@ app/workspace/page.tsx (Suspense wrapper)
 - **Persistence**: Zustand `persist` middleware writes `{ elements, groups, connections, updates, currentMainGroupId, lastTangentGroupId }` to `localStorage` under key `synapse-canvas`. Transient state (`strokes`, `selectedElementIds`, `isMockMode`) is excluded.
 
 ### `useSessionStore` (`src/store/session.ts`)
-- **Key state**: `query, persona, sessionId, files, urls, messages, isStreaming, chatError, voiceMode, liveCaption, followUpQuestions, speakReady, playingMessageId, docHeadings, learningMode, moduleQueue, pendingVoiceText`
-- **Key actions**: `initSession, addMessage, updateMessage, setChatError, setPersona, setVoiceMode, setLiveCaption, setFollowUpQuestions, setSpeakReady, setPlayingMessageId, setDocHeadings, setLearningMode, setModuleQueue, shiftModuleQueue, setPendingVoiceText`
+- **Key state**: `query, persona, sessionId, files, urls, messages, isStreaming, chatError, voiceMode, voiceLoopActive, liveCaption, followUpQuestions, speakReady, playingMessageId, docHeadings, learningMode, moduleQueue, pendingVoiceText`
+- **Key actions**: `initSession, addMessage, updateMessage, setChatError, setPersona, setVoiceMode, setVoiceLoopActive, setLiveCaption, setFollowUpQuestions, setSpeakReady, setPlayingMessageId, setDocHeadings, setLearningMode, setModuleQueue, shiftModuleQueue, setPendingVoiceText`
+- **`voiceLoopActive`** is transient (not persisted) — it drives the continuous voice conversation in `CanvasInputBar`: hold across listen → think → speak → listen, cleared by any explicit user opt-out.
 - **`chatError`**: `ChatError | null` — set by `useAIChat` for recoverable upstream failures (`rate_limit` / `timeout`). Carries `{ code, message, retryPrompt, retryAfterMs?, timestamp }`. Drives the `ChatErrorBanner`. Cleared at the start of every `sendMessage` so a successful retry auto-dismisses the banner. Excluded from persistence.
 - **`Message`**: `{ id, role, content, timestamp, spokenText?, voice? }`. `spokenText` is the TTS-friendly version of `content` (no markdown/equations); attached at SSE `tutor_response` time so every speaker button can replay it. `voice` records the ElevenLabs voice ID last used to play it.
 - **`urls`**: URLs submitted alongside the query (extracted from InputBar text via `detectUrls`)

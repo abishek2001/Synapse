@@ -2,12 +2,14 @@
 
 import { useEffect, useRef } from "react";
 import type { GraphArtifact } from "@/lib/tools/types";
+import { chartTheme } from "./theme";
 
 const COLORS = ["#7c3aed", "#0ea5e9", "#10b981", "#f97316", "#ec4899", "#eab308"];
 const W = 340, H = 200;
 
-export function usePolarChart(artifact: GraphArtifact, vars: Record<string, number>) {
+export function usePolarChart(artifact: GraphArtifact, vars: Record<string, number>, dark = false) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const theme = chartTheme(dark);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -48,7 +50,7 @@ export function usePolarChart(artifact: GraphArtifact, vars: Record<string, numb
     const scale = maxR / globalMaxR;
 
     // Polar grid (concentric circles + radial lines)
-    ctx.strokeStyle = "rgba(0,0,0,0.06)"; ctx.lineWidth = 0.5;
+    ctx.strokeStyle = theme.grid; ctx.lineWidth = 0.5;
     for (let ri = 1; ri <= 4; ri++) {
       ctx.beginPath(); ctx.arc(cx, cy, (ri / 4) * maxR, 0, Math.PI * 2); ctx.stroke();
     }
@@ -58,7 +60,7 @@ export function usePolarChart(artifact: GraphArtifact, vars: Record<string, numb
     }
 
     // Cardinal labels
-    ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.font = "9px Inter, system-ui, sans-serif"; ctx.textAlign = "center";
+    ctx.fillStyle = theme.axisLabel; ctx.font = "9px Inter, system-ui, sans-serif"; ctx.textAlign = "center";
     const labels = ["0", "π/4", "π/2", "3π/4", "π", "5π/4", "3π/2", "7π/4"];
     labels.forEach((lbl, i) => {
       const ang = (i / 8) * Math.PI * 2 - Math.PI / 2;
@@ -95,13 +97,13 @@ export function usePolarChart(artifact: GraphArtifact, vars: Record<string, numb
       const color = s.color || COLORS[idx % COLORS.length];
       ctx.fillStyle = color;
       ctx.fillRect(8, legendY - 4, 12, 2.5);
-      ctx.fillStyle = "rgba(0,0,0,0.5)";
+      ctx.fillStyle = theme.legendLabel;
       ctx.font = "10px Inter, system-ui, sans-serif";
       ctx.fillText(s.label, 24, legendY);
       legendY += 14;
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [artifact, vars]);
+  }, [artifact, vars, dark]);
 
   return canvasRef;
 }
