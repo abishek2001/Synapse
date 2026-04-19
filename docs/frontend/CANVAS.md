@@ -126,6 +126,18 @@ Elements can be grouped into a `CanvasGroup`. When `element.groupId` is set:
 - **Group boundary** → rendered as a rounded rect with a handwritten heading at top-left; `pointer-events-none` (no toolbar buttons on the boundary itself)
 - **Group heading** → the `group.name` is rendered as a Caveat (handwritten) heading at top-left of the boundary. The font is **counter-scaled** (`fontSize = 15 / canvasScale` when zoomed in past 1×) so the title stays readable at natural size regardless of zoom — same trick `ElementCard` uses for artifact content. Source: `moduleTitle` from the tutor's structured response, falling back to the truncated user query (see `useAIChat`).
 
+### Pending module (in-flight grouping during streaming)
+
+While the AI streams artifacts for a new module, those skeleton elements are wrapped by a transient **`PendingGroupBoundary`** — a dashed violet rectangle with a pulsing dot and a "Generating: <title>" label (or "Generating module…" before the tutor response arrives). State lives on `useCanvasStore().pendingModule = { elementIds, title, startedAt }`. Lifecycle, all driven by `useAIChat`:
+
+1. `sendMessage()` → `startPendingModule()` (resets the slot)
+2. Each `artifact_pending` SSE event → `addToPendingModule(elId)` and tracks the id in a per-turn ref
+3. `tutor_response` SSE → `setPendingModuleTitle(moduleTitle)`
+4. `done` SSE → use the per-turn id ref (NOT a time window) to find resolved artifacts → `addModule(...)` builds the real grouped layout → `clearPendingModule()`
+5. `error` / `catch` → `clearPendingModule()` so the dashed boundary doesn't get stuck on screen
+
+The per-turn id ref is what fixes the previous "long generation drops the group" bug: the old code filtered fresh elements by `createdAt > now - 30s`, so any turn taking >30s ended up with orphan ungrouped artifacts.
+
 ---
 
 ## Rendering Layer Order
@@ -169,10 +181,18 @@ In **Select** mode, dragging over empty canvas draws a selection rectangle. On r
 Connections between groups are stored in `useCanvasStore().connections`.
 
 Rendered by the `FlowArrows` SVG component:
-- **Edge selection — nearest-faces**: For each connection, `FlowArrows` measures the four edge-pair gaps between the two group bounds (right→left, left→right, bottom→top, top→bottom) and picks the smallest non-negative gap. That pair becomes the start/end anchors. If the boxes overlap on both axes, falls back to a center-to-center dominant-axis anchor. This generalizes the old "horizontal exits right, vertical exits bottom" rule to any spatial relationship.
-- **Path — quadratic bezier with one perpendicular control point**: `M start Q control end`, where the control point sits at the line midpoint offset perpendicularly by `min(distance × 0.15, 40)` px. A quadratic bezier with one control point is **mathematically incapable of changing direction more than once**, so the curve cannot S-bend even when groups are misaligned.
+- **Side selection — adaptive (`pickSides`)**: measure four edge-pair gaps (right→left, left→right, bottom→top, top→bottom).
+  - **Both axes separated** (diagonal layout): pick the axis with the *smaller* positive gap — exits through the closer pair of faces.
+  - **Only one axis separated**: must use that axis (the other axis overlaps, so its faces would route inside the other box).
+  - **Overlap on both axes**: fall back to dominant center-to-center axis.
+- **Anchor placement — align to the *other* endpoint's center (`anchorOnSide`)**: each anchor's position along its chosen edge is `clamp(otherCenter, edgeStart + inset, edgeEnd - inset)`. This avoids the "long diagonal across two tall boxes" look that happens when each anchor uses its own box center — a short header connecting to a tall column now anchors at the shared overlapping Y, not at midpoints far apart.
+- **Path — cubic bezier with perpendicular tangents**: `M start C ctrl1, ctrl2, end`, where each control point sits along its anchor's outward normal at distance `clamp(proj × 0.5 + dist × 0.15, 24, 160)`, with `proj = |dx · dirX + dy · dirY|` (the connector's projection onto the exit direction). One shape covers all cases naturally:
+  - colinear anchors → near-straight line,
+  - small offset → smooth curve,
+  - same-direction sides with perpendicular offset → S-shape,
+  - perpendicular sides → 90°-feeling sweep.
 - **Bounds use `canvasScale`**: `computeGroupBounds` is called with the live canvas scale so the start/end anchors match the counter-scaled visual positions of group boundaries.
-- **Default**: `stroke="rgba(124,58,237,0.18)"`, `strokeWidth=1.5`, dashed, animated `stroke-dashoffset`. Arrowhead `fa-arrow` (5×5).
+- **Default**: `stroke="rgba(124,58,237,0.18)"`, `strokeWidth=1.5`. Arrowhead `fa-arrow` (5×5).
 - **Highlighted** (source or target group is selected): `stroke="rgba(124,58,237,0.6)"` solid. Arrowhead `fa-arrow-hi` (same geometry, fuller fill).
 
 ---

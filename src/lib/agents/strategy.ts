@@ -1,9 +1,7 @@
-import OpenAI from "openai";
 import type { StudyPlan } from "@/lib/grounding/study-plan";
 import type { SessionContext } from "@/lib/grounding/session-context";
 import { serializeForPrompt, getSessionStats } from "@/lib/grounding/session-context";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? "" });
+import { openai } from "@/lib/openai-client";
 
 export interface TeachingDecision {
   action:

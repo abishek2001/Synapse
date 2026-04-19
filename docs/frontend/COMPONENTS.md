@@ -134,7 +134,22 @@ app/workspace/page.tsx (Suspense wrapper)
 - **Counter-scaled heading**: `fontSize = 15 * (1/canvasScale)` when zoomed in past 1× (and the heading's top/left padding scales the same way). This keeps the title readable at natural size at any zoom — same trick `ElementCard` applies to artifact content.
 - **Interaction**: `pointer-events-none` — no toolbar buttons. Group controls live in `SelectionBar`.
 - **Bounds computation**: uses `canvasScale` to compute each element's visual world-space edges — `right = el.x + el.w * counterScale`, `bottom = el.y + el.h * counterScale` — so the boundary shrinks with content when zoomed in past 1×
-- **Exports**: `computeGroupBounds(groupId, elements, canvasScale?)` — returns visual world-space bounding box `{x, y, w, h}` used for zoom-to-fit and hit testing. `canvasScale` defaults to `1` if omitted.
+- **Exports**: `computeGroupBounds(groupId, elements, canvasScale?)` — returns visual world-space bounding box `{x, y, w, h}` used for zoom-to-fit and hit testing. `canvasScale` defaults to `1` if omitted. Also exports `PendingGroupBoundary` (see below).
+
+### `PendingGroupBoundary` (in `GroupBoundary.tsx`)
+- **Props**: `elements, title, canvasScale`
+- **When rendered**: `useCanvasStore().pendingModule != null` — i.e. the AI is actively streaming artifacts for a new module that hasn't been finalized into a real `CanvasGroup` yet.
+- **Visual**: dashed violet rounded rectangle with a pulsing dot + handwritten "Generating: <title>" label (or "Generating module…" before the tutor response arrives). `pointer-events-none`.
+- **Lifecycle**: see `CANVAS.md → Pending module` for the full state-machine. `useAIChat` drives `startPendingModule / addToPendingModule / setPendingModuleTitle / clearPendingModule` from SSE stream events.
+
+### `ModuleTimeline` (`src/components/workspace/ModuleTimeline.tsx`)
+- **Reads**: `useGroundingStore` (`studyPlan, sessionContext`), `useUIStore` (`darkMode, moduleTimelineDock, moduleTimelineMinimized, moduleTimelineExpanded`), `useSessionStore` (`setPendingVoiceText`)
+- **Anchored** at one of six dock positions (`tl, tc, tr, bl, bc, br`) — user-configurable via the in-component `DockPicker`, persisted to `localStorage["synapse:moduleTimelineDock"]`.
+- **States**:
+  - **Pill** (default): rounded-full pill with progress ring + "Module N of T" + step dots. On hover, shows the dropdown.
+  - **Dropdown**: separate `rounded-2xl` rectangle that hangs **below** the pill (or **above** when docked at the bottom — controlled by `flex-col-reverse`). Lists every module with status icon (Check / pulsing dot / Circle). Header has the dock picker + minimize button.
+  - **Minimized**: a tiny `w-9 h-9` circle showing only the progress ring. Persisted via `localStorage["synapse:moduleTimelineMin"]`. Hover reveals the dock picker so users can move the circle without re-expanding.
+- **Toast coordination**: writes `useUIStore().moduleTimelineExpanded = true` only when the dropdown is open AND `dock === "tc"` — that's the only case where the canvas-toast container at top-center actually overlaps. `ArtifactCanvas`'s toast container reads this flag and springs its `top` from `56px → 280px` to clear the dropdown.
 
 ### `SelectionBar` (`src/components/workspace/SelectionBar.tsx`)
 - **Reads**: `useCanvasStore` (selectedElementIds, elements, groups)

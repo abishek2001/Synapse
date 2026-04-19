@@ -41,6 +41,10 @@ export function useAIChat() {
     addElement,
     addPendingElement,
     resolvePendingElement,
+    startPendingModule,
+    addToPendingModule,
+    setPendingModuleTitle,
+    clearPendingModule,
     addToast,
     updateToast,
     removeToast,
@@ -50,6 +54,11 @@ export function useAIChat() {
 
   // pendingId → canvas element id for skeleton resolution
   const pendingMap = useRef<Map<string, string>>(new Map());
+  /** Per-turn set of element IDs created during this stream. Used at `done` to
+   *  reliably gather the turn's elements regardless of how long the turn took
+   *  (the old `createdAt > now-30s` filter dropped everything when generation
+   *  ran longer than 30 seconds, leaving orphan ungrouped elements behind). */
+  const turnElementIdsRef = useRef<Set<string>>(new Set());
   // Accumulated per-turn state
   const moduleTitleRef = useRef<string>("");
   const writtenTextRef = useRef<string>("");
@@ -79,10 +88,12 @@ export function useAIChat() {
       const canvasContext = serializeCanvasContext(elements);
 
       pendingMap.current.clear();
+      turnElementIdsRef.current.clear();
       moduleTitleRef.current = "";
       writtenTextRef.current = "";
       spokenTextRef.current  = "";
       questionsRef.current   = [];
+      startPendingModule();
 
       const toastId = `toast-${Date.now()}`;
       addToast({ id: toastId, artifactType: "visual", title: "Thinking…", status: "preparing" });
@@ -152,6 +163,7 @@ export function useAIChat() {
           timestamp: Date.now(),
         });
         removeToast(toastId);
+        clearPendingModule();
       } finally {
         setStreaming(false);
       }
@@ -160,6 +172,7 @@ export function useAIChat() {
       isStreaming, isSpeaking, isMuted, messages, persona, files, documentContext,
       addMessage, setStreaming, setSpeaking, setFollowUpQuestions, setSpeakReady,
       addModule, addElement, addPendingElement, resolvePendingElement,
+      startPendingModule, clearPendingModule,
       addToast, updateToast, removeToast, elements, sessionContext, studyPlan, applyPatch,
     ],
   );
@@ -179,6 +192,7 @@ export function useAIChat() {
           const rightEdge = allEls.reduce((max, e) => Math.max(max, e.x + e.w), 80);
           const elId = `el-pending-${event.pendingId}`;
           pendingMap.current.set(event.pendingId, elId);
+          turnElementIdsRef.current.add(elId);
           addPendingElement({
             id: elId,
             type: event.artifactType as import("@/store/canvas").ElementType,
@@ -188,6 +202,7 @@ export function useAIChat() {
             zIndex: allEls.length + 10,
             createdAt: Date.now(),
           });
+          addToPendingModule(elId);
           break;
         }
 
@@ -206,6 +221,10 @@ export function useAIChat() {
           writtenTextRef.current = event.writtenText;
           spokenTextRef.current  = event.spokenText;
           questionsRef.current   = event.questionsForUser;
+
+          // Surface the title on the in-flight pending-module boundary so the
+          // user sees what's being generated while artifacts continue to stream.
+          if (event.moduleTitle) setPendingModuleTitle(event.moduleTitle);
 
           // Add to transcript (writtenText)
           addMessage({
@@ -245,20 +264,27 @@ export function useAIChat() {
           const patch = event.contextPatch;
           if (patch && sessionContext) applyPatch(patch);
 
-          // Clean up any unresolved pending elements
+          // Clean up any unresolved pending elements (stream errored mid-generation
+          // for that artifact). Their IDs are still in the turn set, so filter them
+          // out below by checking `!pending`.
           for (const [, elId] of pendingMap.current) {
             useCanvasStore.getState().removeElement(elId);
+            turnElementIdsRef.current.delete(elId);
           }
           pendingMap.current.clear();
 
-          // Gather all freshly-resolved artifacts from this turn (created in last 30s)
-          const turnStart = Date.now() - 30_000;
+          // Use the per-turn element-id set (NOT a 30-second time window) to find
+          // the elements this turn produced. Time-window filtering caused modules
+          // that took longer than 30s to lose all their artifacts and end up
+          // ungrouped on the canvas.
+          const turnIds = turnElementIdsRef.current;
           const freshEls = useCanvasStore.getState().elements.filter(
-            (e) => !e.pending && e.artifact && e.createdAt > turnStart,
+            (e) => turnIds.has(e.id) && !e.pending && e.artifact,
           );
           const resolvedArtifacts = freshEls.map((e) => e.artifact!);
 
-          // Remove individually-placed pending-resolved elements
+          // Remove individually-placed pending-resolved elements (they'll be
+          // re-created inside the new group with proper layout).
           for (const el of freshEls) {
             useCanvasStore.getState().removeElement(el.id);
           }
@@ -283,6 +309,8 @@ export function useAIChat() {
             setSpeakReady(true);
           }
 
+          turnElementIdsRef.current.clear();
+          clearPendingModule();
           updateToast(toastId, "done");
           setTimeout(() => removeToast(toastId), 1500);
           break;
@@ -297,12 +325,14 @@ export function useAIChat() {
             timestamp: Date.now(),
           });
           removeToast(toastId);
+          clearPendingModule();
           break;
         }
       }
     },
     [
       addMessage, addPendingElement, resolvePendingElement, addModule,
+      addToPendingModule, setPendingModuleTitle, clearPendingModule,
       removeToast, updateToast, setFollowUpQuestions, setSpeakReady,
       applyPatch, sessionContext, isMuted,
     ],

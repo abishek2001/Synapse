@@ -7,7 +7,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from "react";
 import ElementCard from "./ElementCard";
 import StrokeElement from "./StrokeElement";
-import GroupBoundary, { computeGroupBounds } from "./GroupBoundary";
+import GroupBoundary, { PendingGroupBoundary, computeGroupBounds } from "./GroupBoundary";
 import InfiniteCanvas, { type CanvasTool, type InfiniteCanvasHandle } from "./InfiniteCanvas";
 import HandTrackingOverlay, { type HandGestureEvent } from "./HandTrackingOverlay";
 import DoubtPopup from "./DoubtPopup";
@@ -34,6 +34,7 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
     connections,
     toasts,
     selectedElementIds,
+    pendingModule,
     removeElement,
     addElement,
     moveElement,
@@ -46,6 +47,7 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
     doubtPopup,
     contextMenu,
     darkMode,
+    moduleTimelineExpanded,
     openDoubtPopup,
     closeDoubtPopup,
     openContextMenu,
@@ -372,6 +374,15 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
             );
           })}
 
+          {/* In-flight pending module — dashed boundary while AI streams artifacts */}
+          {pendingModule && pendingModule.elementIds.length > 0 && (
+            <PendingGroupBoundary
+              elements={elements.filter((e) => pendingModule.elementIds.includes(e.id))}
+              title={pendingModule.title}
+              canvasScale={canvasScale}
+            />
+          )}
+
           {/* Connection arrows between groups */}
           {connections.length > 0 && (
             <FlowArrows
@@ -468,8 +479,12 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
         </AnimatePresence>
       </div>
 
-      {/* Artifact toasts */}
-      <div className="absolute top-14 left-1/2 -translate-x-1/2 z-40 flex flex-col gap-2 pointer-events-none">
+      {/* Artifact toasts — slide below the ModuleTimeline when it's expanded so they don't overlap. */}
+      <motion.div
+        className="absolute left-1/2 -translate-x-1/2 z-40 flex flex-col gap-2 pointer-events-none"
+        animate={{ top: moduleTimelineExpanded ? 280 : 56 }}
+        transition={{ type: "spring", damping: 28, stiffness: 260 }}
+      >
         <AnimatePresence>
           {toasts.map((toast) => (
             <motion.div
@@ -497,7 +512,7 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
             </motion.div>
           ))}
         </AnimatePresence>
-      </div>
+      </motion.div>
 
       {/* Undo toasts */}
       <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-40 flex flex-col gap-2">
@@ -741,6 +756,82 @@ interface FlowArrowsProps {
   selectedGroupIds: string[];
 }
 
+type ArrowSide = "right" | "left" | "top" | "bottom";
+
+interface ArrowAnchor {
+  x: number;
+  y: number;
+  dirX: number; // outward normal of the chosen edge
+  dirY: number;
+}
+
+function pickSides(
+  from: { x: number; y: number; w: number; h: number },
+  to:   { x: number; y: number; w: number; h: number },
+): { fromSide: ArrowSide; toSide: ArrowSide } {
+  const gapRight  = to.x - (from.x + from.w);
+  const gapLeft   = from.x - (to.x + to.w);
+  const gapBottom = to.y - (from.y + from.h);
+  const gapTop    = from.y - (to.y + to.h);
+
+  const horizSep = gapRight >= 0 || gapLeft >= 0;
+  const vertSep  = gapBottom >= 0 || gapTop >= 0;
+
+  // Both axes separated → boxes are diagonally offset. Pick the axis with the
+  // *smaller* positive gap so the arrow exits through the closer pair of faces.
+  if (horizSep && vertSep) {
+    const hGap = gapRight  >= 0 ? gapRight  : gapLeft;
+    const vGap = gapBottom >= 0 ? gapBottom : gapTop;
+    if (hGap <= vGap) {
+      return gapRight >= 0
+        ? { fromSide: "right", toSide: "left"  }
+        : { fromSide: "left",  toSide: "right" };
+    }
+    return gapBottom >= 0
+      ? { fromSide: "bottom", toSide: "top"    }
+      : { fromSide: "top",    toSide: "bottom" };
+  }
+
+  if (horizSep) {
+    return gapRight >= 0
+      ? { fromSide: "right", toSide: "left"  }
+      : { fromSide: "left",  toSide: "right" };
+  }
+
+  if (vertSep) {
+    return gapBottom >= 0
+      ? { fromSide: "bottom", toSide: "top"    }
+      : { fromSide: "top",    toSide: "bottom" };
+  }
+
+  // Overlap on both axes → fall back to dominant center-to-center axis.
+  const dx = (to.x + to.w / 2) - (from.x + from.w / 2);
+  const dy = (to.y + to.h / 2) - (from.y + from.h / 2);
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0 ? { fromSide: "right", toSide: "left" } : { fromSide: "left", toSide: "right" };
+  }
+  return dy >= 0 ? { fromSide: "bottom", toSide: "top" } : { fromSide: "top", toSide: "bottom" };
+}
+
+function anchorOnSide(
+  b: { x: number; y: number; w: number; h: number },
+  side: ArrowSide,
+  alignX: number,
+  alignY: number,
+): ArrowAnchor {
+  // Inset keeps the anchor away from rounded corners. Shrink for tiny edges.
+  const insetX = Math.min(20, b.w / 2 - 1);
+  const insetY = Math.min(20, b.h / 2 - 1);
+  const clampX = Math.max(b.x + insetX, Math.min(alignX, b.x + b.w - insetX));
+  const clampY = Math.max(b.y + insetY, Math.min(alignY, b.y + b.h - insetY));
+  switch (side) {
+    case "right":  return { x: b.x + b.w,  y: clampY,      dirX:  1, dirY:  0 };
+    case "left":   return { x: b.x,        y: clampY,      dirX: -1, dirY:  0 };
+    case "bottom": return { x: clampX,     y: b.y + b.h,   dirX:  0, dirY:  1 };
+    case "top":    return { x: clampX,     y: b.y,         dirX:  0, dirY: -1 };
+  }
+}
+
 function FlowArrows({ connections, elements, canvasScale, selectedGroupIds }: FlowArrowsProps) {
   const edges = connections.map((conn) => {
     // Pass canvasScale so bounds match the counter-scaled visual positions
@@ -750,66 +841,61 @@ function FlowArrows({ connections, elements, canvasScale, selectedGroupIds }: Fl
 
     const isHighlighted = selectedGroupIds.includes(conn.fromModuleId) || selectedGroupIds.includes(conn.toModuleId);
 
-    const fromCX = from.x + from.w / 2;
-    const fromCY = from.y + from.h / 2;
+    const { fromSide, toSide } = pickSides(from, to);
+
+    // Align each anchor to the *other* endpoint's center (clamped to the edge
+    // range). This avoids the "diagonal across two tall boxes" look that
+    // happens when each anchor uses its own box center.
     const toCX   = to.x   + to.w   / 2;
     const toCY   = to.y   + to.h   / 2;
+    const fromCX = from.x + from.w / 2;
+    const fromCY = from.y + from.h / 2;
 
-    // Measure gap between each pair of facing edges.
-    // A positive gap means the faces are separated (not overlapping on that axis).
-    // Pick the pair with the smallest non-negative gap — those are the nearest faces.
-    const candidates: { gap: number; x1: number; y1: number; x2: number; y2: number }[] = [];
+    const a = anchorOnSide(from, fromSide, toCX,   toCY);
+    const b = anchorOnSide(to,   toSide,   fromCX, fromCY);
 
-    const gapRight  = to.x           - (from.x + from.w); // from right → to left
-    const gapLeft   = from.x         - (to.x   + to.w);   // from left  → to right
-    const gapBottom = to.y           - (from.y + from.h);  // from bottom → to top
-    const gapTop    = from.y         - (to.y   + to.h);    // from top   → to bottom
+    // Cubic bezier with perpendicular tangents at each anchor. This single
+    // shape covers all the cases naturally:
+    //  - near-straight when anchors are colinear,
+    //  - smooth curve when slightly offset,
+    //  - S-shape when sides face the same direction with vertical/horizontal offset,
+    //  - 90°-feeling sweep when the chosen sides are perpendicular.
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    // Tangent length: prefer the projection of the connector along each anchor's
+    // exit direction so colinear anchors get small tangents (≈ straight) and
+    // perpendicular anchors get tangents proportional to the perpendicular leg.
+    const aProj = Math.abs(a.dirX * dx + a.dirY * dy);
+    const bProj = Math.abs(b.dirX * dx + b.dirY * dy);
+    const dist  = Math.hypot(dx, dy);
+    const tangent = (proj: number) => Math.max(24, Math.min(160, proj * 0.5 + dist * 0.15));
+    const aT = tangent(aProj);
+    const bT = tangent(bProj);
 
-    if (gapRight  >= 0) candidates.push({ gap: gapRight,  x1: from.x + from.w, y1: fromCY,          x2: to.x,           y2: toCY           });
-    if (gapLeft   >= 0) candidates.push({ gap: gapLeft,   x1: from.x,           y1: fromCY,          x2: to.x + to.w,   y2: toCY           });
-    if (gapBottom >= 0) candidates.push({ gap: gapBottom, x1: fromCX,           y1: from.y + from.h, x2: toCX,           y2: to.y           });
-    if (gapTop    >= 0) candidates.push({ gap: gapTop,    x1: fromCX,           y1: from.y,          x2: toCX,           y2: to.y + to.h    });
+    const c1x = a.x + a.dirX * aT;
+    const c1y = a.y + a.dirY * aT;
+    const c2x = b.x + b.dirX * bT;
+    const c2y = b.y + b.dirY * bT;
 
-    // Fallback: boxes overlap — use center-to-center dominant axis
-    if (candidates.length === 0) {
-      if (Math.abs(toCX - fromCX) >= Math.abs(toCY - fromCY)) {
-        const s = toCX >= fromCX ? 1 : -1;
-        candidates.push({ gap: 0, x1: from.x + (s > 0 ? from.w : 0), y1: fromCY, x2: to.x + (s > 0 ? 0 : to.w), y2: toCY });
-      } else {
-        const s = toCY >= fromCY ? 1 : -1;
-        candidates.push({ gap: 0, x1: fromCX, y1: from.y + (s > 0 ? from.h : 0), x2: toCX, y2: to.y + (s > 0 ? 0 : to.h) });
-      }
-    }
-
-    const { x1, y1, x2, y2 } = candidates.reduce((a, b) => a.gap <= b.gap ? a : b);
-
-    // Quadratic bezier: one control point at the midpoint, offset perpendicularly.
-    // This is S-curve-proof by construction — a quadratic bezier with one control point
-    // cannot change direction more than once.
-    const mx = (x1 + x2) / 2;
-    const my = (y1 + y2) / 2;
-    // Perpendicular offset scales with distance so short lines stay subtle
-    const dist = Math.hypot(x2 - x1, y2 - y1);
-    const perp = Math.min(dist * 0.15, 40);
-    // Rotate 90° from the line direction
-    const lineLen = dist || 1;
-    const nx = -(y2 - y1) / lineLen;
-    const ny =  (x2 - x1) / lineLen;
-    const qx = mx + nx * perp;
-    const qy = my + ny * perp;
-
-    return { id: conn.id, x1, y1, x2, y2, qx, qy, highlighted: isHighlighted };
+    return {
+      id: conn.id,
+      x1: a.x, y1: a.y,
+      x2: b.x, y2: b.y,
+      c1x, c1y, c2x, c2y,
+      highlighted: isHighlighted,
+    };
   }).filter(Boolean) as {
     id: string; x1: number; y1: number; x2: number; y2: number;
-    qx: number; qy: number; highlighted: boolean;
+    c1x: number; c1y: number; c2x: number; c2y: number;
+    highlighted: boolean;
   }[];
 
   if (edges.length === 0) return null;
 
-  // SVG viewport covers all edge endpoints with padding
+  // SVG viewport covers all edge endpoints + control points with padding
   const pad = 200;
-  const allX = edges.flatMap((e) => [e.x1, e.x2, e.qx]);
-  const allY = edges.flatMap((e) => [e.y1, e.y2, e.qy]);
+  const allX = edges.flatMap((e) => [e.x1, e.x2, e.c1x, e.c2x]);
+  const allY = edges.flatMap((e) => [e.y1, e.y2, e.c1y, e.c2y]);
   const minX = Math.min(...allX) - pad;
   const minY = Math.min(...allY) - pad;
   const maxX = Math.max(...allX) + pad;
@@ -829,11 +915,12 @@ function FlowArrows({ connections, elements, canvasScale, selectedGroupIds }: Fl
         </marker>
       </defs>
       {edges.map((e) => {
-        const sx = e.x1 - minX, sy = e.y1 - minY;
-        const ex = e.x2 - minX, ey = e.y2 - minY;
-        const qx = e.qx - minX, qy = e.qy - minY;
-        // Quadratic bezier: M start Q control end
-        const path = `M ${sx} ${sy} Q ${qx} ${qy}, ${ex} ${ey}`;
+        const sx = e.x1 - minX,  sy = e.y1 - minY;
+        const ex = e.x2 - minX,  ey = e.y2 - minY;
+        const c1x = e.c1x - minX, c1y = e.c1y - minY;
+        const c2x = e.c2x - minX, c2y = e.c2y - minY;
+        // Cubic bezier: M start C ctrl1, ctrl2, end
+        const path = `M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${ex} ${ey}`;
         const stroke = e.highlighted ? "rgba(124,58,237,0.6)" : "rgba(124,58,237,0.18)";
         const marker = e.highlighted ? "url(#fa-arrow-hi)" : "url(#fa-arrow)";
         return (

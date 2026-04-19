@@ -1,9 +1,7 @@
 import { NextRequest } from "next/server";
-import OpenAI from "openai";
 import { buildTutorMessages } from "@/lib/agents/tutor";
 import type { AgentMessage } from "@/lib/agents/types";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? "" });
+import { openai } from "@/lib/openai-client";
 
 export async function POST(req: NextRequest) {
   const body = await req.json();

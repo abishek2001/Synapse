@@ -151,6 +151,16 @@ export interface Crumb {
 
 // ─── State interface ──────────────────────────────────────────────────────────
 
+/** Transient state set while a streaming turn is building a new module.
+ *  Drives the dashed "Generating…" boundary that wraps in-flight pending elements. */
+export interface PendingModule {
+  /** Element IDs (pending or just-resolved) that belong to this in-flight module. */
+  elementIds: string[];
+  /** Tutor-supplied title once the response arrives; null until then. */
+  title: string | null;
+  startedAt: number;
+}
+
 interface CanvasState {
   elements: CanvasElement[];
   groups: CanvasGroup[];
@@ -160,6 +170,7 @@ interface CanvasState {
   updates: CanvasUpdateEvent[];
   selectedElementIds: string[];
   isMockMode: boolean;
+  pendingModule: PendingModule | null;
 
   // Element actions
   addElement: (el: CanvasElement) => void;
@@ -183,6 +194,12 @@ interface CanvasState {
   // High-level "add module" (called by AI chat — creates elements + group)
   // writtenText: if provided, placed as a text element at the top of the group
   addModule: (title: string, artifacts: CanvasArtifact[], crumbs?: Crumb[], writtenText?: string) => void;
+
+  // Pending-module lifecycle (drives the dashed boundary while AI streams artifacts)
+  startPendingModule: () => void;
+  addToPendingModule: (elementId: string) => void;
+  setPendingModuleTitle: (title: string) => void;
+  clearPendingModule: () => void;
 
   // Connections
   addConnection: (conn: ModuleConnection) => void;
@@ -1206,6 +1223,7 @@ export const useCanvasStore = create<CanvasState>()(
   updates: [],
   selectedElementIds: [],
   isMockMode: false,
+  pendingModule: null,
 
   // ── Element actions ─────────────────────────────────────────────────────────
 
@@ -1368,6 +1386,25 @@ export const useCanvasStore = create<CanvasState>()(
       };
     }),
 
+  // ── Pending module (transient state during a streaming AI turn) ─────────────
+
+  startPendingModule: () =>
+    set({ pendingModule: { elementIds: [], title: null, startedAt: Date.now() } }),
+
+  addToPendingModule: (elementId) =>
+    set((s) => {
+      if (!s.pendingModule) {
+        return { pendingModule: { elementIds: [elementId], title: null, startedAt: Date.now() } };
+      }
+      if (s.pendingModule.elementIds.includes(elementId)) return s;
+      return { pendingModule: { ...s.pendingModule, elementIds: [...s.pendingModule.elementIds, elementId] } };
+    }),
+
+  setPendingModuleTitle: (title) =>
+    set((s) => (s.pendingModule ? { pendingModule: { ...s.pendingModule, title } } : s)),
+
+  clearPendingModule: () => set({ pendingModule: null }),
+
   // ── Connections ──────────────────────────────────────────────────────────────
 
   addConnection: (conn) => set((s) => ({ connections: [...s.connections, conn] })),
@@ -1419,7 +1456,7 @@ export const useCanvasStore = create<CanvasState>()(
   // ── Reset ────────────────────────────────────────────────────────────────────
 
   clearCanvas: () =>
-    set({ elements: [], groups: [], connections: [], updates: [], selectedElementIds: [], strokes: [] }),
+    set({ elements: [], groups: [], connections: [], updates: [], selectedElementIds: [], strokes: [], pendingModule: null }),
     }),
     {
       name: "synapse-canvas",

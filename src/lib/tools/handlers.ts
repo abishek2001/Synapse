@@ -1,4 +1,3 @@
-import OpenAI from "openai";
 import type {
   CanvasArtifact,
   VisualArtifact,
@@ -15,8 +14,7 @@ import type {
 import { semanticSearch } from "@/lib/grounding/retrieval";
 import { SIMULATION_SYSTEM_PROMPT, buildSimulationPrompt } from "@/lib/simulation/prompt";
 import { sanitizeSimulationCode } from "@/lib/simulation/sanitize";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? "" });
+import { openai } from "@/lib/openai-client";
 
 export interface DelegatedAnnotation {
   type: "text" | "sticky" | "arrow_label";

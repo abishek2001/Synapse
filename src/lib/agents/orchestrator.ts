@@ -1,4 +1,3 @@
-import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { buildTutorSystemPrompt, parseTutorResponse } from "./tutor";
 import { buildFriendMessages } from "./friend";
@@ -15,8 +14,8 @@ import type {
   SessionContextPatch,
   StreamEvent,
 } from "./types";
+import { openai } from "@/lib/openai-client";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? "" });
 const MODEL = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
 
 export async function runOrchestrator(

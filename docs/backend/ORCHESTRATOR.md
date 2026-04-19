@@ -2,7 +2,20 @@
 
 **File:** `src/lib/agents/orchestrator.ts`
 
-The orchestrator is the single server-side entry point for every AI turn. It owns the OpenAI client and coordinates all sub-agents.
+The orchestrator is the single server-side entry point for every AI turn. It coordinates all sub-agents and uses the shared OpenAI client.
+
+### OpenAI client
+
+All server-side OpenAI calls go through a single shared instance defined in `src/lib/openai-client.ts`:
+
+```ts
+export const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY ?? "",
+  maxRetries: 1,
+});
+```
+
+`maxRetries: 1` caps every request at **2 total attempts** (1 initial + 1 retry). This is the project ceiling — never construct `new OpenAI(...)` ad-hoc in another file; always import this singleton so the retry policy stays consistent across the orchestrator, strategy agent, study-plan generator, semantic-search retrieval, simulation route, extract-title route, the SSE chat stream, and the tools handler.
 
 ---
 
