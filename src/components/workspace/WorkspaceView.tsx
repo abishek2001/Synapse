@@ -13,6 +13,7 @@ import TangentReturnPill from "./TangentReturnPill";
 import LeftSidebar from "./LeftSidebar";
 import RightSidebar from "./RightSidebar";
 import MockButton from "./MockButton";
+import DemoButton from "./DemoButton";
 import ModuleTimeline from "./ModuleTimeline";
 import QuizMeMode from "./QuizMeMode";
 import BridgeScreen, {
@@ -449,6 +450,9 @@ export default function WorkspaceView() {
 
                 {/* Mock button */}
                 <MockButton />
+
+                {/* Demo button — plays back hardcoded sessions like real-time */}
+                <DemoButton />
 
                 {/* Quiz Me — only renders if there are flashcards on the canvas */}
                 <QuizMeMode />
