@@ -9,6 +9,7 @@ import {
   stopSpeaking,
   isRecognitionSupported,
 } from "@/lib/voice/speech";
+import { playSfx } from "@/lib/voice/sfx";
 import { useCallback, useRef } from "react";
 
 const GLOW: Record<string, string> = {
@@ -59,6 +60,7 @@ export default function VoiceIsland() {
     }
 
     setListening(true);
+    playSfx("voice-listen-on");
     startListening(
       (text) => setPendingVoiceText(text),
       () => setListening(false),
@@ -68,6 +70,7 @@ export default function VoiceIsland() {
   const handleStopMic = useCallback(() => {
     stopListening();
     setListening(false);
+    playSfx("voice-listen-off");
   }, [setListening]);
 
   const toggleMute = useCallback(() => {
