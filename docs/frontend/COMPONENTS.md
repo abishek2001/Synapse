@@ -65,9 +65,12 @@ app/workspace/page.tsx (Suspense wrapper)
 
 ### `Render3DCard` (`src/components/canvas/Render3DCard.tsx`)
 - **Props**: `artifact: Render3DArtifact`
-- **Two render modes**:
-  - **`embed_url` mode**: if `artifact.embed_url` is set, renders it directly as `<iframe src>` with `allow-scripts allow-same-origin allow-popups` — used for Sketchfab and other hosted viewers
-  - **`code` mode** (default): sandboxed `<iframe srcdoc>` with Three.js r160 + OrbitControls pre-booted; AI writes plain JS adding objects to `scene`. May also use `import { OBJLoader } from 'three/addons/...'` etc. to load external `.obj`/`.glb` files from CORS-enabled URLs (e.g. `raw.githubusercontent.com`)
+- **Two render modes** (selected by which field the artifact carries):
+  - **`embed_url` mode** (TIER 1 — preferred): if `artifact.embed_url` is set, renders it directly as `<iframe src>` with `allow-scripts allow-same-origin allow-popups` — used for Sketchfab and other hosted viewers. Highest visual quality; no Three.js code executed.
+  - **`code` mode** (TIER 2 / TIER 3): sandboxed `<iframe srcdoc>` with Three.js r160 + OrbitControls pre-booted. The AI either:
+    - **TIER 2** — uses `GLTFLoader` / `OBJLoader` / `MTLLoader` from `three/addons/...` to load real models from CORS-enabled hosts (`raw.githubusercontent.com`, `cdn.jsdelivr.net/gh`, `modelviewer.dev/shared-assets`, KhronosGroup glTF-Sample-Models, `threejs.org/examples/models`), then centers + scales them.
+    - **TIER 3** — hand-writes `THREE.Mesh` geometries when no real model is reachable.
+- **Source resolution**: TIER 1 is resolved server-side. The tool `canvas_generate_3d_render` exposes a `sketchfab_query` parameter (NOT `embed_url`) — `handleGenerate3DRender` in `src/lib/tools/handlers.ts` calls `resolveSketchfabModel` from `src/lib/sketchfab.ts`, which hits the public Sketchfab v3 search API, picks the most-liked public + embeddable result, and stamps the verified `embed_url` onto the artifact. This stops the model from hallucinating UIDs (which 404 in the iframe). If Sketchfab returns no usable result, the handler throws an error like `"Sketchfab returned no embeddable model for X. Retry with `code` instead."` — the orchestrator's per-tool catch reports this back to the model, which then retries with TIER 2 or TIER 3 code in the same turn.
 - **Interactions**: drag to rotate, scroll to zoom, right-drag to pan (OrbitControls)
 - **Height**: fixed `420px`
 - **AI contract** (code mode): Globals: `scene`, `camera`, `THREE`, `controls`, `renderer`. Pre-added: ambient + directional sun + blue fill + violet accent lights. Define `function update(t)` (t in seconds) for per-frame animation.

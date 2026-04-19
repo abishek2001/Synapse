@@ -15,6 +15,7 @@ import { semanticSearch } from "@/lib/grounding/retrieval";
 import { SIMULATION_SYSTEM_PROMPT, buildSimulationPrompt } from "@/lib/simulation/prompt";
 import { sanitizeSimulationCode } from "@/lib/simulation/sanitize";
 import { openai } from "@/lib/openai-client";
+import { resolveSketchfabModel, buildEmbedUrl } from "@/lib/sketchfab";
 
 export interface DelegatedAnnotation {
   type: "text" | "sticky" | "arrow_label";
@@ -314,16 +315,62 @@ async function handleGenerateSimulation(
   };
 }
 
-function handleGenerate3DRender(
+async function handleGenerate3DRender(
   args: Record<string, unknown>,
-): { artifact: Render3DArtifact; result: string } {
-  const { title, topic, code, camera_distance, bg_color } = args as {
+): Promise<{ artifact: Render3DArtifact; result: string }> {
+  const {
+    title,
+    topic,
+    code,
+    sketchfab_query,
+    embed_url, // legacy / direct-URL escape hatch — validated server-side
+    camera_distance,
+    bg_color,
+  } = args as {
     title: string;
     topic: string;
-    code: string;
+    code?: string;
+    sketchfab_query?: string;
+    embed_url?: string;
     camera_distance?: number;
     bg_color?: string;
   };
+
+  // ── TIER 1: Sketchfab — resolve server-side so we never embed a hallucinated UID ──
+  const query = sketchfab_query?.trim();
+  const directUrl = embed_url?.trim();
+  if (query || directUrl) {
+    const hit = await resolveSketchfabModel({ query, embedUrl: directUrl });
+    if (hit) {
+      const artifact: Render3DArtifact = {
+        id: crypto.randomUUID(),
+        type: "render3d",
+        title,
+        status: "pending",
+        topic,
+        code: "",
+        embed_url: buildEmbedUrl(hit.embedUrl),
+      };
+      return {
+        artifact,
+        result: `[3D render "${title}" placed — Sketchfab match: "${hit.name}" (uid ${hit.uid}, ${hit.likeCount} likes)]`,
+      };
+    }
+    // Sketchfab missed. If the model didn't supply code as a fallback, force it to retry.
+    if (!code) {
+      throw new Error(
+        `Sketchfab returned no embeddable model for "${query ?? directUrl}". Retry canvas_generate_3d_render with the \`code\` field instead — write a Three.js scene that loads a .glb from a CORS-enabled host (raw.githubusercontent.com, cdn.jsdelivr.net/gh, modelviewer.dev/shared-assets, KhronosGroup glTF-Sample-Models) or, as a last resort, hand-write the geometry.`,
+      );
+    }
+    // Sketchfab missed but the model did supply code — fall through to TIER 2/3.
+  }
+
+  // ── TIER 2 / TIER 3: Three.js code path ──
+  if (!code) {
+    throw new Error(
+      "canvas_generate_3d_render: must supply either `sketchfab_query` (preferred) or `code` (Three.js scene). Both are missing.",
+    );
+  }
 
   const artifact: Render3DArtifact = {
     id: crypto.randomUUID(),
@@ -338,6 +385,6 @@ function handleGenerate3DRender(
 
   return {
     artifact,
-    result: `[3D render "${title}" generated and placed on canvas]`,
+    result: `[3D render "${title}" placed — source: three.js code]`,
   };
 }

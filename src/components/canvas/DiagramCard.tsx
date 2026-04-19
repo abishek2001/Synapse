@@ -1,16 +1,12 @@
 "use client";
 
 import { useState, useMemo, useId } from "react";
-import type { DiagramArtifact, DiagramNode, DiagramEdge } from "@/lib/tools/types";
-
-// ─── Layout constants ──────────────────────────────────────────────────────────
-
-const NODE_W    = 148;
-const NODE_H    = 52;   // height without description
-const NODE_H_D  = 72;   // height with description
-const COL_GAP   = 88;   // horizontal gap between node edges (LR direction)
-const ROW_GAP   = 18;   // vertical gap between node edges (LR direction)
-const PAD       = 28;   // canvas padding
+import type { DiagramArtifact } from "@/lib/tools/types";
+import {
+  computeDiagramLayout,
+  diagramEdgePath,
+  NODE_W,
+} from "@/lib/diagram-layout";
 
 // ─── Colors ────────────────────────────────────────────────────────────────────
 
@@ -32,159 +28,6 @@ function resolveColor(color?: string): string {
   return COLOR_MAP[color.toLowerCase()] ?? color;
 }
 
-// ─── Layout algorithm ──────────────────────────────────────────────────────────
-
-interface NodePos {
-  x: number; // center x
-  y: number; // center y
-  h: number; // actual height (may vary per node)
-}
-
-function computeLayout(
-  nodes: DiagramNode[],
-  edges: DiagramEdge[],
-  direction: "LR" | "TB",
-): { positions: Map<string, NodePos>; svgW: number; svgH: number } {
-  if (nodes.length === 0) {
-    return { positions: new Map(), svgW: 200, svgH: 80 };
-  }
-
-  // Build adjacency + in-degree
-  const adj       = new Map<string, string[]>();
-  const inDegree  = new Map<string, number>();
-  const nodeIds   = new Set(nodes.map((n) => n.id));
-
-  for (const n of nodes) {
-    adj.set(n.id, []);
-    inDegree.set(n.id, 0);
-  }
-  for (const e of edges) {
-    if (!nodeIds.has(e.from) || !nodeIds.has(e.to)) continue;
-    adj.get(e.from)!.push(e.to);
-    inDegree.set(e.to, (inDegree.get(e.to) ?? 0) + 1);
-  }
-
-  // BFS rank assignment (longest path from a root)
-  const rank   = new Map<string, number>();
-  const queue: string[] = [];
-
-  for (const [id, deg] of inDegree) {
-    if (deg === 0) queue.push(id);
-  }
-  if (queue.length === 0 && nodes.length > 0) queue.push(nodes[0].id);
-
-  // Process in BFS order; re-enqueue to ensure longest path wins
-  const visited = new Set<string>();
-  while (queue.length > 0) {
-    const id = queue.shift()!;
-    if (visited.has(id)) continue;
-    visited.add(id);
-
-    // rank = max(predecessor ranks) + 1
-    const preds = edges.filter((e) => e.to === id && nodeIds.has(e.from)).map((e) => e.from);
-    const maxPred = preds.reduce((m, p) => Math.max(m, rank.get(p) ?? -1), -1);
-    rank.set(id, maxPred + 1);
-
-    for (const next of adj.get(id) ?? []) {
-      queue.push(next); // allow re-visits so children get updated rank
-    }
-  }
-
-  // Handle any unranked nodes (isolated or in unresolved cycles)
-  const fallback = Math.max(-1, ...[...rank.values()]) + 1;
-  for (const n of nodes) {
-    if (!rank.has(n.id)) rank.set(n.id, fallback);
-  }
-
-  // Group by rank (layer)
-  const layers = new Map<number, string[]>();
-  for (const [id, r] of rank) {
-    if (!layers.has(r)) layers.set(r, []);
-    layers.get(r)!.push(id);
-  }
-
-  // Node height helper
-  const nodeH = (id: string) => {
-    const n = nodes.find((x) => x.id === id);
-    return n?.description ? NODE_H_D : NODE_H;
-  };
-
-  const maxRank     = Math.max(...rank.values(), 0);
-  const positions   = new Map<string, NodePos>();
-
-  if (direction === "LR") {
-    // x driven by rank, y by position within layer
-    const maxLayerH = Math.max(
-      ...[...layers.values()].map((ids) =>
-        ids.reduce((sum, id) => sum + nodeH(id) + ROW_GAP, -ROW_GAP),
-      ),
-      NODE_H,
-    );
-    const svgW = PAD * 2 + (maxRank + 1) * NODE_W + maxRank * COL_GAP;
-    const svgH = PAD * 2 + maxLayerH;
-
-    for (const [r, ids] of layers) {
-      const cx = PAD + NODE_W / 2 + r * (NODE_W + COL_GAP);
-      const layerH = ids.reduce((sum, id) => sum + nodeH(id) + ROW_GAP, -ROW_GAP);
-      let cy = (svgH - layerH) / 2;
-
-      for (const id of ids) {
-        const h = nodeH(id);
-        positions.set(id, { x: cx, y: cy + h / 2, h });
-        cy += h + ROW_GAP;
-      }
-    }
-
-    return { positions, svgW, svgH };
-  } else {
-    // TB — y driven by rank, x by position within layer
-    const maxLayerW = Math.max(
-      ...[...layers.values()].map((ids) => ids.length * (NODE_W + ROW_GAP) - ROW_GAP),
-      NODE_W,
-    );
-    const svgH = PAD * 2 + (maxRank + 1) * NODE_H_D + maxRank * COL_GAP;
-    const svgW = PAD * 2 + maxLayerW;
-
-    for (const [r, ids] of layers) {
-      const cy = PAD + NODE_H_D / 2 + r * (NODE_H_D + COL_GAP);
-      const layerW = ids.length * NODE_W + (ids.length - 1) * ROW_GAP;
-      let cx = (svgW - layerW) / 2 + NODE_W / 2;
-
-      for (const id of ids) {
-        const h = nodeH(id);
-        positions.set(id, { x: cx, y: cy, h });
-        cx += NODE_W + ROW_GAP;
-      }
-    }
-
-    return { positions, svgW, svgH };
-  }
-}
-
-// ─── Edge path ────────────────────────────────────────────────────────────────
-
-function edgePath(
-  src: NodePos,
-  tgt: NodePos,
-  direction: "LR" | "TB",
-): string {
-  if (direction === "LR") {
-    const x1 = src.x + NODE_W / 2;
-    const y1 = src.y;
-    const x2 = tgt.x - NODE_W / 2;
-    const y2 = tgt.y;
-    const cp = COL_GAP * 0.55;
-    return `M${x1},${y1} C${x1 + cp},${y1} ${x2 - cp},${y2} ${x2},${y2}`;
-  } else {
-    const x1 = src.x;
-    const y1 = src.y + src.h / 2;
-    const x2 = tgt.x;
-    const y2 = tgt.y - tgt.h / 2;
-    const cp = COL_GAP * 0.55;
-    return `M${x1},${y1} C${x1},${y1 + cp} ${x2},${y2 - cp} ${x2},${y2}`;
-  }
-}
-
 // ─── Component ────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -197,7 +40,7 @@ export default function DiagramCard({ artifact }: Props) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
   const { positions, svgW, svgH } = useMemo(
-    () => computeLayout(nodes, edges, direction),
+    () => computeDiagramLayout(nodes, edges, direction),
     [nodes, edges, direction],
   );
 
@@ -219,13 +62,14 @@ export default function DiagramCard({ artifact }: Props) {
         <span className="text-[11px] font-medium truncate" style={{ color: "rgba(255,255,255,0.55)" }}>{title}</span>
       </div>
 
-      {/* SVG canvas */}
+      {/* SVG canvas — render at natural intrinsic size so text stays readable.
+          The element wrapper width is sized to match svgW (see canvas store). */}
       <div className="overflow-auto">
         <svg
           viewBox={`0 0 ${svgW} ${svgH}`}
           width={svgW}
           height={svgH}
-          style={{ display: "block", maxWidth: "100%" }}
+          style={{ display: "block" }}
         >
           <defs>
             <marker
@@ -246,7 +90,7 @@ export default function DiagramCard({ artifact }: Props) {
             const tgt = positions.get(e.to);
             if (!src || !tgt) return null;
 
-            const pathD  = edgePath(src, tgt, direction);
+            const pathD  = diagramEdgePath(src, tgt, direction);
             const midX   = (src.x + tgt.x) / 2;
             const midY   = (src.y + tgt.y) / 2;
             const isHovered =

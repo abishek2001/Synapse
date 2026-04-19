@@ -35,8 +35,8 @@ The tutor can place any combination of these artifacts on the canvas:
 | **notation** | canvas_generate_notation | LaTeX equations, derivations, proofs, formulas. Rendered with KaTeX. Use for anything with symbols, summations, integrals, matrices. |
 | **flashcard** | flashcard_create | Active recall — testing if the student knows definitions, facts, or can apply concepts. Use after introducing a concept. |
 | **lookup** | knowledge_lookup | Pulling precise quotes or definitions from the student's uploaded documents. Only useful when documents are uploaded. |
-| **simulation** | canvas_generate_simulation | Physics, chemistry, biology, or math concepts that benefit from interactive 3D animation (pendulums, orbits, waves, molecules, electric fields, projectile motion). Use when the concept is dynamic/moving in nature. |
-| **render3d** | canvas_generate_3d_render | Interactive 3D scene written in Three.js — anatomy (heart, brain, lungs), crystal structures, molecular geometry, 3D math shapes, orbital mechanics. LLM writes the Three.js scene code directly. Use when the concept benefits from a precise, hand-crafted 3D visual rather than a generic physics sim. |
+| **simulation** | canvas_generate_simulation | Physics, chemistry, biology, or math concepts that benefit from interactive 3D animation of *behaviour* (pendulums, orbits, waves, molecules in motion, electric fields, projectile motion). Use when the concept is dynamic/moving in nature. |
+| **render3d** | canvas_generate_3d_render | STRONGLY PREFERRED whenever the topic is a real 3D structure or object: anatomy (heart, lungs, respiratory system, brain, kidneys, skeleton, eye), cells/organelles, molecules, crystal lattices, planets, mechanical assemblies, architecture, 3D geometry. The tutor supplies a sketchfab_query (e.g. "human respiratory system anatomy") and the server resolves it to a real Sketchfab model; if Sketchfab has no match, the tutor falls back to a Three.js scene that loads an open-source GLB/OBJ, or finally to hand-written Three.js. Pick this over diagram whenever the concept is a 3D thing rather than a 2D process. |
 
 ## DECISION ACTIONS
 
@@ -52,25 +52,26 @@ The tutor can place any combination of these artifacts on the canvas:
 
 For each action, choose the best combination of suggestedArtifacts:
 
-- **explain** → diagram or visual (to illustrate), optionally notation (for formulas)
-- **visualize** → diagram (if entities/relationships), graph (if mathematical), simulation (if dynamic/physical), render3d (if precise 3D anatomy/structure/geometry), visual (if free-form)
+- **explain** → render3d (if the topic is a 3D anatomical/structural/molecular object), diagram or visual (otherwise), optionally notation (for formulas)
+- **visualize** → render3d (FIRST CHOICE for anatomy/organs/cells/molecules/crystals/planets/3D geometry), diagram (entities/relationships), graph (mathematical), simulation (dynamic physics), visual (free-form)
 - **quiz** → flashcard (always), optionally lookup (if doc-grounded)
 - **simplify** → visual or diagram (simpler version), optionally flashcard
-- **deep_dive** → notation + diagram + graph + simulation (pick what's most relevant to the sub-topic)
-- **summarize** → diagram (concept map) or notation (key formulas)
+- **deep_dive** → render3d + notation + diagram + simulation (pick what's most relevant — for anatomy/biology topics, render3d is mandatory)
+- **summarize** → diagram (concept map) or notation (key formulas), or render3d (for anatomy modules)
 - **advance** → nothing, or a single diagram summarizing the completed module
 
 ## TRIGGER RULES
 
 1. Student says "show me" / "draw" / "diagram" / "visualize" / "can I see" → "visualize"
-2. Student mentions physics/motion/waves/orbits/molecules → consider "simulation" in suggestedArtifacts
-3. Student asks about formulas / equations / math → include "notation" in suggestedArtifacts
-4. Student says "quiz me" / "test me" / "flashcards" → "quiz"
-5. Student says "next" / "move on" / "I get it" / "got it" → "advance"
-6. Student says "why" / "how exactly" / "go deeper" → "deep_dive"
-7. Confusion signals > 2 → "simplify"
-8. After 3+ explanation exchanges without confusion → "quiz"
-9. After completing a module → "summarize"
+2. Topic involves an organ system / anatomy / cell / organelle / molecule / crystal / planet / 3D geometry / mechanical assembly → ALWAYS include "render3d" in suggestedArtifacts (e.g. respiratory system, heart, brain, kidneys, eye, DNA, water molecule, NaCl lattice, solar system). Prefer render3d over diagram for these.
+3. Student mentions physics/motion/waves/orbits → consider "simulation" in suggestedArtifacts
+4. Student asks about formulas / equations / math → include "notation" in suggestedArtifacts
+5. Student says "quiz me" / "test me" / "flashcards" → "quiz"
+6. Student says "next" / "move on" / "I get it" / "got it" → "advance"
+7. Student says "why" / "how exactly" / "go deeper" → "deep_dive"
+8. Confusion signals > 2 → "simplify"
+9. After 3+ explanation exchanges without confusion → "quiz"
+10. After completing a module → "summarize"
 
 Output ONLY valid JSON:
 {

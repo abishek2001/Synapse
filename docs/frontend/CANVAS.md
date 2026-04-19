@@ -50,7 +50,7 @@ All canvas objects are `CanvasElement` with a `type` field:
 | `flashcard` | `FlashcardCard` | 3D flip, known/review tracking. Only type rendered inside a card box |
 | `lookup` | `LookupCard` | Semantic search excerpts from uploaded docs |
 | `simulation` | `SimulationCard` | Self-contained HTML/JS in a sandboxed iframe, fixed `380px` height |
-| `render3d` | `Render3DCard` | Interactive 3D scene, fixed `420px` height. Two modes: **code** — sandboxed `srcdoc` with Three.js r160 + OrbitControls pre-booted (AI writes scene JS; may use `OBJLoader`/`GLTFLoader` to fetch external models from CORS-enabled URLs); **embed_url** — renders a Sketchfab or other hosted viewer directly as an `<iframe src>` |
+| `render3d` | `Render3DCard` | Interactive 3D object/structure viewer, fixed `420px` height. **Source priority**: **TIER 1 `sketchfab_query`** — the AI passes a search phrase (e.g. "human respiratory system anatomy") and the server (`src/lib/sketchfab.ts → resolveSketchfabModel`) hits the Sketchfab v3 search API, picks the top public/embeddable result, and stamps the verified `embed_url` onto the artifact (rendered as `<iframe src>`). The AI never supplies a Sketchfab UID directly — that path led to hallucinated 404s. **TIER 2 `code` + loader** — sandboxed `srcdoc` with Three.js r160 + OrbitControls; AI imports `GLTFLoader` / `OBJLoader` from `three/addons/...` and pulls a `.glb`/`.obj` from a CORS-enabled host (raw.githubusercontent.com, cdn.jsdelivr.net/gh, modelviewer.dev, KhronosGroup glTF-Sample-Models, threejs.org/examples/models). **TIER 3 `code` only** — hand-written Three.js geometry as last resort. If Sketchfab returns no match, `handleGenerate3DRender` throws and the orchestrator forwards the failure to the model so it can retry the same call with `code`. |
 
 **Visual styles** (`VisualArtifact.style`):
 
@@ -111,6 +111,8 @@ When `variables` is set, `GraphCard` renders a slider bank above the chart. Slid
 ```
 
 `h` is set automatically after the first render via `ResizeObserver` inside `ElementCard`. `GroupBoundary`, `computeGroupBounds`, hit-testing, and fit-all all prefer `el.h` and fall back to `estimateElemH(el.type)` until the measurement arrives. This means group boxes always match the true rendered height regardless of content length or zoom level.
+
+**Diagram element sizing** — `diagram` artifacts are an exception to the fixed `ELEM_WIDTHS` rule. Their element width expands to match the diagram's natural intrinsic SVG width (computed by `getDiagramElementSize` in `src/lib/diagram-layout.ts`) so flowcharts with many ranks/columns aren't shrunk by `maxWidth: 100%` — keeping node fonts at their designed 12px instead of scaling down with the SVG. The default `ELEM_WIDTHS.diagram` (520) acts as a minimum width, and the natural size is applied at element creation (`layoutArtifacts`) and again when a pending element resolves (`resolvePendingElement`).
 
 ---
 

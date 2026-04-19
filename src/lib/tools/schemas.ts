@@ -189,49 +189,80 @@ export const CANVAS_TOOLS: ChatCompletionTool[] = [
     function: {
       name: "canvas_generate_3d_render",
       description:
-        "Generate an interactive 3D render on the canvas. Use for any 3D visualization: anatomy (heart, lungs, brain, bones, veins), physics (projectile motion, orbital mechanics, waves), chemistry (molecular bonds, crystal lattices, chiral structures), 3D geometry, and more. The scene runs in Three.js — the user can rotate, zoom, and pan freely.",
+        "Generate an interactive 3D render on the canvas. STRONGLY PREFERRED for anything that has real spatial structure: anatomy (heart, lungs, respiratory system, brain, kidneys, bones, eye), cells/organelles, chemistry (molecules, crystal lattices, protein structures), physics (orbits, projectiles, fields), 3D geometry, mechanical assemblies, planets, and architecture. Whenever the topic is a 3D *thing* rather than a 2D process, choose this tool over canvas_generate_diagram or canvas_generate_visual.\n\nSOURCE PRIORITY — try these in order, fall through to the next only if the previous is unavailable:\n  1. `sketchfab_query` — server searches Sketchfab and embeds the best matching real model. Highest quality, no code needed. NEVER try to construct a Sketchfab URL yourself; just supply the search phrase.\n  2. `code` with GLTFLoader/OBJLoader pulling a model from a CORS-enabled open-source URL (raw.githubusercontent.com, cdn.jsdelivr.net/gh, modelviewer.dev sample assets, KhronosGroup glTF-Sample-Models, Three.js examples).\n  3. `code` with hand-written Three.js geometry — only if no real model is available.\nExactly one of `sketchfab_query` or `code` MUST be supplied.\nIf the server cannot find a Sketchfab match for your query, the tool call returns an error — when that happens, retry the same call with `code` instead.",
       parameters: {
         type: "object",
         properties: {
           title: {
             type: "string",
-            description: "Short display title, e.g. 'Human Heart Anatomy', 'DNA Double Helix'",
+            description: "Short display title, e.g. 'Human Heart Anatomy', 'Respiratory System', 'DNA Double Helix'",
           },
           topic: {
             type: "string",
-            description: "What is being rendered — used for the loading label",
+            description: "What is being rendered — used for the loading label and accessibility",
+          },
+          sketchfab_query: {
+            type: "string",
+            description: `(TIER 1 — PREFERRED) A short, specific search phrase (2-6 words) describing the 3D object you want. The server hits the Sketchfab search API, picks the best public, embeddable, popular model and renders it in an iframe — you do NOT need to know any UIDs or URLs.
+
+GOOD QUERIES (specific + anatomically/scientifically accurate):
+- "human respiratory system anatomy"
+- "human heart cross section"
+- "DNA double helix structure"
+- "water molecule h2o"
+- "solar system planets"
+- "neuron cell anatomy"
+- "skeletal system human"
+- "kidney anatomy cross section"
+
+BAD QUERIES (too vague — search noise):
+- "biology" / "science" / "anatomy" / "molecule"
+- "cool 3d model"
+
+If no good match exists for the topic (rare scientific concepts, abstract math, custom physics setups), DO NOT use this field — fall through to TIER 2 (code with a loader) or TIER 3 (hand-written code).`,
           },
           code: {
             type: "string",
-            description: `Three.js JavaScript that builds the 3D scene. The following globals are pre-defined — do NOT redeclare them:
+            description: `(TIER 2 / TIER 3) Three.js JavaScript that builds the 3D scene. Required if \`sketchfab_query\` is not set, OR when retrying after a failed sketchfab_query. The following globals are pre-defined — do NOT redeclare them:
 - \`scene\` (THREE.Scene) — add all objects here
 - \`camera\` (THREE.PerspectiveCamera) — positioned at (0, 0.3*d, d) where d = camera_distance; reposition if needed
 - \`THREE\` — full Three.js r160 namespace
 - \`controls\` (OrbitControls) — rotate/zoom/pan already wired
 - \`renderer\` (THREE.WebGLRenderer) — shadow-maps enabled
 
+You can import addons via the bare-specifier importmap that's already injected: \`import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'\`, OBJLoader, MTLLoader, FBXLoader, DRACOLoader.
+
+TIER 2 — LOAD AN OPEN-SOURCE MODEL:
+- Prefer real \`.glb\` / \`.gltf\` / \`.obj\` files from CORS-enabled hosts:
+  - \`https://raw.githubusercontent.com/<user>/<repo>/<branch>/<path>.glb\`
+  - \`https://cdn.jsdelivr.net/gh/<user>/<repo>@<branch>/<path>.glb\`
+  - KhronosGroup glTF-Sample-Models (\`https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/<Name>/glTF-Binary/<Name>.glb\`)
+  - Google's \`<model-viewer>\` shared assets (\`https://modelviewer.dev/shared-assets/models/<Name>.glb\`)
+  - Three.js examples (\`https://threejs.org/examples/models/...\`)
+- Pattern: \`new GLTFLoader().load(URL, gltf => { gltf.scene.traverse(o => o.isMesh && (o.castShadow = o.receiveShadow = true)); /* center & scale: */ const box = new THREE.Box3().setFromObject(gltf.scene); const center = box.getCenter(new THREE.Vector3()); const size = box.getSize(new THREE.Vector3()); gltf.scene.position.sub(center); const fit = 3 / Math.max(size.x, size.y, size.z); gltf.scene.scale.setScalar(fit); scene.add(gltf.scene); });\`
+- Only use URLs you are confident exist; never invent paths.
+
+TIER 3 — HAND-WRITE A SCENE (fallback when no real model is reachable):
 Pre-added lights: AmbientLight 0.55, DirectionalLight sun (6,12,8), DirectionalLight blue fill (-6,-3,-6), PointLight violet accent (-5,6,-5).
-
 Optionally define \`function update(t) { ... }\` (t = elapsed seconds) for per-frame animation (rotation, pulsing, physics loops, etc.).
-
 Style guidance:
-- Anatomy: MeshPhongMaterial with realistic colors + slight transparency (opacity 0.85-0.95) for outer shells; add inner structures with lower opacity
-- Chemistry: SphereGeometry atoms + CylinderGeometry bonds; use CPK colors (C=0x404040, H=0xffffff, O=0xff3333, N=0x4444ff, S=0xffff33)
-- Physics: use update(t) for motion; add trajectory lines with THREE.Line + BufferGeometry
-- Add a subtle grid helper or plane for spatial reference when appropriate
+- Anatomy: MeshPhongMaterial with realistic colors + slight transparency (opacity 0.85-0.95) for outer shells; add inner structures with lower opacity. Use Group hierarchies and label parts with userData.name.
+- Chemistry: SphereGeometry atoms + CylinderGeometry bonds; use CPK colors (C=0x404040, H=0xffffff, O=0xff3333, N=0x4444ff, S=0xffff33).
+- Physics: use update(t) for motion; add trajectory lines with THREE.Line + BufferGeometry.
+- Add a subtle grid helper or plane for spatial reference when appropriate.
 
-Example (minimal): \`const mesh = new THREE.Mesh(new THREE.SphereGeometry(1,32,32), new THREE.MeshPhongMaterial({color:0x7c3aed,shininess:80})); scene.add(mesh); function update(t){mesh.rotation.y=t;}\``,
+Example (TIER 3 minimal): \`const mesh = new THREE.Mesh(new THREE.SphereGeometry(1,32,32), new THREE.MeshPhongMaterial({color:0x7c3aed,shininess:80})); scene.add(mesh); function update(t){mesh.rotation.y=t;}\``,
           },
           camera_distance: {
             type: "number",
-            description: "Distance of camera from origin. Default 5. Use 2-3 for small molecular models, 5-8 for anatomy, 10-20 for large structures or physics trajectories.",
+            description: "Distance of camera from origin (code mode only). Default 5. Use 2-3 for small molecular models, 5-8 for anatomy, 10-20 for large structures or physics trajectories.",
           },
           bg_color: {
             type: "string",
-            description: "Hex background color. Default '#0a0b14' (dark navy). Use '#0f172a' for deep blue, '#111827' for dark gray. Prefer dark backgrounds for 3D renders.",
+            description: "Hex background color (code mode only). Default '#0a0b14' (dark navy). Use '#0f172a' for deep blue, '#111827' for dark gray. Prefer dark backgrounds for 3D renders.",
           },
         },
-        required: ["title", "topic", "code"],
+        required: ["title", "topic"],
       },
     },
   },

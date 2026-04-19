@@ -10,7 +10,9 @@ import type {
   LookupArtifact,
   SimulationArtifact,
   Render3DArtifact,
+  DiagramArtifact,
 } from "@/lib/tools/types";
+import { getDiagramElementSize } from "@/lib/diagram-layout";
 
 // ─── Element sizing ────────────────────────────────────────────────────────────
 
@@ -43,6 +45,30 @@ const ELEM_H_EST: Record<string, number> = {
 
 export function estimateElemH(type: string): number {
   return ELEM_H_EST[type] ?? 240;
+}
+
+/**
+ * Resolve the element width for an artifact. Most types use the fixed
+ * ELEM_WIDTHS value, but diagrams expand to their natural intrinsic width
+ * so flowchart fonts stay readable instead of being scaled down to fit.
+ */
+export function resolveArtifactWidth(art: CanvasArtifact): number {
+  const base = ELEM_WIDTHS[art.type] ?? 360;
+  if (art.type === "diagram") {
+    const { w } = getDiagramElementSize(art as DiagramArtifact);
+    return Math.max(base, w);
+  }
+  return base;
+}
+
+/** Same as resolveArtifactWidth but for height estimates (layout only). */
+export function resolveArtifactHeight(art: CanvasArtifact): number {
+  const base = estimateElemH(art.type);
+  if (art.type === "diagram") {
+    const { h } = getDiagramElementSize(art as DiagramArtifact);
+    return Math.max(base, h);
+  }
+  return base;
 }
 
 const ELEM_GAP = 24; // px gap between elements in the same group
@@ -266,8 +292,8 @@ function layoutArtifacts(
 
   for (let i = 0; i < artifacts.length; i++) {
     const art = artifacts[i];
-    const w = ELEM_WIDTHS[art.type] ?? 360;
-    const h = estimateElemH(art.type);
+    const w = resolveArtifactWidth(art);
+    const h = resolveArtifactHeight(art);
 
     result.push({
       id: `el-${uid()}`,
@@ -1239,11 +1265,20 @@ export const useCanvasStore = create<CanvasState>()(
 
   resolvePendingElement: (id, artifact) =>
     set((s) => ({
-      elements: s.elements.map((e) =>
-        e.id === id
-          ? { ...e, pending: false, artifact, type: artifact.type as ElementType }
-          : e,
-      ),
+      elements: s.elements.map((e) => {
+        if (e.id !== id) return e;
+        const next: CanvasElement = {
+          ...e,
+          pending: false,
+          artifact,
+          type: artifact.type as ElementType,
+        };
+        // Diagrams expand to their natural intrinsic width so fonts stay readable.
+        if (artifact.type === "diagram") {
+          next.w = Math.max(e.w, resolveArtifactWidth(artifact));
+        }
+        return next;
+      }),
     })),
 
   moveElement: (id, x, y) =>
