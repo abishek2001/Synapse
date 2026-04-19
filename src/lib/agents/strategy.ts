@@ -54,14 +54,30 @@ The tutor can place any combination of these artifacts on the canvas:
 
 For each concept, ask these questions in order and let the answers drive the ranking:
 
-1. **Does it move?** Is the essence a process unfolding in time/space (motion, propagation, transformation)? → **simulation** is primary.
-2. **Is its 3D shape part of the answer?** Would rotating it teach something a 2D picture can't (anatomy, organelle layout, molecular geometry, crystal packing)? → **render3d** is primary.
+1. **Does it move?** Is the essence a process unfolding in time/space (motion, propagation, transformation)? → **simulation** is primary. This applies broadly: physics motion, chemistry reactions/diffusion, biology processes (blood flow, neuron firing, cell division, peristalsis), engineering mechanisms in action, algorithms stepping through state, economic/population dynamics. If the student needs to SEE it change to get it, simulation is primary.
+2. **Is its 3D shape part of the answer?** Would rotating, slicing, or seeing it from multiple angles teach something a 2D picture cannot? → **render3d** is primary. This is true whenever the topic IS a real-world 3D object or spatial structure, **regardless of how the module is framed** ("overview", "functions", "introduction", "anatomy of…", "structure of…" all qualify). Default-yes categories:
+   - **Any human / animal organ or organ system** (respiratory, cardiovascular, digestive, nervous, endocrine, reproductive, musculoskeletal, urinary, lymphatic, sensory) — at every zoom level (whole system, single organ, tissue, cell).
+   - **Cells and organelles**, microorganisms, viruses.
+   - **Molecules** with non-trivial geometry (proteins, DNA, complex organics), **crystal lattices**, **chemical structures**.
+   - **Astronomical bodies** and systems (planets, moons, solar system layout, galaxies).
+   - **Geology / earth science** structures (tectonic plates, volcanoes, rock layers, cave systems).
+   - **Mechanical assemblies, engines, gears, robotic arms, architectural structures, buildings, vehicles**.
+   - **3D math surfaces** (paraboloids, manifolds, vector fields in 3D).
+   - **Archaeological / historical artifacts** where shape matters (pyramids, statues, fossils).
+   For these categories, render3d should be primary even if the module is framed around "function" or "overview" — pair it with diagram for any flow/process the function involves.
 3. **Is the insight an equation?** Does understanding hinge on a symbolic relationship (force law, conservation, derivation)? → **notation** is primary or strong complement.
 4. **Is it a function or distribution?** Does it have a curve worth plotting (any f(x), data trends, distributions)? → **graph** is primary or strong complement.
-5. **Is it a system of discrete parts with named relationships?** Architecture, request flow, state machine, taxonomy? → **diagram** is primary. *Only* if the parts are genuinely discrete and the edges carry real meaning — not just vocabulary words connected by arrows.
+5. **Is it a system of discrete parts with named relationships?** Architecture, request flow, state machine, taxonomy? → **diagram** is primary. *Only* if the parts are genuinely discrete and the edges carry real meaning — not just vocabulary words connected by arrows. **Important:** if the parts are physical 3D objects (organs, planets, machine components), render3d should usually lead and diagram should complement — don't let "discrete parts" alone push diagram above render3d for spatial topics.
 6. **Has the concept already been taught and you want recall?** → **flashcard**.
 
-A concept can score on multiple questions — that's fine, output them in priority order (e.g. projectile motion = simulation primary, notation complement; respiratory system = render3d primary, diagram complement for the air-flow path).
+A concept can score on multiple questions — that's fine, output them in priority order. Examples:
+- Projectile motion → \`["simulation", "notation"]\` (motion + range equation).
+- Respiratory system overview → \`["render3d", "diagram"]\` (3D lungs/airways + air-path flow).
+- Male reproductive system overview → \`["render3d", "diagram"]\` (3D anatomy + organ-function flow).
+- Heart and circulation → \`["render3d", "simulation", "diagram"]\` (3D heart + blood flow animation + circuit diagram).
+- Solar system → \`["render3d", "simulation"]\` (3D layout + orbital motion).
+- DNA structure → \`["render3d", "notation"]\` (double helix + base-pairing rules).
+- Internal combustion engine → \`["render3d", "simulation"]\` (3D engine + 4-stroke cycle in motion).
 
 ## ANTI-PATTERNS (what NOT to do)
 
@@ -71,10 +87,19 @@ These are the bad picks the previous heuristics produced. Avoid them:
 - ❌ **"Pendulum"** → diagram of \`Bob → String → Pivot\`. ✅ Do: \`["simulation", "notation"]\` — swinging pendulum + θ(t) = θ₀cos(ωt).
 - ❌ **"Wave interference"** → diagram of \`Source 1 + Source 2 → Pattern\`. ✅ Do: \`["simulation"]\` — animated overlapping wavefronts.
 - ❌ **"Orbital mechanics"** → diagram of \`Planet → Orbit → Sun\`. ✅ Do: \`["simulation", "notation"]\` — animated ellipse + Kepler's law.
-- ❌ **"Respiratory system overview"** → diagram of \`Nose → Trachea → Lungs\` only. ✅ Do: \`["render3d", "diagram"]\` — 3D lungs/airways + a flow diagram for the air-path process.
+- ❌ **Any anatomy / organ-system "overview" or "functions" module** (respiratory, reproductive, digestive, cardiovascular, nervous, urinary, endocrine, musculoskeletal, etc.) → diagram of \`Part A → Part B → Part C\` only. ✅ Do: \`["render3d", "diagram"]\` — 3D anatomical model + a flow diagram for the process. Words like "overview", "introduction", "functions of…" do NOT downgrade render3d for spatial topics.
+- ❌ **Cell biology** (mitochondria, neuron, animal cell) → diagram with labeled boxes only. ✅ Do: \`["render3d", "diagram"]\` — rotatable 3D cell/organelle + labeled diagram for parts.
+- ❌ **Solar system / planet structure / galaxy** → diagram of \`Sun → Mercury → Venus → …\`. ✅ Do: \`["render3d", "simulation"]\` — 3D scale layout + orbital animation.
+- ❌ **Molecular structure** (DNA, water, methane, proteins) → diagram of \`Atom → Bond → Molecule\`. ✅ Do: \`["render3d", "notation"]\` — 3D molecule + bonding/structural notation.
+- ❌ **Mechanical systems** (engines, gears, robotic arms, bridges) static "parts list" diagram. ✅ Do: \`["render3d", "simulation"]\` — 3D assembly + animated operation cycle.
+- ❌ **Geological structures** (volcano, tectonic plates, cave) flat cross-section diagram only. ✅ Do: \`["render3d", "diagram"]\` — 3D structure + process/flow diagram.
 - ❌ **"Newton's first law"** → render3d of a ball. The insight is the *principle*, not the object. ✅ Do: \`["notation", "simulation"]\` — F=ma + a brief inertia simulation.
 - ❌ **"Photosynthesis"** as a chemical equation → render3d of a leaf. The insight is the reaction. ✅ Do: \`["notation", "diagram"]\` — balanced equation + light/dark reactions diagram.
 - ❌ Listing every artifact \`["diagram","render3d","simulation","notation","graph"]\` because it's "comprehensive". ✅ Do: rank ruthlessly. 1-2 artifacts that nail the concept beats 5 mediocre ones.
+
+## DOMAIN-AGNOSTIC RULE OF THUMB FOR render3d
+
+Before defaulting to diagram, ask: **"Is the thing I'm explaining a real, tangible 3D structure that exists in space?"** If yes — across ANY domain (biology, chemistry, astronomy, geology, engineering, mechanical, architecture, archaeology, math surfaces) — render3d should lead and diagram/notation/simulation complement. Diagrams are for **abstract relationships and processes**, not for substituting when the topic is inherently spatial. The framing of the module ("overview", "introduction", "functions", "anatomy", "structure") is irrelevant to this judgement — only the nature of the underlying concept matters.
 
 ## TRIGGER RULES (action selection — separate from artifact selection)
 

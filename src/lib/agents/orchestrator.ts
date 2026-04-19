@@ -311,12 +311,20 @@ The pedagogical layer matched this concept against six characteristics (does it 
         console.error(`Tool ${fnName} failed:`, errMsg);
         const pendingId = pendingIdMap.get(toolCall.id);
         if (pendingId) {
-          // Drop the skeleton so the user doesn't see a forever-loading card
+          // Tell the client to drop the skeleton entirely. Earlier we fabricated a
+          // fake "lookup" artifact here so the resolver had something to attach,
+          // but that misrendered as a knowledge-search card with the internal
+          // tool name as the query (e.g. "No relevant excerpts found for
+          // canvas_generate_simulation"). A dedicated error event keeps the
+          // failure invisible to the user while still surfacing in logs.
+          const artifactType = toolNameToArtifactType(fnName) ?? "artifact";
           onEvent?.({
-            type: "artifact_done",
+            type: "artifact_error",
             pendingId,
-            artifact: { id: pendingId, type: "lookup", title: "Failed to render", status: "error", query: fnName, results: [] } as CanvasArtifact,
+            artifactType,
+            reason: errMsg,
           });
+          pendingIdMap.delete(toolCall.id);
         }
         messages.push({
           role: "tool",

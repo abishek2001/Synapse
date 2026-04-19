@@ -31,6 +31,7 @@ Primary AI tutor endpoint. Returns **Server-Sent Events** (`text/event-stream`).
 data: { "type": "thinking", "message": "string" }
 data: { "type": "artifact_pending", "pendingId": "string", "artifactType": "string", "title": "string" }
 data: { "type": "artifact_done", "pendingId": "string", "artifact": CanvasArtifact }
+data: { "type": "artifact_error", "pendingId": "string", "artifactType": "string", "reason": "string" }
 data: { "type": "tutor_response", "moduleTitle": "string", "writtenText": "string", "spokenText": "string", "questionsForUser": ["string", ...] }
 data: { "type": "follow_up", "questions": ["string", ...] }
 data: { "type": "pause_for_input" }
@@ -49,7 +50,8 @@ data: { "type": "error", "message": "string" }
 **Flow per turn**:
 1. `thinking` — strategy agent is deciding action
 2. One `artifact_pending` per tool call (before execution) → client places skeleton on canvas
-3. One `artifact_done` per tool call (after execution) → client resolves skeleton → real artifact
+3. One `artifact_done` per successful tool call (after execution) → client resolves skeleton → real artifact
+   - On tool failure (timeout, model error) the server emits `artifact_error` instead. The client removes the skeleton silently and shows a brief toast — it does NOT substitute a placeholder lookup card on the canvas.
 4. `tutor_response` — structured text: writtenText to canvas/transcript, spokenText to TTS, questionsForUser to chips
 5. `follow_up` — 2-3 strategy-suggested next questions (tier-2 neutral chips)
 6. `done` — includes contextPatch for session state update

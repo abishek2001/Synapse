@@ -84,6 +84,7 @@ export async function POST(req: NextRequest) {
         const summary =
           event.type === "artifact_pending" ? `${event.artifactType} "${event.title}"`
           : event.type === "artifact_done"   ? `id=${event.pendingId}`
+          : event.type === "artifact_error"  ? `${event.artifactType} id=${event.pendingId} reason=${event.reason}`
           : event.type === "thinking"        ? event.message
           : event.type === "error"           ? event.message
           : "";

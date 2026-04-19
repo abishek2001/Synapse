@@ -61,7 +61,7 @@ export async function handleToolCall(
     case "canvas_generate_simulation":
       return handleGenerateSimulation(args, opts);
     case "canvas_generate_3d_render":
-      return handleGenerate3DRender(args);
+      return handleGenerate3DRender(args, opts);
     default:
       return { result: `Unknown tool: ${name}` };
   }
@@ -309,15 +309,24 @@ async function handleGenerateSimulation(
 
   let raw = "";
   if (isGpt5Family) {
+    // Code generation is heavier than a normal chat turn. The shared rawClient
+    // ships with a 60s timeout — fine for chat, but reasoning + a multi-hundred
+    // line Three.js scene routinely exceeds it. Override the timeout per-call
+    // (the OpenAI SDK accepts `timeout` in the request options) so a slow
+    // simulation gen doesn't get killed mid-stream and substituted with an
+    // error toast. We keep a hard ceiling well under the user's patience.
     const res = await openai.responses.create({
       model,
       instructions: SIMULATION_SYSTEM_PROMPT,
       input: userPrompt,
       reasoning: { effort: "low" },
       text: { verbosity: "high" },
-      // Reasoning + a full HTML simulation easily uses 4-6k tokens; budget headroom.
-      max_output_tokens: 12000,
-    }, { signal: opts.signal });
+      // gpt-5-mini and similarly sized models: 6k tokens is plenty for a
+      // ~200-line scene (the gold-standard examples are ~80 lines each), and
+      // a smaller cap helps the model finish in time. Larger / frontier
+      // models can still hit this ceiling without truncation in practice.
+      max_output_tokens: 6000,
+    }, { signal: opts.signal, timeout: 180_000 });
     raw = res.output_text ?? "";
   } else {
     const res = await chatCompletion(
@@ -355,6 +364,7 @@ async function handleGenerateSimulation(
 
 async function handleGenerate3DRender(
   args: Record<string, unknown>,
+  opts: ToolCallOpts = {},
 ): Promise<{ artifact: Render3DArtifact; result: string }> {
   const {
     title,
@@ -424,6 +434,10 @@ async function handleGenerate3DRender(
   // of temperature. Older models still go through chat.completions with temperature.
   let raw = "";
   if (isGpt5Family) {
+    // See handleGenerateSimulation for why we override timeout per-call: the
+    // shared rawClient is capped at 60s, which is too tight for reasoning +
+    // a multi-hundred line Three.js scene. Forwarding the abort signal keeps
+    // the user's Stop button responsive.
     const res = await openai.responses.create({
       model,
       instructions: RENDER3D_SYSTEM_PROMPT,
@@ -434,9 +448,11 @@ async function handleGenerate3DRender(
       // High verbosity → richer, more detailed code (matches the gold-standard
       // density). For code generation this is the recommended setting.
       text: { verbosity: "high" },
-      // Reasoning + a 100-200-line scene easily uses 3-5k tokens; budget headroom.
-      max_output_tokens: 8000,
-    });
+      // 6k matches simulation handler — enough for the gold-standard density
+      // (gold examples are ~80 lines each), and small enough that gpt-5-mini
+      // can finish well inside our 180s timeout.
+      max_output_tokens: 6000,
+    }, { signal: opts.signal, timeout: 180_000 });
     raw = res.output_text ?? "";
   } else {
     const res = await openai.chat.completions.create({
@@ -447,7 +463,7 @@ async function handleGenerate3DRender(
       ],
       temperature: 0.4,
       max_tokens: 4096,
-    });
+    }, { signal: opts.signal });
     raw = res.choices[0]?.message?.content ?? "";
   }
 

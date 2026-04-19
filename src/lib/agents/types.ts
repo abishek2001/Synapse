@@ -56,6 +56,7 @@ export type StreamEvent =
   | { type: "thinking"; message: string }
   | { type: "artifact_pending"; pendingId: string; artifactType: string; title: string }
   | { type: "artifact_done"; pendingId: string; artifact: CanvasArtifact }
+  | { type: "artifact_error"; pendingId: string; artifactType: string; reason: string }
   | {
       type: "tutor_response";
       moduleTitle: string;    // 3-6 word topic label for the group heading

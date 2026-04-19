@@ -31,12 +31,22 @@ interface TeachingDecision {
 
 The strategy prompt no longer maps "topic area → artifact". It applies a 6-question rubric to each concept and outputs `suggestedArtifacts` as an **ordered priority list, best first**:
 
-1. Does it move? (process unfolding in time/space) → `simulation`
-2. Is its 3D shape part of the answer? → `render3d`
+1. Does it move? (process unfolding in time/space) → `simulation` — applies broadly: physics motion, chemistry reactions/diffusion, biology processes (blood flow, neuron firing, peristalsis), engineering mechanisms in action, algorithms stepping through state, economic/population dynamics
+2. Is its 3D shape part of the answer? → `render3d` — **default-yes for any topic that IS a real-world 3D structure, regardless of how the module is framed** ("overview", "functions", "introduction", "anatomy of…", "structure of…" all qualify). Categories that should default to render3d-primary:
+   - Any human/animal organ or organ system (respiratory, cardiovascular, digestive, nervous, endocrine, reproductive, musculoskeletal, urinary, lymphatic, sensory) at every zoom level
+   - Cells, organelles, microorganisms, viruses
+   - Molecules with non-trivial geometry, crystal lattices
+   - Astronomical bodies and systems (planets, moons, solar system, galaxies)
+   - Geology / earth-science structures (volcanoes, tectonics, caves, rock layers)
+   - Mechanical assemblies, engines, gears, robotic arms, architecture, vehicles
+   - 3D math surfaces
+   - Archaeological / historical artifacts where shape matters
 3. Is the insight an equation? → `notation`
 4. Is it a function or distribution? → `graph`
-5. Does it actually decompose into discrete named parts with meaningful edges? → `diagram`
+5. Does it actually decompose into discrete named parts with meaningful edges? → `diagram` — but if the parts are physical 3D objects, render3d should lead and diagram should complement
 6. Already taught and we want recall? → `flashcard`
+
+**Domain-agnostic rule of thumb for render3d:** before defaulting to diagram, ask *"is the thing a real, tangible 3D structure that exists in space?"* — if yes (across any domain), render3d leads and diagram/notation/simulation complement.
 
 A concept can score on multiple questions — they're listed in priority order, not exclusively. Common patterns:
 
@@ -46,6 +56,11 @@ A concept can score on multiple questions — they're listed in priority order, 
 | Pendulum | `["simulation", "notation"]` | Swing animation; θ(t) = θ₀cos(ωt) |
 | Wave interference | `["simulation"]` | Overlapping wavefronts — pure animation |
 | Respiratory system overview | `["render3d", "diagram"]` | 3D lungs/airways; air-path flow as complement |
+| Male reproductive system overview | `["render3d", "diagram"]` | 3D anatomy + organ-function flow |
+| Heart and circulation | `["render3d", "simulation", "diagram"]` | 3D heart + blood flow animation + circuit diagram |
+| Solar system | `["render3d", "simulation"]` | 3D layout + orbital motion |
+| DNA structure | `["render3d", "notation"]` | Double helix + base-pairing rules |
+| Internal combustion engine | `["render3d", "simulation"]` | 3D engine + 4-stroke cycle in motion |
 | Newton's first law | `["notation", "simulation"]` | The principle is the equation; brief inertia sim |
 | Photosynthesis (chemistry) | `["notation", "diagram"]` | Balanced equation; light/dark reactions diagram |
 | Neural network architecture | `["diagram", "notation"]` | Discrete layers with real edges; activation math |
@@ -65,6 +80,12 @@ Action selection is **independent** of artifact selection:
 The strategy prompt explicitly enumerates these to suppress them:
 
 - ❌ Projectile motion → diagram with boxes `Projectile → Trajectory → Parabola` (glossary, not physics)
+- ❌ Any anatomy/organ-system "overview" or "functions" module (respiratory, reproductive, digestive, cardiovascular, nervous, urinary, endocrine, musculoskeletal, etc.) → flat `Part A → Part B → Part C` diagram only — framing words ("overview", "functions") do NOT downgrade render3d for spatial topics
+- ❌ Cell biology (mitochondria, neuron, animal cell) → labeled-box diagram only (use render3d + diagram)
+- ❌ Solar system / planet structure / galaxy → linear `Sun → Mercury → Venus →…` diagram (use render3d + simulation)
+- ❌ Molecular structure (DNA, water, methane, proteins) → flat `Atom → Bond → Molecule` diagram (use render3d + notation)
+- ❌ Mechanical systems (engines, gears, robotic arms, bridges) → static parts-list diagram (use render3d + simulation)
+- ❌ Geological structures (volcano, tectonic plates, cave) → flat cross-section only (use render3d + diagram)
 - ❌ Newton's first law → render3d of a ball (the insight is the principle)
 - ❌ Photosynthesis → render3d of a leaf (the insight is the reaction)
 - ❌ Listing every artifact for "comprehensiveness"

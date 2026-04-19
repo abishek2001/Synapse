@@ -237,6 +237,28 @@ export function useAIChat() {
           break;
         }
 
+        case "artifact_error": {
+          // Tool execution failed (timeout, model error, etc.). Drop the skeleton
+          // silently — earlier we substituted a fake "lookup" artifact server-side
+          // which leaked the raw tool name onto the canvas. A short toast is enough
+          // for the user to know something didn't render; logs have the full reason.
+          const elId = pendingMap.current.get(event.pendingId);
+          if (elId) {
+            useCanvasStore.getState().removeElement(elId);
+            turnElementIdsRef.current.delete(elId);
+            pendingMap.current.delete(event.pendingId);
+          }
+          const errToastId = `toast-err-${event.pendingId}`;
+          addToast({
+            id: errToastId,
+            artifactType: event.artifactType,
+            title: `Couldn't render ${event.artifactType}`,
+            status: "done",
+          });
+          setTimeout(() => removeToast(errToastId), 3500);
+          break;
+        }
+
         case "tutor_response": {
           // Store for TTS and module building
           moduleTitleRef.current = event.moduleTitle;
