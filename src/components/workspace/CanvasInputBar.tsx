@@ -2,9 +2,10 @@
 
 import { useState, useRef, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Send, Mic, MicOff, Loader2, Volume2 } from "lucide-react";
+import { Send, Mic, MicOff, Loader2, Volume2, X, Sparkles, BookOpen, Wand2 } from "lucide-react";
 import { useSessionStore } from "@/store/session";
 import { useUIStore } from "@/store/ui";
+import { useGroundingStore } from "@/store/grounding";
 import { useAIChat } from "@/hooks/useAIChat";
 import { startListening, stopListening, isRecognitionSupported } from "@/lib/voice/speech";
 
@@ -15,11 +16,16 @@ export default function CanvasInputBar() {
     isSpeaking,
     speakReady,
     followUpQuestions,
+    learningMode,
+    messages,
+    query,
     setVoiceMode,
     setLiveCaption,
     setFollowUpQuestions,
-    pendingVoiceText,
+    setLearningMode,
     setPendingVoiceText,
+    setModuleQueue,
+    pendingVoiceText,
     moduleQueue,
     shiftModuleQueue,
   } = useSessionStore();
@@ -27,10 +33,47 @@ export default function CanvasInputBar() {
   const { darkMode } = useUIStore();
   const { sendMessage, speakLatest, isStreaming, latestTutor } = useAIChat();
   const [input, setInput] = useState("");
+  const [bubbleDismissed, setBubbleDismissed] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const recognitionOk = useRef(false);
+  const lastShownTutorId = useRef<string | null>(null);
 
   useEffect(() => { recognitionOk.current = isRecognitionSupported(); }, []);
+
+  // Auto-resurface the bubble when a new tutor message arrives
+  useEffect(() => {
+    if (latestTutor && latestTutor.id !== lastShownTutorId.current) {
+      lastShownTutorId.current = latestTutor.id;
+      setBubbleDismissed(false);
+    }
+  }, [latestTutor]);
+
+  // ── Mode picker handler ────────────────────────────────────────────────────
+  const handlePickMode = (mode: "guided" | "auto") => {
+    setLearningMode(mode);
+    const topic = (query || "").trim();
+    if (!topic) return;
+
+    if (mode === "auto") {
+      // Comprehensive walkthrough — if a multi-module plan exists, queue every module
+      const plan = useGroundingStore.getState().studyPlan;
+      if (plan && plan.modules.length > 1) {
+        const queue = [
+          topic,
+          ...plan.modules.slice(1).map((m) => `Continue with: ${m.title} — ${m.description}`),
+        ];
+        setModuleQueue(queue);
+      } else {
+        // Single-shot comprehensive prompt
+        setPendingVoiceText(
+          `Give me a comprehensive walkthrough of: ${topic}. Use multiple artifacts (diagrams, equations, graphs, flashcards) so I can see everything at once.`,
+        );
+      }
+    } else {
+      // Guided: just kick off with the topic, the agent will go step by step
+      setPendingVoiceText(topic);
+    }
+  };
 
   // Handle pending voice text (single-shot)
   useEffect(() => {
@@ -51,12 +94,15 @@ export default function CanvasInputBar() {
 
   const handleSend = () => {
     if (!input.trim() || isStreaming) return;
+    // If user is typing without picking a mode, default to guided
+    if (learningMode === null) setLearningMode("guided");
     sendMessage(input.trim());
     setInput("");
   };
 
   const handleChipClick = (q: string) => {
     if (isStreaming) return;
+    if (learningMode === null) setLearningMode("guided");
     setFollowUpQuestions([]); // clear chips immediately on click
     sendMessage(q);
   };
@@ -140,35 +186,159 @@ export default function CanvasInputBar() {
     );
   }
 
-  return (
-    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 w-full max-w-lg px-4 pointer-events-none">
-      <div className="pointer-events-auto flex flex-col gap-1.5">
+  // Show the mode picker when: bridge done (we render workspace = bridge done), no messages yet,
+  // mode hasn't been picked, not currently streaming.
+  const showModePicker =
+    learningMode === null && messages.length === 0 && !isStreaming;
 
-        {/* AI caption / latest tutor snippet */}
-        <AnimatePresence mode="wait">
-          {latestTutor && !isStreaming && (
+  return (
+    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 w-full max-w-xl px-4 pointer-events-none">
+      <div className="pointer-events-auto flex flex-col gap-2">
+
+        {/* ── Mode picker (one-time, on session start) ────────────────────── */}
+        <AnimatePresence>
+          {showModePicker && (
             <motion.div
-              key={latestTutor.id}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.2 }}
-              className="text-[12px] leading-snug line-clamp-2 px-4 py-2 rounded-xl shadow-sm"
+              key="mode-picker"
+              initial={{ opacity: 0, y: 12, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.96 }}
+              transition={{ type: "spring", damping: 26, stiffness: 320 }}
+              className="rounded-2xl shadow-xl p-4 mb-1"
               style={{
                 backgroundColor: barBg,
                 border: `1px solid ${barBorder}`,
-                backdropFilter: "blur(16px)",
-                color: darkMode ? "rgba(255,255,255,0.55)" : "rgba(0,0,0,0.5)",
+                backdropFilter: "blur(20px)",
               }}
             >
-              {latestTutor.content}
+              <div className="flex items-center gap-2 mb-3">
+                <div
+                  className="w-7 h-7 rounded-full flex items-center justify-center"
+                  style={{ backgroundColor: darkMode ? "rgba(124,58,237,0.18)" : "rgba(124,58,237,0.12)" }}
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-violet-500" />
+                </div>
+                <div className="flex-1">
+                  <div
+                    className="text-[13px] font-medium"
+                    style={{ color: darkMode ? "rgba(255,255,255,0.92)" : "rgba(0,0,0,0.85)" }}
+                  >
+                    How would you like to learn{query ? ` "${query.length > 32 ? query.slice(0, 32) + "…" : query}"` : ""}?
+                  </div>
+                  <div
+                    className="text-[11px] mt-0.5"
+                    style={{ color: darkMode ? "rgba(255,255,255,0.45)" : "rgba(0,0,0,0.5)" }}
+                  >
+                    Pick a mode — you can change later by typing.
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => handlePickMode("guided")}
+                  className="text-left p-3 rounded-xl transition-all hover:scale-[1.02] active:scale-[0.98]"
+                  style={{
+                    backgroundColor: darkMode ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)",
+                    border: `1px solid ${barBorder}`,
+                  }}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <BookOpen className="w-3.5 h-3.5 text-violet-500" />
+                    <span
+                      className="text-[12.5px] font-medium"
+                      style={{ color: darkMode ? "rgba(255,255,255,0.92)" : "rgba(0,0,0,0.85)" }}
+                    >
+                      Guided
+                    </span>
+                  </div>
+                  <p
+                    className="text-[11px] leading-snug"
+                    style={{ color: darkMode ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.55)" }}
+                  >
+                    Step-by-step. Synapse asks questions, you steer the journey.
+                  </p>
+                </button>
+
+                <button
+                  onClick={() => handlePickMode("auto")}
+                  className="text-left p-3 rounded-xl transition-all hover:scale-[1.02] active:scale-[0.98]"
+                  style={{
+                    backgroundColor: darkMode ? "rgba(124,58,237,0.12)" : "rgba(124,58,237,0.08)",
+                    border: `1px solid ${darkMode ? "rgba(124,58,237,0.3)" : "rgba(124,58,237,0.25)"}`,
+                  }}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <Wand2 className="w-3.5 h-3.5 text-violet-500" />
+                    <span
+                      className="text-[12.5px] font-medium"
+                      style={{ color: darkMode ? "rgba(255,255,255,0.92)" : "rgba(0,0,0,0.85)" }}
+                    >
+                      Auto Explore
+                    </span>
+                  </div>
+                  <p
+                    className="text-[11px] leading-snug"
+                    style={{ color: darkMode ? "rgba(255,255,255,0.55)" : "rgba(0,0,0,0.55)" }}
+                  >
+                    The full picture. Synapse fills the canvas with everything at once.
+                  </p>
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* ── Latest tutor response — compact, scrollable, dismissible ─────── */}
+        <AnimatePresence mode="wait">
+          {latestTutor && !showModePicker && !bubbleDismissed && (
+            <motion.div
+              key={latestTutor.id}
+              initial={{ opacity: 0, y: 12, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -8, scale: 0.97 }}
+              transition={{ type: "spring", damping: 25, stiffness: 350 }}
+              className="rounded-2xl shadow-xl overflow-hidden"
+              style={{
+                backgroundColor: darkMode ? "rgba(28,28,30,0.92)" : "rgba(28,28,30,0.92)",
+                backdropFilter: "blur(24px)",
+              }}
+            >
+              <div className="flex items-center gap-2 px-4 pt-3 pb-1">
+                <div className="w-5 h-5 rounded-full bg-white/[0.08] flex items-center justify-center flex-shrink-0">
+                  <Sparkles className="w-2.5 h-2.5 text-white/50" />
+                </div>
+                <span className="text-[11px] text-white/30 font-medium flex-1">Synapse</span>
+                {speakReady && !isSpeaking && (
+                  <button
+                    onClick={speakLatest}
+                    className="w-6 h-6 rounded-full bg-white/[0.06] flex items-center justify-center flex-shrink-0 text-white/40 hover:text-white/80 hover:bg-white/[0.12] transition-all"
+                    title="Listen"
+                  >
+                    <Volume2 className="w-2.5 h-2.5" />
+                  </button>
+                )}
+                <button
+                  onClick={() => setBubbleDismissed(true)}
+                  className="w-6 h-6 rounded-full bg-white/[0.06] flex items-center justify-center flex-shrink-0 text-white/25 hover:text-white/60 hover:bg-white/[0.12] transition-all"
+                  title="Dismiss"
+                >
+                  <X className="w-2.5 h-2.5" />
+                </button>
+              </div>
+
+              <div className="max-h-[30vh] overflow-y-auto px-4 pb-3 scrollbar-dark">
+                <p className="text-[13px] leading-relaxed text-white/90 whitespace-pre-wrap">
+                  {latestTutor.content}
+                </p>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
 
         {/* Follow-up chips — tier 1 (violet, tutor questions) + tier 2 (neutral, suggestions) */}
         <AnimatePresence>
-          {followUpQuestions.length > 0 && !isStreaming && (
+          {followUpQuestions.length > 0 && !isStreaming && !showModePicker && (
             <motion.div
               initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}

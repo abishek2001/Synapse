@@ -94,6 +94,8 @@ export function useAIChat() {
             content: m.content,
           }));
 
+        const learningMode = useSessionStore.getState().learningMode;
+
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -107,6 +109,7 @@ export function useAIChat() {
             canvasContext: canvasContext || undefined,
             sessionContext,
             studyPlan,
+            learningMode,
           }),
         });
 

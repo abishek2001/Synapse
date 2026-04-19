@@ -315,23 +315,8 @@ export default function WorkspaceView() {
     addLog("All systems nominal — launching workspace", "success");
     await sleep(800);
 
-    // Auto-fire first AI turn if this is a fresh session (no prior messages)
-    const existingMessages = useSessionStore.getState().messages;
-    if (existingMessages.length === 0) {
-      const plan = useGroundingStore.getState().studyPlan;
-      if (isTopicQuery(displayQ) && plan && plan.modules.length > 1) {
-        // Full workflow: queue every module as a sequential prompt
-        const queue = [
-          displayQ,
-          ...plan.modules.slice(1).map((m) => `Continue with: ${m.title} — ${m.description}`),
-        ];
-        useSessionStore.getState().setModuleQueue(queue);
-      } else {
-        // Default: single turn, user drives from there
-        useSessionStore.getState().setPendingVoiceText(displayQ);
-      }
-    }
-
+    // Don't auto-fire — let CanvasInputBar show the mode picker first.
+    // The picker will queue the topic / module plan based on the user's choice.
     setShowBridge(false);
   }
 
@@ -442,12 +427,4 @@ export default function WorkspaceView() {
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
-}
-
-/** Returns true if the query looks like a topic/subject rather than a question. */
-function isTopicQuery(query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (q.endsWith("?")) return false;
-  if (/^(what|how|why|when|where|who|explain|tell|describe|define|show me|can you)/.test(q)) return false;
-  return true;
 }

@@ -17,14 +17,16 @@ import type {
 } from "./types";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? "" });
-const MAX_TOOL_ROUNDS = 4;
 const MODEL = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
 
 export async function runOrchestrator(
   input: OrchestratorInput,
   onEvent?: (e: StreamEvent) => void,
 ): Promise<OrchestratorResult> {
-  const { query, persona, history, documentContext, canvasContext, sessionContext, studyPlan, mode } = input;
+  const {
+    query, persona, history, documentContext, canvasContext,
+    sessionContext, studyPlan, mode, learningMode = null,
+  } = input;
 
   // Manual friend invocation only (Call a Friend button)
   if (mode === "friend") {
@@ -34,8 +36,10 @@ export async function runOrchestrator(
   // ── PLAN ──────────────────────────────────────────────────────────────────
   onEvent?.({ type: "thinking", message: "Planning approach…" });
 
+  // In auto-explore mode we skip the strategy agent entirely — the auto prompt
+  // already tells the model to be comprehensive, no need for per-turn pedagogy.
   let decision: TeachingDecision | null = null;
-  if (sessionContext) {
+  if (sessionContext && learningMode !== "auto") {
     try {
       decision = await getTeachingDecision(
         query,
@@ -49,7 +53,10 @@ export async function runOrchestrator(
   }
 
   // ── EXECUTE ───────────────────────────────────────────────────────────────
-  return executeTutorTurn(query, persona, history, documentContext, canvasContext, decision, sessionContext, onEvent);
+  return executeTutorTurn(
+    query, persona, history, documentContext, canvasContext,
+    decision, sessionContext, learningMode, onEvent,
+  );
 }
 
 async function executeFriendTurn(
@@ -124,9 +131,14 @@ async function executeTutorTurn(
   canvasContext: string | undefined,
   decision: TeachingDecision | null,
   sessionContext: OrchestratorInput["sessionContext"],
+  learningMode: "guided" | "auto" | null,
   onEvent?: (e: StreamEvent) => void,
 ): Promise<OrchestratorResult> {
-  let systemPrompt = buildTutorSystemPrompt(persona, documentContext);
+  let systemPrompt = buildTutorSystemPrompt(persona, documentContext, learningMode);
+
+  // Mode-aware budgets — auto-explore needs more rounds + tokens to drop multiple artifacts in one turn.
+  const maxRounds = learningMode === "auto" ? 8 : 4;
+  const maxTokens = learningMode === "auto" ? 4096 : 1536;
 
   // Inject canvas context so the AI knows what's already on the board
   if (canvasContext) {
@@ -155,9 +167,15 @@ Follow this guidance. The artifact types listed are what the pedagogical layer d
     { role: "user", content: query },
   ];
 
-  const { tools: initialTools, toolChoice: initialToolChoice } = decision
+  const { tools: initialTools, toolChoice: initialToolChoiceFromDecision } = decision
     ? getToolsForAction(decision.action)
     : { tools: CANVAS_TOOLS, toolChoice: "auto" as const };
+
+  // Force tool use on round 0 in auto-explore (always), or in guided mode when the strategy
+  // agent already said the artifacts are required. Without this, the model sometimes responds
+  // with text only on the first turn — defeating the whole "thinking environment" pitch.
+  const initialToolChoice: "auto" | "required" =
+    learningMode === "auto" ? "required" : initialToolChoiceFromDecision;
 
   const artifacts: CanvasArtifact[] = [];
   const canvasAnnotations: DelegatedAnnotation[] = [];
@@ -167,10 +185,12 @@ Follow this guidance. The artifact types listed are what the pedagogical layer d
   const pendingIdMap = new Map<string, string>();
   let finalExplanation = "";
 
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    // Round 0: use action-filtered tools. Subsequent rounds: open up to all tools.
+  for (let round = 0; round < maxRounds; round++) {
+    // Round 0: use action-filtered tools, force tool use if no artifacts yet.
+    // Subsequent rounds: open up to all tools, model decides whether to keep going.
     const toolsForRound   = round === 0 ? initialTools : CANVAS_TOOLS;
-    const toolChoiceRound = round === 0 ? initialToolChoice : ("auto" as const);
+    const forceTools = round === 0 && artifacts.length === 0 && initialToolChoice === "required";
+    const toolChoiceRound = forceTools ? ("required" as const) : ("auto" as const);
 
     const res = await openai.chat.completions.create({
       model: MODEL,
@@ -178,7 +198,11 @@ Follow this guidance. The artifact types listed are what the pedagogical layer d
       tools: toolsForRound,
       tool_choice: toolChoiceRound,
       temperature: 0.7,
-      max_tokens: 1536,
+      max_tokens: maxTokens,
+      // Force JSON output whenever the model is allowed to write content (i.e. tool_choice="auto").
+      // When tool_choice="required" the model cannot return content, so JSON mode would be a no-op.
+      // OpenAI requires the prompt to mention "json" — our system prompt does.
+      ...(toolChoiceRound === "auto" ? { response_format: { type: "json_object" as const } } : {}),
     });
 
     const assistantMsg = res.choices[0].message;
@@ -224,21 +248,41 @@ Follow this guidance. The artifact types listed are what the pedagogical layer d
       let fnArgs: Record<string, unknown> = {};
       try { fnArgs = JSON.parse(toolCall.function.arguments); } catch { fnArgs = {}; }
 
-      const toolResult = await handleToolCall(fnName, fnArgs, documentContext);
-      if (toolResult.artifact) {
-        artifacts.push(toolResult.artifact);
+      try {
+        const toolResult = await handleToolCall(fnName, fnArgs, documentContext);
+        if (toolResult.artifact) {
+          artifacts.push(toolResult.artifact);
+          const pendingId = pendingIdMap.get(toolCall.id);
+          if (pendingId) {
+            onEvent?.({ type: "artifact_done", pendingId, artifact: toolResult.artifact });
+          }
+        }
+        if (toolResult.annotations) canvasAnnotations.push(...toolResult.annotations);
+
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: toolResult.result,
+        });
+      } catch (toolErr) {
+        // One bad tool call shouldn't sink the whole turn — clean up the skeleton and tell the model.
+        const errMsg = toolErr instanceof Error ? toolErr.message : "tool execution failed";
+        console.error(`Tool ${fnName} failed:`, errMsg);
         const pendingId = pendingIdMap.get(toolCall.id);
         if (pendingId) {
-          onEvent?.({ type: "artifact_done", pendingId, artifact: toolResult.artifact });
+          // Drop the skeleton so the user doesn't see a forever-loading card
+          onEvent?.({
+            type: "artifact_done",
+            pendingId,
+            artifact: { id: pendingId, type: "lookup", title: "Failed to render", status: "error", query: fnName, results: [] } as CanvasArtifact,
+          });
         }
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: `[Tool error: ${errMsg}. Continue without this artifact.]`,
+        });
       }
-      if (toolResult.annotations) canvasAnnotations.push(...toolResult.annotations);
-
-      messages.push({
-        role: "tool",
-        tool_call_id: toolCall.id,
-        content: toolResult.result,
-      });
     }
   }
 
