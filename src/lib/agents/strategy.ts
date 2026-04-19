@@ -19,6 +19,8 @@ export interface TeachingDecision {
   suggestedArtifacts: string[];
   conceptsToTrack: string[];
   shouldAdvanceModule: boolean;
+  followUpQuestions: string[];
+  pauseForInput: boolean;
 }
 
 const STRATEGY_SYSTEM = `You are the Teaching Strategy agent for Synapse, an AI-powered learning platform with an infinite canvas. Your job is to decide the best pedagogical action AND the most effective artifacts to place on the canvas for each student turn.
@@ -79,8 +81,15 @@ Output ONLY valid JSON:
   "suggestedPrompt": "specific instruction for the tutor (what to say/show/produce)",
   "suggestedArtifacts": ["diagram", "notation"],
   "conceptsToTrack": ["concept names mentioned in this turn"],
-  "shouldAdvanceModule": false
-}`;
+  "shouldAdvanceModule": false,
+  "followUpQuestions": ["2-3 natural follow-up questions the student might want to ask next", "keep them short, curiosity-driven"],
+  "pauseForInput": false
+}
+
+## followUpQuestions rules
+- Always provide 2-3 short follow-up questions (10 words or fewer each) based on what the student is currently learning
+- Make them feel like natural next steps — not generic ("tell me more") but specific to the concept
+- pauseForInput: set to true ONLY when the tutor explanation ends with a direct question TO the student that requires their answer before continuing (e.g. after a quiz action)`;
 
 export async function getTeachingDecision(
   userMessage: string,
@@ -135,6 +144,8 @@ Decide the best action and which artifacts to produce.`;
       suggestedArtifacts: Array.isArray(parsed.suggestedArtifacts) ? parsed.suggestedArtifacts : [],
       conceptsToTrack: Array.isArray(parsed.conceptsToTrack) ? parsed.conceptsToTrack : [],
       shouldAdvanceModule: parsed.shouldAdvanceModule || false,
+      followUpQuestions: Array.isArray(parsed.followUpQuestions) ? parsed.followUpQuestions : [],
+      pauseForInput: parsed.pauseForInput || false,
     };
   } catch {
     return {
@@ -144,6 +155,8 @@ Decide the best action and which artifacts to produce.`;
       suggestedArtifacts: [],
       conceptsToTrack: [],
       shouldAdvanceModule: false,
+      followUpQuestions: [],
+      pauseForInput: false,
     };
   }
 }

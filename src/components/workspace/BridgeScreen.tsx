@@ -256,22 +256,10 @@ export default function BridgeScreen({
           })}
 
           {/* Floating "cursor" — a small pen that moves around */}
-          <motion.circle
-            r={4}
-            fill="#7c3aed"
-            opacity={0.6}
-            animate={{
-              cx: [180, 500, 800, 290, 630],
-              cy: [190, 140, 185, 395, 390],
-            }}
-            transition={{
-              duration: 5,
-              times: [0, 0.2, 0.45, 0.65, 0.9],
-              ease: "easeInOut",
-              repeat: Infinity,
-              repeatType: "reverse",
-            }}
-          />
+          <circle r={4} fill="#7c3aed" opacity={0.6}>
+            <animate attributeName="cx" values="180;500;800;290;630;180" keyTimes="0;0.2;0.45;0.65;0.9;1" dur="5s" repeatCount="indefinite" />
+            <animate attributeName="cy" values="190;140;185;395;390;190" keyTimes="0;0.2;0.45;0.65;0.9;1" dur="5s" repeatCount="indefinite" />
+          </circle>
         </svg>
       </div>
 

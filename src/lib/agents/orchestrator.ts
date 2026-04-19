@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
-import { buildTutorSystemPrompt } from "./tutor";
+import { buildTutorSystemPrompt, parseTutorResponse } from "./tutor";
 import { buildFriendMessages } from "./friend";
 import { getTeachingDecision, type TeachingDecision } from "./strategy";
 import { observeTurn } from "./observer";
@@ -13,6 +13,7 @@ import type {
   OrchestratorInput,
   OrchestratorResult,
   SessionContextPatch,
+  StreamEvent,
 } from "./types";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? "" });
@@ -21,15 +22,18 @@ const MODEL = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
 
 export async function runOrchestrator(
   input: OrchestratorInput,
+  onEvent?: (e: StreamEvent) => void,
 ): Promise<OrchestratorResult> {
-  const { query, persona, history, documentContext, sessionContext, studyPlan, mode } = input;
+  const { query, persona, history, documentContext, canvasContext, sessionContext, studyPlan, mode } = input;
 
   // Manual friend invocation only (Call a Friend button)
   if (mode === "friend") {
-    return executeFriendTurn(query, sessionContext);
+    return executeFriendTurn(query, sessionContext, onEvent);
   }
 
   // ── PLAN ──────────────────────────────────────────────────────────────────
+  onEvent?.({ type: "thinking", message: "Planning approach…" });
+
   let decision: TeachingDecision | null = null;
   if (sessionContext) {
     try {
@@ -45,13 +49,16 @@ export async function runOrchestrator(
   }
 
   // ── EXECUTE ───────────────────────────────────────────────────────────────
-  return executeTutorTurn(query, persona, history, documentContext, decision, sessionContext);
+  return executeTutorTurn(query, persona, history, documentContext, canvasContext, decision, sessionContext, onEvent);
 }
 
 async function executeFriendTurn(
   query: string,
   sessionContext: OrchestratorInput["sessionContext"],
+  onEvent?: (e: StreamEvent) => void,
 ): Promise<OrchestratorResult> {
+  onEvent?.({ type: "thinking", message: "Crafting analogy…" });
+
   const messages = buildFriendMessages(query, query);
   const res = await openai.chat.completions.create({
     model: MODEL,
@@ -84,15 +91,28 @@ async function executeFriendTurn(
       })
     : { lastActivityAt: Date.now() };
 
+  const spokenText = friend.analogy;
+  const writtenText = friend.analogy;
+
+  onEvent?.({
+    type: "tutor_response",
+    writtenText,
+    spokenText,
+    questionsForUser: [friend.followUp],
+  });
+  onEvent?.({ type: "done", contextPatch });
+
   return {
     type: "friend",
     friend,
-    tutor: { explanation: friend.analogy },
+    tutor: { writtenText, spokenText, questionsForUser: [friend.followUp] },
     artifacts: [],
     canvasAnnotations: [],
     decision: null,
     contextPatch,
     rawResponse: raw,
+    followUpQuestions: [],
+    pauseForInput: false,
   };
 }
 
@@ -101,10 +121,17 @@ async function executeTutorTurn(
   persona: string,
   history: AgentMessage[],
   documentContext: string | undefined,
+  canvasContext: string | undefined,
   decision: TeachingDecision | null,
   sessionContext: OrchestratorInput["sessionContext"],
+  onEvent?: (e: StreamEvent) => void,
 ): Promise<OrchestratorResult> {
   let systemPrompt = buildTutorSystemPrompt(persona, documentContext);
+
+  // Inject canvas context so the AI knows what's already on the board
+  if (canvasContext) {
+    systemPrompt += `\n\n## CURRENT CANVAS STATE\nThe following artifacts are already on the student's canvas — do not duplicate them:\n${canvasContext}`;
+  }
 
   // Inject strategy decision as a directive at the end of the system prompt
   if (decision) {
@@ -136,6 +163,8 @@ Follow this guidance. The artifact types listed are what the pedagogical layer d
   const canvasAnnotations: DelegatedAnnotation[] = [];
   const toolCallNames: string[] = [];
   const toolCallArgs: Record<string, unknown>[] = [];
+  // Map from tool call id → pending element id so we can resolve skeletons
+  const pendingIdMap = new Map<string, string>();
   let finalExplanation = "";
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -154,26 +183,55 @@ Follow this guidance. The artifact types listed are what the pedagogical layer d
 
     const assistantMsg = res.choices[0].message;
 
-    if (assistantMsg.content) {
-      finalExplanation += (finalExplanation ? " " : "") + assistantMsg.content;
+    if (!assistantMsg.tool_calls?.length) {
+      // Final round — no more tools; this content is the structured JSON response
+      if (assistantMsg.content) finalExplanation = assistantMsg.content;
+      break;
     }
 
-    if (!assistantMsg.tool_calls?.length) break;
+    // Intermediate round has tool calls — ignore any content (model reasoning chatter)
 
     messages.push(assistantMsg);
 
+    // Emit pending skeletons for all tool calls in this round before awaiting them
     for (const toolCall of assistantMsg.tool_calls) {
       if (toolCall.type !== "function") continue;
-
       const fnName = toolCall.function.name;
       let fnArgs: Record<string, unknown> = {};
       try { fnArgs = JSON.parse(toolCall.function.arguments); } catch { fnArgs = {}; }
 
+      // Determine artifact type from tool name
+      const artifactType = toolNameToArtifactType(fnName);
+      if (artifactType) {
+        const pendingId = `pending-${toolCall.id}`;
+        pendingIdMap.set(toolCall.id, pendingId);
+        onEvent?.({
+          type: "artifact_pending",
+          pendingId,
+          artifactType,
+          title: (fnArgs.title as string) || artifactType,
+        });
+      }
+
       toolCallNames.push(fnName);
       toolCallArgs.push(fnArgs);
+    }
+
+    // Now execute each tool call and emit artifact_done
+    for (const toolCall of assistantMsg.tool_calls) {
+      if (toolCall.type !== "function") continue;
+      const fnName = toolCall.function.name;
+      let fnArgs: Record<string, unknown> = {};
+      try { fnArgs = JSON.parse(toolCall.function.arguments); } catch { fnArgs = {}; }
 
       const toolResult = await handleToolCall(fnName, fnArgs, documentContext);
-      if (toolResult.artifact)    artifacts.push(toolResult.artifact);
+      if (toolResult.artifact) {
+        artifacts.push(toolResult.artifact);
+        const pendingId = pendingIdMap.get(toolCall.id);
+        if (pendingId) {
+          onEvent?.({ type: "artifact_done", pendingId, artifact: toolResult.artifact });
+        }
+      }
       if (toolResult.annotations) canvasAnnotations.push(...toolResult.annotations);
 
       messages.push({
@@ -184,12 +242,14 @@ Follow this guidance. The artifact types listed are what the pedagogical layer d
     }
   }
 
-  const explanation = finalExplanation || "Let me show you on the canvas.";
+  // Parse structured tutor response (writtenText / spokenText / questionsForUser)
+  const rawFinal = finalExplanation || '{"writtenText":"Let me show you on the canvas.","spokenText":"Check out what I just placed on the canvas.","questionsForUser":[]}';
+  const tutorResponse = parseTutorResponse(rawFinal);
 
   const contextPatch: SessionContextPatch = sessionContext
     ? observeTurn({
         userMessage: query,
-        tutorResponse: explanation,
+        tutorResponse: tutorResponse.writtenText,
         toolCallNames,
         toolCallArgs,
         decision,
@@ -197,9 +257,33 @@ Follow this guidance. The artifact types listed are what the pedagogical layer d
       })
     : { lastActivityAt: Date.now() };
 
+  const followUpQuestions = decision?.followUpQuestions ?? [];
+  const pauseForInput = decision?.pauseForInput ?? false;
+
+  // Emit structured tutor response
+  onEvent?.({
+    type: "tutor_response",
+    writtenText: tutorResponse.writtenText,
+    spokenText: tutorResponse.spokenText,
+    questionsForUser: tutorResponse.questionsForUser,
+  });
+
+  // Emit strategy follow-up suggestions (tier 2 chips)
+  if (followUpQuestions.length > 0) {
+    onEvent?.({ type: "follow_up", questions: followUpQuestions });
+  }
+  if (pauseForInput) {
+    onEvent?.({ type: "pause_for_input" });
+  }
+  onEvent?.({ type: "done", contextPatch });
+
   return {
     type: "tutor",
-    tutor: { explanation },
+    tutor: {
+      writtenText: tutorResponse.writtenText,
+      spokenText: tutorResponse.spokenText,
+      questionsForUser: tutorResponse.questionsForUser,
+    },
     artifacts,
     canvasAnnotations,
     decision: decision
@@ -210,6 +294,22 @@ Follow this guidance. The artifact types listed are what the pedagogical layer d
         }
       : null,
     contextPatch,
-    rawResponse: explanation,
+    rawResponse: tutorResponse.writtenText,
+    followUpQuestions,
+    pauseForInput,
   };
+}
+
+function toolNameToArtifactType(toolName: string): string | null {
+  const map: Record<string, string> = {
+    canvas_generate_visual:     "visual",
+    canvas_generate_graph:      "graph",
+    canvas_generate_notation:   "notation",
+    flashcard_create:           "flashcard",
+    knowledge_lookup:           "lookup",
+    canvas_generate_diagram:    "diagram",
+    canvas_generate_simulation: "simulation",
+    canvas_generate_3d_render:  "render3d",
+  };
+  return map[toolName] ?? null;
 }

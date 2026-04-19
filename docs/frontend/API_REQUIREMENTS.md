@@ -4,7 +4,7 @@
 
 ### `POST /api/chat`
 
-Primary AI tutor endpoint. Supports two modes.
+Primary AI tutor endpoint. Returns **Server-Sent Events** (`text/event-stream`).
 
 **Request body**
 ```json
@@ -13,51 +13,43 @@ Primary AI tutor endpoint. Supports two modes.
   "persona": "professor | socratic | coach | eli5 (default: professor)",
   "history": "AgentMessage[] (default: [])",
   "documentContext": "string (optional) — extracted file/URL text",
-  "mode": "tutor | friend (default: tutor)",
-  "strategyHint": "string (optional) — injected by strategy agent"
+  "canvasContext": "string (optional) — serialized list of current canvas artifacts to avoid duplication",
+  "sessionContext": "SessionContext | null",
+  "studyPlan": "StudyPlan | null",
+  "mode": "tutor | friend (default: tutor)"
 }
 ```
 
-**Response — tutor mode**
-```json
-{
-  "type": "tutor",
-  "tutor": { "explanation": "string" },
-  "artifacts": "CanvasArtifact[]",
-  "canvasAnnotations": "DelegatedAnnotation[]",
-  "rawResponse": "string"
-}
+**SSE Event stream** — events emitted in order:
+```
+data: { "type": "thinking", "message": "string" }
+data: { "type": "artifact_pending", "pendingId": "string", "artifactType": "string", "title": "string" }
+data: { "type": "artifact_done", "pendingId": "string", "artifact": CanvasArtifact }
+data: { "type": "tutor_response", "writtenText": "string", "spokenText": "string", "questionsForUser": ["string", ...] }
+data: { "type": "follow_up", "questions": ["string", ...] }
+data: { "type": "pause_for_input" }
+data: { "type": "done", "contextPatch": SessionContextPatch }
+data: { "type": "error", "message": "string" }
 ```
 
-**Response — friend mode**
-```json
-{
-  "type": "friend",
-  "friend": { "analogy": "string", "followUp": "string" },
-  "rawResponse": "string"
-}
-```
+**Structured tutor response** (`tutor_response` event):
+- `writtenText` — concise, rich-markdown prose intended to be placed as a `text` element at the top of the canvas module group and shown in the transcript
+- `spokenText` — fluent, natural sentence(s) for TTS (no markdown, no parenthetical asides). Only spoken when user clicks the Speak button (`speakReady` state).
+- `questionsForUser` — direct questions the tutor wants to ask the student; rendered as violet (tier-1) chips above `CanvasInputBar`
+
+**Flow per turn**:
+1. `thinking` — strategy agent is deciding action
+2. One `artifact_pending` per tool call (before execution) → client places skeleton on canvas
+3. One `artifact_done` per tool call (after execution) → client resolves skeleton → real artifact
+4. `tutor_response` — structured text: writtenText to canvas/transcript, spokenText to TTS, questionsForUser to chips
+5. `follow_up` — 2-3 strategy-suggested next questions (tier-2 neutral chips)
+6. `done` — includes contextPatch for session state update
 
 **Notes**
-- Runs up to 4 tool-use rounds (MAX_TOOL_ROUNDS)
-- Artifacts are produced via CANVAS_TOOLS (visual, graph, notation, flashcard, lookup, simulation)
+- Pipeline: Strategy Agent → Tool Loop (up to 4 rounds) → Observer
+- `canvasContext` is a text summary of existing elements; AI skips duplicating them
+- `followUpQuestions` come from the Strategy agent, not the tutor LLM
 - Model: `OPENAI_MODEL` env var (default `gpt-4o-mini`)
-
----
-
-### `POST /api/chat/stream`
-
-Streaming variant of `/api/chat`. Returns `text/event-stream` SSE.
-
-**Request**: same shape as `/api/chat`
-
-**Events**
-```
-data: { type: "delta", content: "string" }
-data: { type: "artifact", artifact: CanvasArtifact }
-data: { type: "done" }
-data: { type: "error", error: "string" }
-```
 
 ---
 
@@ -175,7 +167,7 @@ Generates simulation parameters for physics/chemistry/math scenarios.
 
 ## New Endpoints Required
 
-### `POST /api/doubt` *(not yet implemented)*
+### `POST /api/doubt` *(implemented)*
 
 Processes a doubt question in the context of the current canvas state. Produces artifacts specifically for answering the user's conceptual question.
 
@@ -211,38 +203,43 @@ Processes a doubt question in the context of the current canvas state. Produces 
 
 ---
 
-### `POST /api/url-fetch` *(not yet implemented)*
+---
 
-Fetches and extracts readable text from a URL. Used when the user pastes a URL into the landing page InputBar.
+### `POST /api/fetch-url` *(implemented — Bundle B)*
+
+Fetches readable text from a URL via Jina Reader. Used by the bridge loading sequence when the user submits URLs in `InputBar`.
 
 **Request body**
 ```json
-{
-  "url": "string"
-}
+{ "url": "string" }
 ```
 
 **Response**
 ```json
-{
-  "url": "string",
-  "title": "string",
-  "text": "string",
-  "wordCount": "number"
-}
-```
-
-**Error response**
-```json
-{
-  "error": "string",
-  "url": "string"
-}
+{ "name": "string (hostname)", "text": "string (markdown, capped at 80k chars)" }
 ```
 
 **Implementation notes**
-- Use `fetch(url)` server-side to avoid CORS
-- Strip HTML with a lightweight parser (e.g., `node-html-parser` or regex on `<p>`, `<article>` tags)
-- Truncate to 12,000 tokens before passing to `documentContext`
-- Reject non-HTTP URLs; allowlist common content types (`text/html`, `application/pdf`)
-- Rate-limit to 5 req/min per IP to prevent abuse
+- Proxies to `https://r.jina.ai/{url}` — no API key required
+- Returns clean markdown; 15s timeout, 80k char cap
+- `name` is the hostname with `www.` stripped
+
+---
+
+### `POST /api/extract-title` *(implemented)*
+
+Extracts a short topic title (3–8 words) from document text. Called during bridge loading after URL/file content is parsed.
+
+**Request body**
+```json
+{ "text": "string" }
+```
+
+**Response**
+```json
+{ "title": "string" }
+```
+
+**Implementation notes**
+- Uses `gpt-4o-mini` with a tight system prompt and `max_tokens: 24`
+- Falls back to `""` on any error (best-effort, non-critical)

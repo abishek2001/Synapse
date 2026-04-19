@@ -7,24 +7,36 @@ const PAD_X = 14;
 const PAD_TOP = 26;
 const PAD_BOTTOM = 14;
 
+/** Visual world-space right/bottom edges of an element, accounting for counter-scale. */
+function visualEdges(el: CanvasElement, canvasScale: number): { right: number; bottom: number } {
+  const birthScale = el.birthScale ?? 1;
+  const counterScale = canvasScale > birthScale ? birthScale / canvasScale : 1;
+  return {
+    right:  el.x + el.w * counterScale,
+    bottom: el.y + (el.h ?? estimateElemH(el.type)) * counterScale,
+  };
+}
+
 interface Props {
   group: CanvasGroup;
   elements: CanvasElement[];
   hasSelectedMember: boolean;
   isHovered: boolean;
+  canvasScale: number;
 }
 
-export default function GroupBoundary({ group, elements, hasSelectedMember, isHovered }: Props) {
+export default function GroupBoundary({ group, elements, hasSelectedMember, isHovered, canvasScale }: Props) {
   const { darkMode } = useUIStore();
 
   if (elements.length === 0) return null;
 
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const el of elements) {
+    const { right, bottom } = visualEdges(el, canvasScale);
     minX = Math.min(minX, el.x);
     minY = Math.min(minY, el.y);
-    maxX = Math.max(maxX, el.x + el.w);
-    maxY = Math.max(maxY, el.y + (el.h ?? estimateElemH(el.type)));
+    maxX = Math.max(maxX, right);
+    maxY = Math.max(maxY, bottom);
   }
 
   const x = minX - PAD_X;
@@ -74,17 +86,19 @@ export default function GroupBoundary({ group, elements, hasSelectedMember, isHo
   );
 }
 
-/** Compute the world-space bounding box for a group */
-export function computeGroupBounds(groupId: string, elements: CanvasElement[]) {
+/** Compute the visual world-space bounding box for a group.
+ *  Pass canvasScale so zoom-to-group targets the actual visible area. */
+export function computeGroupBounds(groupId: string, elements: CanvasElement[], canvasScale = 1) {
   const members = elements.filter((e) => e.groupId === groupId);
   if (members.length === 0) return null;
 
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const el of members) {
+    const { right, bottom } = visualEdges(el, canvasScale);
     minX = Math.min(minX, el.x);
     minY = Math.min(minY, el.y);
-    maxX = Math.max(maxX, el.x + el.w);
-    maxY = Math.max(maxY, el.y + (el.h ?? estimateElemH(el.type)));
+    maxX = Math.max(maxX, right);
+    maxY = Math.max(maxY, bottom);
   }
 
   return {

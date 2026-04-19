@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { LayoutList } from "lucide-react";
 import { useCanvasStore } from "@/store/canvas";
 import { useUIStore } from "@/store/ui";
+import { useSessionStore } from "@/store/session";
 
 const ARTIFACT_ICONS: Record<string, string> = {
   visual: "🎨",
@@ -19,11 +20,13 @@ const ARTIFACT_ICONS: Record<string, string> = {
 interface LeftSidebarProps {
   open: boolean;
   onToggle: () => void;
+  onZoomToGroup?: (groupId: string) => void;
 }
 
-export default function LeftSidebar({ open }: LeftSidebarProps) {
+export default function LeftSidebar({ open, onZoomToGroup }: LeftSidebarProps) {
   const { groups, elements } = useCanvasStore();
   const { darkMode } = useUIStore();
+  const { docHeadings } = useSessionStore();
 
   const surface = darkMode ? "#0a0a18" : "#ffffff";
   const border = darkMode ? "border-white/[0.05]" : "border-black/[0.06]";
@@ -59,12 +62,37 @@ export default function LeftSidebar({ open }: LeftSidebarProps) {
 
         {/* Group list */}
         <div className="flex-1 overflow-y-auto py-2 px-2">
-          {groups.length === 0 && (
+
+          {/* Document heading outline — shown when docs are loaded */}
+          {docHeadings.length > 0 && (
+            <div className="mb-2">
+              <p className={`px-2 py-1 text-[9px] font-semibold tracking-widest uppercase ${headerText}`}>
+                Document
+              </p>
+              {docHeadings.slice(0, 20).map((heading, i) => (
+                <div key={i} className={`px-2 py-1.5 flex items-center gap-2`}>
+                  <div className={`w-1 h-1 rounded-full flex-shrink-0 ${darkMode ? "bg-white/20" : "bg-black/20"}`} />
+                  <p className={`text-[11px] leading-tight truncate ${mutedText}`}>{heading}</p>
+                </div>
+              ))}
+              {groups.length > 0 && (
+                <div className={`mx-2 mt-2 mb-1 border-t ${border}`} />
+              )}
+            </div>
+          )}
+
+          {groups.length === 0 && docHeadings.length === 0 && (
             <div className="flex flex-col items-center justify-center h-32 gap-2">
               <p className={`text-[11px] text-center ${mutedText}`}>
                 Ask something to add groups to the canvas
               </p>
             </div>
+          )}
+
+          {groups.length > 0 && docHeadings.length > 0 && (
+            <p className={`px-2 py-1 text-[9px] font-semibold tracking-widest uppercase ${headerText}`}>
+              Canvas
+            </p>
           )}
 
           {sortedGroups.map((group, idx) => {
@@ -73,7 +101,11 @@ export default function LeftSidebar({ open }: LeftSidebarProps) {
             return (
               <div
                 key={group.id}
-                className={`flex items-start gap-2.5 px-2 py-2 rounded-lg cursor-default transition-colors ${itemHover}`}
+                role="button"
+                tabIndex={0}
+                onClick={() => onZoomToGroup?.(group.id)}
+                onKeyDown={(e) => e.key === "Enter" && onZoomToGroup?.(group.id)}
+                className={`flex items-start gap-2.5 px-2 py-2 rounded-lg transition-colors ${onZoomToGroup ? "cursor-pointer" : "cursor-default"} ${itemHover}`}
               >
                 {/* Number indicator */}
                 <div className={`w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 mt-0.5 text-[10px] font-semibold ${numberChip}`}>

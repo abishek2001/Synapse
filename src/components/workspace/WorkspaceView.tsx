@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import WorkspaceNavbar from "./WorkspaceNavbar";
-import ArtifactCanvas from "./ArtifactCanvas";
+import ArtifactCanvas, { type ArtifactCanvasHandle } from "./ArtifactCanvas";
 import SourcesPanel from "./SourcesPanel";
 import CallFriendModal from "./CallFriendModal";
 import CanvasInputBar from "./CanvasInputBar";
@@ -21,6 +21,7 @@ import { useGroundingStore } from "@/store/grounding";
 import { useUIStore } from "@/store/ui";
 import { useCanvasStore } from "@/store/canvas";
 import { createSessionContext } from "@/lib/grounding/session-context";
+import { preloadKokoro } from "@/lib/voice/kokoro";
 
 export default function WorkspaceView() {
   const searchParams = useSearchParams();
@@ -32,6 +33,7 @@ export default function WorkspaceView() {
     query,
     persona,
     files,
+    urls,
     documents,
     documentContext,
     canvasTitle,
@@ -40,6 +42,7 @@ export default function WorkspaceView() {
     setShowSources,
     setShowCallFriend,
     setDocuments,
+    setDocHeadings,
     setCanvasTitle,
     initSession,
   } = useSessionStore();
@@ -49,7 +52,7 @@ export default function WorkspaceView() {
   const { addUpdate } = useCanvasStore();
 
   /* ── Canvas intro text (written on board after bridge) ── */
-  const [introText, setIntroText] = useState("");
+  const [introText] = useState("");
 
   /* ── Bridge state ── */
   const [showBridge, setShowBridge] = useState(true);
@@ -64,6 +67,7 @@ export default function WorkspaceView() {
   });
   const bridgeInitRef = useRef(false);
   const logCounter = useRef(0);
+  const artifactCanvasRef = useRef<ArtifactCanvasHandle>(null);
 
   const addLog = useCallback(
     (text: string, type: BridgeLog["type"] = "info") => {
@@ -84,8 +88,14 @@ export default function WorkspaceView() {
   );
 
   useEffect(() => {
-    if (!query) initSession(urlQuery, urlPersona, []);
+    // Re-init if there's no session OR if the URL query doesn't match the stored query
+    // (handles direct URL navigation, back/forward, and stale localStorage state)
+    if (!query || query !== urlQuery) initSession(urlQuery, urlPersona, []);
   }, [query, urlQuery, urlPersona, initSession]);
+
+  // Start downloading the Kokoro TTS model in the background so it's
+  // ready by the time the user clicks Speak for the first time.
+  useEffect(() => { preloadKokoro(); }, []);
 
   useEffect(() => {
     if (bridgeInitRef.current) return;
@@ -94,13 +104,15 @@ export default function WorkspaceView() {
     const displayQ = query || urlQuery;
     const displayP = persona || urlPersona;
     const hasFiles = files.length > 0;
-    const initial = buildStages(hasFiles);
+    const hasUrls  = urls.length > 0;
+    const hasSources = hasFiles || hasUrls;
+    const initial = buildStages(hasSources);
     setStages(initial);
 
     setContextCard({
       title: displayQ.length > 55 ? displayQ.slice(0, 55) + "..." : displayQ,
-      description: hasFiles
-        ? `Synapse is parsing ${files.length} source${files.length > 1 ? "s" : ""} and building a grounded workspace.`
+      description: hasSources
+        ? `Synapse is parsing ${files.length + urls.length} source${files.length + urls.length > 1 ? "s" : ""} and building a grounded workspace.`
         : `Synapse is analyzing "${displayQ}" and constructing a personalized learning environment.`,
       tags: [
         { label: displayP, color: "#7c3aed" },
@@ -115,20 +127,20 @@ export default function WorkspaceView() {
 
     // Seed activity feed with the initial topic
     addUpdate({
-      id: `upd-session-start`,
+      id: `upd-session-start-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       type: "ai_note",
       title: `Started: ${displayQ.length > 40 ? displayQ.slice(0, 40) + "…" : displayQ}`,
-      detail: `Persona: ${displayP}${hasFiles ? ` · ${files.length} file(s)` : ""}`,
+      detail: `Persona: ${displayP}${hasSources ? ` · ${files.length + urls.length} source(s)` : ""}`,
       timestamp: Date.now(),
     });
 
-    runBridgeSequence(initial, hasFiles, displayQ, displayP);
+    runBridgeSequence(initial, hasSources, displayQ, displayP);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function runBridgeSequence(
     initial: BridgeStage[],
-    hasFiles: boolean,
+    hasSources: boolean,
     displayQ: string,
     displayP: string,
   ) {
@@ -137,55 +149,99 @@ export default function WorkspaceView() {
     for (const id of stageIds) {
       updateStage(id, "active");
 
-      if (id === "source" && hasFiles) {
+      if (id === "source" && hasSources) {
         parsedRef.current = true;
-        for (const f of files) {
-          updateStage(id, "active", `Parsing ${f.name}...`);
-          addLog(`Extracting text from ${f.name}`, "info");
+        const currentUrls = useSessionStore.getState().urls;
+        const currentFiles = useSessionStore.getState().files;
+
+        const collectedDocs: { name: string; text: string }[] = [];
+
+        // ── Parse uploaded files ────────────────────────────────────────────
+        if (currentFiles.length > 0) {
+          for (const f of currentFiles) {
+            updateStage(id, "active", `Parsing ${f.name}...`);
+            addLog(`Extracting text from ${f.name}`, "info");
+          }
+          try {
+            const res = await fetch("/api/parse-doc", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ files: currentFiles.map((f) => ({ name: f.name, type: f.type, dataUrl: f.dataUrl })) }),
+            });
+            if (res.ok) {
+              const data = await res.json();
+              if (data.documents) collectedDocs.push(...(data.documents as { name: string; text: string }[]));
+            }
+          } catch { addLog("Document parsing failed", "info"); }
         }
-        const t0 = performance.now();
-        try {
-          const res = await fetch("/api/parse-doc", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ files: files.map((f) => ({ name: f.name, type: f.type, dataUrl: f.dataUrl })) }),
-          });
-          const elapsed = Math.round(performance.now() - t0);
-          setLatencyMs(elapsed);
-          if (res.ok) {
-            const data = await res.json();
-            if (data.documents) {
-              setDocuments(data.documents);
-              const totalWords = data.documents.reduce((sum: number, d: { text: string }) => sum + d.text.split(/\s+/).length, 0);
-              addLog(`Extracted ${totalWords.toLocaleString()} words in ${elapsed}ms`, "success");
-              for (const doc of data.documents as { name: string; text: string }[]) {
+
+        // ── Fetch URLs via Jina Reader ──────────────────────────────────────
+        for (const url of currentUrls) {
+          updateStage(id, "active", `Fetching ${url.slice(0, 40)}…`);
+          addLog(`Fetching ${url}`, "info");
+          try {
+            const res = await fetch("/api/fetch-url", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ url }),
+            });
+            if (res.ok) {
+              const doc = await res.json() as { name: string; text: string };
+              if (doc.text?.length > 50) {
+                collectedDocs.push(doc);
                 addLog(`${doc.name} → ${doc.text.split(/\s+/).length.toLocaleString()} words`, "data");
               }
-              setContextCard((prev) => ({ ...prev, description: `Grounded in ${data.documents.length} source${data.documents.length > 1 ? "s" : ""} (${totalWords.toLocaleString()} words).`, status: "Grounded" }));
+            } else {
+              addLog(`URL fetch failed: ${url}`, "info");
+            }
+          } catch { addLog(`URL unreachable: ${url}`, "info"); }
+        }
 
-              const firstDocText = data.documents[0]?.text || "";
-              const hasRealContent = firstDocText.length > 50 && !firstDocText.startsWith("[Failed");
-              if (hasRealContent) try {
-                addLog("Extracting topic title from content...", "info");
-                const docPreview = firstDocText.slice(0, 1500);
-                const titleRes = await fetch("/api/chat", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ query: `Based on the following document content, extract a short, clear topic title (3-8 words max). Reply with ONLY the title, nothing else.\n\nContent preview: "${docPreview}"`, persona: "professor", history: [], mode: "tutor" }),
-                });
-                if (titleRes.ok) {
-                  const titleData = await titleRes.json();
-                  const extracted = (titleData.tutor?.explanation || titleData.rawResponse || "").trim().replace(/^["']|["']$/g, "");
-                  if (extracted && extracted.length < 80) {
-                    setCanvasTitle(extracted);
-                    addLog(`Topic: "${extracted}"`, "success");
-                  }
-                }
-              } catch { /* title extraction is best-effort */ }
+        // ── Commit all documents + title extraction ─────────────────────────
+        if (collectedDocs.length > 0) {
+          const t0 = performance.now();
+          setDocuments(collectedDocs);
+
+          // Extract H1/H2 headings from parsed markdown for LeftSidebar TOC
+          const headings: string[] = [];
+          for (const doc of collectedDocs) {
+            for (const line of doc.text.split("\n")) {
+              const m = line.match(/^#{1,2}\s+(.+)/);
+              if (m) headings.push(m[1].trim());
             }
           }
-        } catch { addLog("Document parsing failed", "info"); }
-        updateStage(id, "done", `${files.length} source${files.length > 1 ? "s" : ""} indexed`);
+          if (headings.length > 0) setDocHeadings(headings);
+          const elapsed = Math.round(performance.now() - t0);
+          setLatencyMs(elapsed);
+          const totalWords = collectedDocs.reduce((sum, d) => sum + d.text.split(/\s+/).length, 0);
+          addLog(`${collectedDocs.length} source(s) ready — ${totalWords.toLocaleString()} words`, "success");
+          setContextCard((prev) => ({
+            ...prev,
+            description: `Grounded in ${collectedDocs.length} source${collectedDocs.length > 1 ? "s" : ""} (${totalWords.toLocaleString()} words).`,
+            status: "Grounded",
+          }));
+
+          const firstDocText = collectedDocs[0]?.text || "";
+          if (firstDocText.length > 50 && !firstDocText.startsWith("[Failed")) {
+            try {
+              addLog("Extracting topic title…", "info");
+              const titleRes = await fetch("/api/extract-title", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ text: firstDocText }),
+              });
+              if (titleRes.ok) {
+                const { title: extracted } = await titleRes.json() as { title: string };
+                if (extracted && extracted.length < 80) {
+                  setCanvasTitle(extracted);
+                  addLog(`Topic: "${extracted}"`, "success");
+                }
+              }
+            } catch { /* best-effort */ }
+          }
+        }
+
+        updateStage(id, "done", `${collectedDocs.length} source${collectedDocs.length !== 1 ? "s" : ""} indexed`);
 
       } else if (id === "tutor") {
         updateStage(id, "active", `Warming up ${displayP}...`);
@@ -225,38 +281,17 @@ export default function WorkspaceView() {
             }).catch(() => addLog("Embedding index skipped (keyword fallback active)", "info"))
           : Promise.resolve();
 
-        const tutorWarmup = fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            query: `Write a brief 2-sentence introduction to "${displayQ}" for a student just starting to learn. Be clear and engaging. No bullet points, no headers — plain prose only.`,
-            persona: displayP,
-            history: [],
-            mode: "tutor",
-          }),
-        });
-
-        const [, , tutorRes] = await Promise.all([studyPlanPromise, embedPromise, tutorWarmup]);
-        const elapsed = Math.round(performance.now() - t0);
+        const t1 = performance.now();
+        await Promise.all([studyPlanPromise, embedPromise]);
+        const elapsed = Math.round(performance.now() - t1);
         setLatencyMs(elapsed);
 
-        try {
-          if (tutorRes.ok) {
-            const data = await tutorRes.json();
-            const preview = data.tutor?.explanation || data.rawResponse || "";
-            if (preview) {
-              addLog(`AI ready — "${preview.slice(0, 80)}${preview.length > 80 ? "..." : ""}"`, "success");
-              setIntroText(preview);
-            } else {
-              addLog(`AI connected in ${elapsed}ms`, "success");
-            }
-            setContextCard((prev) => ({
-              ...prev,
-              tags: [{ label: displayP, color: "#7c3aed" }, { label: `${elapsed}ms`, color: "#06b6d4" }, { label: "Ready", color: "#10b981" }],
-              status: "AI Ready",
-            }));
-          }
-        } catch { addLog("AI warmup skipped", "info"); }
+        addLog(`AI connected in ${elapsed}ms`, "success");
+        setContextCard((prev) => ({
+          ...prev,
+          tags: [{ label: displayP, color: "#7c3aed" }, { label: `${elapsed}ms`, color: "#06b6d4" }, { label: "Ready", color: "#10b981" }],
+          status: "AI Ready",
+        }));
         updateStage(id, "done", `${displayP} online`);
 
       } else if (id === "canvas") {
@@ -279,6 +314,24 @@ export default function WorkspaceView() {
 
     addLog("All systems nominal — launching workspace", "success");
     await sleep(800);
+
+    // Auto-fire first AI turn if this is a fresh session (no prior messages)
+    const existingMessages = useSessionStore.getState().messages;
+    if (existingMessages.length === 0) {
+      const plan = useGroundingStore.getState().studyPlan;
+      if (isTopicQuery(displayQ) && plan && plan.modules.length > 1) {
+        // Full workflow: queue every module as a sequential prompt
+        const queue = [
+          displayQ,
+          ...plan.modules.slice(1).map((m) => `Continue with: ${m.title} — ${m.description}`),
+        ];
+        useSessionStore.getState().setModuleQueue(queue);
+      } else {
+        // Default: single turn, user drives from there
+        useSessionStore.getState().setPendingVoiceText(displayQ);
+      }
+    }
+
     setShowBridge(false);
   }
 
@@ -349,11 +402,12 @@ export default function WorkspaceView() {
               <LeftSidebar
                 open={leftSidebarOpen}
                 onToggle={() => setLeftSidebarOpen(!leftSidebarOpen)}
+                onZoomToGroup={(groupId) => artifactCanvasRef.current?.zoomToGroup(groupId)}
               />
 
               {/* Canvas area */}
               <div className="flex-1 min-w-0 relative">
-                <ArtifactCanvas topic={displayTitle} intro={introText} />
+                <ArtifactCanvas ref={artifactCanvasRef} topic={displayTitle} intro={introText} />
 
                 {/* Sources panel (floating, top-right) */}
                 {showSources && files.length > 0 && (
@@ -388,4 +442,12 @@ export default function WorkspaceView() {
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Returns true if the query looks like a topic/subject rather than a question. */
+function isTopicQuery(query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (q.endsWith("?")) return false;
+  if (/^(what|how|why|when|where|who|explain|tell|describe|define|show me|can you)/.test(q)) return false;
+  return true;
 }

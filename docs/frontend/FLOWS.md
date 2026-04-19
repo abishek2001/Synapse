@@ -17,8 +17,16 @@
 9. Workspace `motion.div` animates in.
 10. Canvas starts in **Interaction** mode. `CanvasInputBar` mounts with a welcome message.
 11. User types a question. `CanvasInputBar` calls `useAIChat.sendMessage(text)`.
-12. Strategy agent runs → hint injected into `/api/chat`.
-13. Response artifacts → `addElement(...)` calls → new `ElementCard` components appear, grouped under a `CanvasGroup`, with an animated purple connection from prior group.
+12. Canvas context serialized (existing element titles/types) and sent to `/api/chat`.
+13. SSE stream opens. Events arrive in order:
+    - `thinking` → no visible action
+    - `artifact_pending` → `addPendingElement` → `SkeletonCard` appears at next canvas position
+    - `artifact_done` → `resolvePendingElement` → skeleton replaced by real artifact
+    - `tutor_response` → `writtenText` added to transcript + placed as text element on canvas; `questionsForUser` → tier-1 (violet) chips
+    - `follow_up` → tier-2 (neutral) strategy chips appended above `CanvasInputBar`
+    - `done` → contextPatch applied, artifacts grouped via `addModule(title, artifacts, undefined, writtenText)`, `speakReady = true`
+14. Speak button appears in `CanvasInputBar`. User clicks → TTS plays the explanation.
+15. Clicking a follow-up chip → `sendMessage(chip text)` → new turn begins.
 
 ---
 
@@ -48,8 +56,72 @@
    - `POST /api/parse-doc` → extracts text
    - `POST /api/embed` → indexes chunks
 6. `BridgeScreen` stage "Parsing sources" shows filename(s) in the log.
-7. Workspace loads. AI has `documentContext` injected into every `/api/chat` call.
-8. Generated groups are grounded in the document content.
+7. H1/H2 headings extracted from parsed text → stored in `useSessionStore.docHeadings` → `LeftSidebar` shows "Document" outline immediately.
+8. Workspace loads. AI has `documentContext` injected into every `/api/chat` call.
+9. Generated groups are grounded in the document content.
+
+---
+
+## Flow 3b — URL Submission
+
+**Entry point**: Landing page `/`
+
+1. User types a URL (e.g. `https://en.wikipedia.org/wiki/Photosynthesis`) into `InputBar` — either alone or mixed with a question.
+2. `isLikelyUrl(query)` detects it → URL detected banner appears below the input ("URL will be fetched").
+3. User clicks "Enter Synapse".
+4. `detectUrls(query)` extracts all URLs from the text.
+5. `initSession(query, persona, files, urls)` called — URLs stored in `useSessionStore.urls`.
+6. Router pushes `/workspace?q=...&persona=...`.
+7. `WorkspaceView` mounts. Bridge sequence runs:
+   - If `urls.length > 0`, bridge shows "source" stage: "Fetching [hostname]…" in the log.
+   - Each URL is fetched via `POST /api/fetch-url` → Jina Reader converts to clean markdown.
+   - Collected docs merged with any uploaded files → `setDocuments(collectedDocs)`.
+   - `POST /api/extract-title` extracts a short topic title → sets `canvasTitle`.
+8. After documents are committed, H1/H2 headings are extracted from all doc text via regex and stored in `useSessionStore.docHeadings`. `LeftSidebar` immediately shows them as a "Document" outline (visible before any AI chat groups exist).
+9. `BridgeScreen` exits. AI has full `documentContext` from the fetched URL content.
+10. Canvas title shows the extracted topic (e.g. "Photosynthesis: Light Reactions").
+
+---
+
+## Flow 3c — TOC Navigation (Bundle D)
+
+**Entry point**: Workspace with at least one group on canvas
+
+1. User opens the left sidebar (hamburger icon in `WorkspaceNavbar` or sidebar toggle).
+2. `LeftSidebar` renders all groups sorted by `orderIndex`, each showing: number chip, name, element type icons, element count.
+3. User clicks a group row.
+4. `onZoomToGroup(group.id)` fires → `artifactCanvasRef.current?.zoomToGroup(groupId)` in `WorkspaceView`.
+5. `ArtifactCanvas.zoomToGroup` reads current elements, calls `computeGroupBounds(groupId, elements)`, then `canvasHandleRef.current.zoomToRect(...)`.
+6. Canvas smoothly pans and zooms to frame that group with 60px padding.
+
+---
+
+## Flow 3d — Session Persistence (Bundle E)
+
+**Entry point**: Any workspace session
+
+1. As canvas groups/elements are added, Zustand `persist` middleware auto-writes `{ elements, groups, connections, updates }` to `localStorage["synapse-canvas"]`.
+2. Session metadata (`query, persona, messages, canvasTitle, urls`) auto-persists to `localStorage["synapse-session"]`.
+3. User closes tab / navigates away.
+4. User returns to `/workspace?q=...`.
+5. Both stores hydrate from `localStorage` before first render — canvas and conversation history are restored.
+6. Heavy payloads (file base64, document text) are excluded from persistence (not stored in localStorage).
+
+---
+
+## Flow 3b — Delayed Speech & Follow-Up Chips
+
+**Entry point**: Workspace, after AI response arrives
+
+1. AI turn completes: `done` SSE event fires.
+2. `speakReady = true` in session store.
+3. `Volume2` (Speak) button appears to the left of the Send button in `CanvasInputBar`.
+4. 2-3 follow-up chips appear above the input pill (e.g. "How does this relate to X?", "Show me an example").
+5. User clicks **Speak** → `speakLatest()` → TTS reads the explanation aloud.
+6. While speaking: `isSpeaking = true` → RightSidebar auto-opens.
+7. `speak()` fires `SpeechSynthesisUtterance.onboundary` on each word → word-boundary callback calls `setLiveCaption(word)` → caption strip in RightSidebar updates word-by-word in real time.
+8. Speaking ends → `setSpeaking(false)` + `setLiveCaption("")` → caption strip collapses.
+9. User clicks a **chip** → `sendMessage(chip text)` → new turn. Chips disappear immediately.
 
 ---
 

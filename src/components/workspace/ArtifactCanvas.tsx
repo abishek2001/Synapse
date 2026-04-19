@@ -3,7 +3,7 @@
 import { useCanvasStore, type CanvasElement, type CanvasStroke, ELEM_WIDTHS, estimateElemH } from "@/store/canvas";
 import { useUIStore } from "@/store/ui";
 import { AnimatePresence, motion } from "framer-motion";
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from "react";
 import ElementCard from "./ElementCard";
 import StrokeElement from "./StrokeElement";
 import GroupBoundary, { computeGroupBounds } from "./GroupBoundary";
@@ -12,6 +12,10 @@ import HandTrackingOverlay, { type HandGestureEvent } from "./HandTrackingOverla
 import DoubtPopup from "./DoubtPopup";
 import SelectionBar from "./SelectionBar";
 import CanvasContextMenu from "./CanvasContextMenu";
+
+export interface ArtifactCanvasHandle {
+  zoomToGroup: (groupId: string) => void;
+}
 
 const STICKY_COLORS = ["#fef08a", "#bbf7d0", "#bfdbfe", "#fecaca", "#e9d5ff", "#fed7aa"];
 const TITLE_Y = 50;
@@ -22,7 +26,7 @@ interface ArtifactCanvasProps {
   intro?: string;
 }
 
-export default function ArtifactCanvas({ topic, intro }: ArtifactCanvasProps) {
+const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(function ArtifactCanvas({ topic, intro }, ref) {
   const {
     elements,
     groups,
@@ -53,6 +57,15 @@ export default function ArtifactCanvas({ topic, intro }: ArtifactCanvasProps) {
   const [hoveredGroupId, setHoveredGroupId] = useState<string | null>(null);
   const canvasHandleRef = useRef<InfiniteCanvasHandle>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    zoomToGroup(groupId: string) {
+      const els = useCanvasStore.getState().elements;
+      const scale = useUIStore.getState().canvasScale;
+      const bounds = computeGroupBounds(groupId, els, scale);
+      if (bounds) canvasHandleRef.current?.zoomToRect(bounds.x, bounds.y, bounds.w, bounds.h, 60);
+    },
+  }));
 
   // Per-element undo on dismiss
   const [undoStack, setUndoStack] = useState<CanvasElement[]>([]);
@@ -194,7 +207,7 @@ export default function ArtifactCanvas({ topic, intro }: ArtifactCanvasProps) {
   /** Find the group that owns a world coordinate. */
   const hitTestGroup = useCallback((worldX: number, worldY: number) => {
     for (const group of groups) {
-      const bounds = computeGroupBounds(group.id, elements);
+      const bounds = computeGroupBounds(group.id, elements, canvasScale);
       if (!bounds) continue;
       if (worldX >= bounds.x && worldX <= bounds.x + bounds.w &&
           worldY >= bounds.y && worldY <= bounds.y + bounds.h) {
@@ -202,7 +215,7 @@ export default function ArtifactCanvas({ topic, intro }: ArtifactCanvasProps) {
       }
     }
     return null;
-  }, [groups, elements]);
+  }, [groups, elements, canvasScale]);
 
   // ── Canvas event handlers ────────────────────────────────────────────────────
 
@@ -212,7 +225,7 @@ export default function ArtifactCanvas({ topic, intro }: ArtifactCanvasProps) {
       // Zoom to the element's group, or just the element if ungrouped
       const groupId = hitEl.groupId;
       const bounds = groupId
-        ? computeGroupBounds(groupId, elements)
+        ? computeGroupBounds(groupId, elements, canvasScale)
         : { x: hitEl.x - 32, y: hitEl.y - 32, w: hitEl.w + 64, h: 360 };
       if (bounds) {
         canvasHandleRef.current?.zoomToRect(bounds.x, bounds.y, bounds.w, bounds.h, 60);
@@ -222,7 +235,7 @@ export default function ArtifactCanvas({ topic, intro }: ArtifactCanvasProps) {
 
     const hitGrp = hitTestGroup(worldX, worldY);
     if (hitGrp) {
-      const bounds = computeGroupBounds(hitGrp.id, elements);
+      const bounds = computeGroupBounds(hitGrp.id, elements, canvasScale);
       if (bounds) canvasHandleRef.current?.zoomToRect(bounds.x, bounds.y, bounds.w, bounds.h, 60);
       return;
     }
@@ -274,20 +287,34 @@ export default function ArtifactCanvas({ topic, intro }: ArtifactCanvasProps) {
     }
   }, [addElement, clearSelection, elements.length]);
 
-  // ── Fit-all when groups change ───────────────────────────────────────────────
+  // ── Zoom when groups change ──────────────────────────────────────────────────
 
+  const prevGroupCountRef = useRef(0);
   useEffect(() => {
-    if (elements.length === 0) return;
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const el of elements) {
-      const elH = el.h ?? el.stroke?.height ?? estimateElemH(el.type);
-      minX = Math.min(minX, el.x);
-      minY = Math.min(minY, el.y);
-      maxX = Math.max(maxX, el.x + el.w);
-      maxY = Math.max(maxY, el.y + elH);
+    const delta = groups.length - prevGroupCountRef.current;
+    prevGroupCountRef.current = groups.length;
+    if (groups.length === 0) return;
+
+    if (delta === 1) {
+      // Single new group added by AI — zoom to it so it appears at comfortable size
+      const newGroup = groups[groups.length - 1];
+      const bounds = computeGroupBounds(newGroup.id, elements, canvasScale);
+      if (bounds) {
+        canvasHandleRef.current?.zoomToRect(bounds.x, bounds.y, bounds.w, bounds.h, 80);
+      }
+    } else {
+      // Multiple groups at once (mock load, initial restore) — fit everything
+      if (elements.length === 0) return;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const el of elements) {
+        const elH = el.h ?? el.stroke?.height ?? estimateElemH(el.type);
+        minX = Math.min(minX, el.x);
+        minY = Math.min(minY, el.y);
+        maxX = Math.max(maxX, el.x + el.w);
+        maxY = Math.max(maxY, el.y + elH);
+      }
+      canvasHandleRef.current?.fitAll({ x: minX - 60, y: minY - 60, w: maxX - minX + 120, h: maxY - minY + 120 });
     }
-    canvasHandleRef.current?.fitAll({ x: minX - 60, y: minY - 60, w: maxX - minX + 120, h: maxY - minY + 120 });
-  // Only re-fit when group count changes (new module added by AI)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groups.length]);
 
@@ -300,6 +327,8 @@ export default function ArtifactCanvas({ topic, intro }: ArtifactCanvasProps) {
   const penColor = darkMode ? "rgba(124,58,237,0.8)" : "rgba(124,58,237,0.7)";
 
   const handleToolChange = useCallback((t: CanvasTool) => setTool(t), []);
+
+  const { setCanvasScale: setGlobalCanvasScale } = useUIStore();
 
   return (
     <>
@@ -321,7 +350,7 @@ export default function ArtifactCanvas({ topic, intro }: ArtifactCanvasProps) {
           darkMode={darkMode}
           onStrokeComplete={handleStrokeComplete}
           strokeColor={penColor}
-          onTransformChange={(t) => setCanvasScale(t.scale)}
+          onTransformChange={(t) => { setCanvasScale(t.scale); setGlobalCanvasScale(t.scale); }}
         >
           {topic && <CanvasTitle topic={topic} dark={darkMode} />}
           {intro && <CanvasIntroText intro={intro} dark={darkMode} />}
@@ -338,6 +367,7 @@ export default function ArtifactCanvas({ topic, intro }: ArtifactCanvasProps) {
                 elements={members}
                 hasSelectedMember={hasSelected}
                 isHovered={hoveredGroupId === group.id}
+                canvasScale={canvasScale}
               />
             );
           })}
@@ -498,7 +528,9 @@ export default function ArtifactCanvas({ topic, intro }: ArtifactCanvasProps) {
       </div>
     </>
   );
-}
+});
+
+export default ArtifactCanvas;
 
 /* ──── Canvas Title ──── */
 

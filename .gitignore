@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Kokoro TTS model files (large binaries, download via scripts/download-kokoro.mjs)
+/public/models/

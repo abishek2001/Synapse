@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
 import type { SceneConfig } from "@/lib/scene-types";
 
 export interface UploadedFile {
@@ -24,6 +25,7 @@ interface SessionState {
   query: string;
   persona: string;
   files: UploadedFile[];
+  urls: string[];           // URLs submitted alongside the query
   documents: ParsedDocument[];
   documentContext: string;
   sessionId: string | null;
@@ -44,9 +46,14 @@ interface SessionState {
   showCallFriend: boolean;
   voiceMode: boolean;
   liveCaption: string;
+  followUpQuestions: string[];
+  speakReady: boolean; // explanation is ready but TTS hasn't auto-played — user clicks Speak
 
-  initSession: (query: string, persona: string, files: UploadedFile[]) => void;
+  docHeadings: string[];
+
+  initSession: (query: string, persona: string, files: UploadedFile[], urls?: string[]) => void;
   setDocuments: (docs: ParsedDocument[]) => void;
+  setDocHeadings: (headings: string[]) => void;
   setCanvasTitle: (title: string) => void;
   addMessage: (msg: Message) => void;
   setStreaming: (v: boolean) => void;
@@ -60,6 +67,11 @@ interface SessionState {
   setShowCallFriend: (v: boolean) => void;
   setVoiceMode: (v: boolean) => void;
   setLiveCaption: (text: string) => void;
+  setFollowUpQuestions: (questions: string[]) => void;
+  setSpeakReady: (v: boolean) => void;
+  moduleQueue: string[];
+  setModuleQueue: (queue: string[]) => void;
+  shiftModuleQueue: () => void;
   reset: () => void;
 }
 
@@ -67,6 +79,7 @@ const initialState = {
   query: "",
   persona: "professor",
   files: [] as UploadedFile[],
+  urls: [] as string[],
   documents: [] as ParsedDocument[],
   documentContext: "",
   sessionId: null as string | null,
@@ -83,22 +96,32 @@ const initialState = {
   showCallFriend: false,
   voiceMode: false,
   liveCaption: "",
+  followUpQuestions: [] as string[],
+  speakReady: false,
+  docHeadings: [] as string[],
+  moduleQueue: [] as string[],
 };
 
-export const useSessionStore = create<SessionState>((set) => ({
+export const useSessionStore = create<SessionState>()(
+  persist(
+    (set) => ({
   ...initialState,
 
-  initSession: (query, persona, files) =>
+  initSession: (query, persona, files, urls = []) =>
     set({
       query,
       persona,
       files,
+      urls,
       documents: [],
       documentContext: "",
       sessionId: crypto.randomUUID(),
+      canvasTitle: null,
       messages: [],
       sceneConfig: null,
-      showSources: files.length > 0,
+      followUpQuestions: [],
+      moduleQueue: [],
+      showSources: files.length > 0 || urls.length > 0,
     }),
 
   setDocuments: (docs) =>
@@ -132,5 +155,27 @@ export const useSessionStore = create<SessionState>((set) => ({
   setShowCallFriend: (showCallFriend) => set({ showCallFriend }),
   setVoiceMode: (voiceMode) => set({ voiceMode }),
   setLiveCaption: (liveCaption) => set({ liveCaption }),
+  setFollowUpQuestions: (followUpQuestions) => set({ followUpQuestions }),
+  setSpeakReady: (speakReady) => set({ speakReady }),
+  setDocHeadings: (docHeadings) => set({ docHeadings }),
+  setModuleQueue: (moduleQueue) => set({ moduleQueue }),
+  shiftModuleQueue: () => set((s) => ({ moduleQueue: s.moduleQueue.slice(1) })),
   reset: () => set(initialState),
-}));
+    }),
+    {
+      name: "synapse-session",
+      storage: createJSONStorage(() => localStorage),
+      // Persist conversation context; exclude large binary/text payloads and transient UI
+      partialize: (s) => ({
+        query: s.query,
+        persona: s.persona,
+        sessionId: s.sessionId,
+        canvasTitle: s.canvasTitle,
+        messages: s.messages,
+        urls: s.urls,
+        followUpQuestions: s.followUpQuestions,
+        docHeadings: s.docHeadings,
+      }),
+    },
+  ),
+);

@@ -102,6 +102,53 @@ This means the tutor LLM receives both:
 
 ---
 
+## SSE Streaming
+
+The orchestrator no longer returns a value. Instead, every significant event is emitted via an `onEvent` callback, which the `/api/chat` route encodes as `text/event-stream`.
+
+```ts
+runOrchestrator(input, onEvent?: (e: StreamEvent) => void)
+```
+
+**`StreamEvent` union** (`src/lib/agents/types.ts`):
+```ts
+| { type: "thinking"; message: string }
+| { type: "artifact_pending"; pendingId: string; artifactType: string; title: string }
+| { type: "artifact_done"; pendingId: string; artifact: CanvasArtifact }
+| { type: "tutor_response"; writtenText: string; spokenText: string; questionsForUser: string[] }
+| { type: "follow_up"; questions: string[] }
+| { type: "pause_for_input" }
+| { type: "done"; contextPatch: SessionContextPatch }
+| { type: "error"; message: string }
+```
+
+**Emission order per turn**:
+1. `thinking` (strategy reasoning)
+2. One `artifact_pending` → `artifact_done` pair per tool call
+3. `tutor_response` (after `parseTutorResponse()` on the final LLM text)
+4. `follow_up` (from strategy agent's `followUpQuestions`)
+5. `done`
+
+---
+
+## Structured Tutor Response
+
+The tutor LLM is instructed to return JSON in this shape:
+
+```json
+{
+  "writtenText": "Concise markdown prose for the canvas text element",
+  "spokenText": "Natural spoken sentence(s) for TTS — no markdown",
+  "questionsForUser": ["Question 1?", "Question 2?"]
+}
+```
+
+`parseTutorResponse()` (`src/lib/agents/tutor.ts`) strips code fences, parses JSON, and falls back gracefully (raw text as `writtenText`, first sentence as `spokenText`, empty `questionsForUser`) if the model doesn't comply.
+
+**Important**: only the final tool-loop round (where `tool_calls` is absent) is captured as the tutor response. Intermediate rounds with tool calls are ignored even if they contain text.
+
+---
+
 ## Input / Output Types
 
 ```ts
@@ -112,19 +159,11 @@ interface OrchestratorInput {
   persona: string;
   history: AgentMessage[];
   documentContext?: string;
+  canvasContext?: string;     // serialized existing canvas elements — avoids duplicates
   sessionContext: SessionContext | null;
   studyPlan: StudyPlan | null;
   mode?: "tutor" | "friend";
 }
 
-interface OrchestratorResult {
-  type: "tutor" | "friend";
-  tutor?: { explanation: string };
-  friend?: { analogy: string; followUp: string };
-  artifacts: CanvasArtifact[];
-  canvasAnnotations: DelegatedAnnotation[];
-  decision: { action, reasoning, suggestedPrompt } | null;
-  contextPatch: SessionContextPatch;
-  rawResponse: string;
-}
+// No return value — all output is via onEvent callbacks
 ```

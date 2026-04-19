@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
+import { useUIStore } from "./ui";
 import type {
   CanvasArtifact,
   FlashcardArtifact,
@@ -90,6 +92,9 @@ export interface CanvasElement {
   groupId?: string;
   zIndex: number;
   createdAt: number;
+  pending?: boolean; // true while AI is still generating — shows SkeletonCard
+  /** Canvas zoom level at element creation — used for birth-scale counter-transform */
+  birthScale?: number;
   // Payload — exactly one is populated based on type
   artifact?: CanvasArtifact; // for flashcard / graph / notation / visual / lookup / simulation
   text?: TextData;            // for "text"
@@ -158,6 +163,8 @@ interface CanvasState {
 
   // Element actions
   addElement: (el: CanvasElement) => void;
+  addPendingElement: (el: CanvasElement) => void;
+  resolvePendingElement: (id: string, artifact: CanvasArtifact) => void;
   moveElement: (id: string, x: number, y: number) => void;
   removeElement: (id: string) => void;
   setElementHeight: (id: string, h: number) => void;
@@ -174,7 +181,8 @@ interface CanvasState {
   clearSelection: () => void;
 
   // High-level "add module" (called by AI chat — creates elements + group)
-  addModule: (title: string, artifacts: CanvasArtifact[], crumbs?: Crumb[]) => void;
+  // writtenText: if provided, placed as a text element at the top of the group
+  addModule: (title: string, artifacts: CanvasArtifact[], crumbs?: Crumb[], writtenText?: string) => void;
 
   // Connections
   addConnection: (conn: ModuleConnection) => void;
@@ -206,6 +214,13 @@ function uid() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
+/** Birth scale is always 1 — counter-scale only activates when zoomed IN past 1×.
+ *  This keeps every element's world-space footprint equal to its logical width/height,
+ *  which makes group bounds and layout spacing always correct. */
+function getBirthScale(): number {
+  return 1;
+}
+
 /**
  * Find the X coordinate to the right of all existing elements.
  * New groups are placed horizontally so the canvas grows rightward.
@@ -230,6 +245,7 @@ function layoutArtifacts(
   let rowY = startY;
   let rowMaxH = 0;
   let col = 0;
+  const birthScale = getBirthScale();
 
   for (let i = 0; i < artifacts.length; i++) {
     const art = artifacts[i];
@@ -246,6 +262,7 @@ function layoutArtifacts(
       zIndex: zBase + i,
       createdAt: Date.now() + i,
       artifact: art,
+      birthScale,
     });
 
     rowMaxH = Math.max(rowMaxH, h);
@@ -1178,7 +1195,9 @@ function update(t) {
 
 // ─── Store ────────────────────────────────────────────────────────────────────
 
-export const useCanvasStore = create<CanvasState>((set, get) => ({
+export const useCanvasStore = create<CanvasState>()(
+  persist(
+    (set, get) => ({
   elements: [],
   groups: [],
   connections: [],
@@ -1190,7 +1209,24 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   // ── Element actions ─────────────────────────────────────────────────────────
 
-  addElement: (el) => set((s) => ({ elements: [...s.elements, el] })),
+  addElement: (el) =>
+    set((s) => ({
+      elements: [...s.elements, { birthScale: getBirthScale(), ...el }],
+    })),
+
+  addPendingElement: (el) =>
+    set((s) => ({
+      elements: [...s.elements, { birthScale: getBirthScale(), ...el, pending: true }],
+    })),
+
+  resolvePendingElement: (id, artifact) =>
+    set((s) => ({
+      elements: s.elements.map((e) =>
+        e.id === id
+          ? { ...e, pending: false, artifact, type: artifact.type as ElementType }
+          : e,
+      ),
+    })),
 
   moveElement: (id, x, y) =>
     set((s) => ({ elements: s.elements.map((e) => e.id === id ? { ...e, x, y } : e) })),
@@ -1270,7 +1306,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   // ── addModule: high-level (called by AI chat) ─────────────────────────────
 
-  addModule: (title, artifacts, _crumbs) =>
+  addModule: (title, artifacts, _crumbs, writtenText) =>
     set((s) => {
       const groupIdx = s.groups.length;
       const groupId = `grp-${uid()}`;
@@ -1282,7 +1318,30 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       };
 
       const startX = nextGroupStartX(s.elements);
-      const newEls = layoutArtifacts(artifacts, groupId, startX, CANVAS_START_Y, groupIdx * 100);
+      const zBase = groupIdx * 100;
+
+      // Text element at top of group (tutor's written explanation)
+      const textEl: CanvasElement | null = writtenText
+        ? {
+            id: `el-txt-${uid()}`,
+            type: "text",
+            x: startX,
+            y: CANVAS_START_Y,
+            w: Math.max(ELEM_WIDTHS.text ?? 480, (ELEM_WIDTHS[artifacts[0]?.type] ?? 360) * Math.min(artifacts.length, 2) + ELEM_GAP * (Math.min(artifacts.length, 2) - 1)),
+            groupId,
+            zIndex: zBase,
+            createdAt: Date.now(),
+            text: { content: writtenText, style: "body" },
+            birthScale: getBirthScale(),
+          }
+        : null;
+
+      // Lay out artifacts below the text element
+      const artifactStartY = textEl
+        ? CANVAS_START_Y + (ELEM_H_EST.text ?? 52) + ELEM_GAP
+        : CANVAS_START_Y;
+
+      const newEls = layoutArtifacts(artifacts, groupId, startX, artifactStartY, zBase + 1);
 
       // Connect to previous group
       const prevGroup = s.groups[groupIdx - 1];
@@ -1294,14 +1353,16 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         id: `upd-${uid()}`,
         type: "module_added",
         title: `Added: ${title}`,
-        detail: `${artifacts.length} artifact${artifacts.length !== 1 ? "s" : ""} on canvas`,
+        detail: `${artifacts.length} artifact${artifacts.length !== 1 ? "s" : ""}${writtenText ? " + explanation" : ""} on canvas`,
         timestamp: Date.now(),
         moduleId: groupId,
       };
 
+      const allNewEls = textEl ? [textEl, ...newEls] : newEls;
+
       return {
         groups: [...s.groups, group],
-        elements: [...s.elements, ...newEls],
+        elements: [...s.elements, ...allNewEls],
         connections: newConn ? [...s.connections, newConn] : s.connections,
         updates: [...s.updates, updateEvent],
       };
@@ -1359,4 +1420,17 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
 
   clearCanvas: () =>
     set({ elements: [], groups: [], connections: [], updates: [], selectedElementIds: [], strokes: [] }),
-}));
+    }),
+    {
+      name: "synapse-canvas",
+      storage: createJSONStorage(() => localStorage),
+      // Persist the whiteboard content; exclude transient/ephemeral state
+      partialize: (s) => ({
+        elements: s.elements,
+        groups: s.groups,
+        connections: s.connections,
+        updates: s.updates,
+      }),
+    },
+  ),
+);

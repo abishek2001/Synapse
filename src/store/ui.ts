@@ -22,6 +22,8 @@ interface UIState {
   updatesExpanded: boolean;
   doubtPopup: DoubtPopup | null;
   contextMenu: ContextMenuState | null;
+  /** Current canvas zoom level — synced from InfiniteCanvas.onTransformChange */
+  canvasScale: number;
 
   toggleDarkMode: () => void;
   setLeftSidebarOpen: (v: boolean) => void;
@@ -32,6 +34,7 @@ interface UIState {
   closeDoubtPopup: () => void;
   openContextMenu: (state: ContextMenuState) => void;
   closeContextMenu: () => void;
+  setCanvasScale: (v: number) => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -42,6 +45,7 @@ export const useUIStore = create<UIState>((set) => ({
   updatesExpanded: true,
   doubtPopup: null,
   contextMenu: null,
+  canvasScale: 1,
 
   toggleDarkMode: () => set((s) => ({ darkMode: !s.darkMode })),
   setLeftSidebarOpen: (leftSidebarOpen) => set({ leftSidebarOpen }),
@@ -53,4 +57,5 @@ export const useUIStore = create<UIState>((set) => ({
   closeDoubtPopup: () => set({ doubtPopup: null }),
   openContextMenu: (contextMenu) => set({ contextMenu }),
   closeContextMenu: () => set({ contextMenu: null }),
+  setCanvasScale: (canvasScale) => set({ canvasScale }),
 }));

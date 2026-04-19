@@ -330,7 +330,7 @@ export default function DiagramCard({ artifact }: Props) {
                   />
                 ) : shape === "circle" ? (
                   <circle
-                    cx={pos.x} cy={pos.y}
+                    cx={pos.x ?? 0} cy={pos.y ?? 0}
                     r={h / 2 + 8}
                     fill={isHov ? "rgba(30,20,50,0.95)" : "rgba(18,14,32,0.92)"}
                     stroke={isHov ? color : `${color}60`}
@@ -351,7 +351,7 @@ export default function DiagramCard({ artifact }: Props) {
 
                 {/* Color accent dot */}
                 <circle
-                  cx={x + 10} cy={pos.y - (hasDesc ? 10 : 0)}
+                  cx={(x ?? 0) + 10} cy={(pos.y ?? 0) - (hasDesc ? 10 : 0)}
                   r={3}
                   fill={color}
                   opacity={0.8}

@@ -1,8 +1,8 @@
 "use client";
 
 import { useRef, useEffect } from "react";
-import { motion } from "framer-motion";
-import { Sparkles, ChevronDown, ChevronUp } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Sparkles, ChevronDown, ChevronUp, Volume2 } from "lucide-react";
 import { useSessionStore } from "@/store/session";
 import { useCanvasStore } from "@/store/canvas";
 import { useUIStore } from "@/store/ui";
@@ -26,17 +26,25 @@ interface RightSidebarProps {
   onToggle: () => void;
 }
 
-export default function RightSidebar({ open }: RightSidebarProps) {
-  const { messages, isStreaming } = useSessionStore();
+export default function RightSidebar({ open, onToggle }: RightSidebarProps) {
+  const { messages, isStreaming, isSpeaking, liveCaption } = useSessionStore();
   const { updates } = useCanvasStore();
   const { darkMode, transcriptExpanded, updatesExpanded, setTranscriptExpanded, setUpdatesExpanded } = useUIStore();
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Auto-scroll transcript when messages arrive
   useEffect(() => {
     if (open && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, open]);
+
+  // Auto-open sidebar when AI starts speaking
+  useEffect(() => {
+    if (isSpeaking && !open) {
+      onToggle();
+    }
+  }, [isSpeaking, open, onToggle]);
 
   const surface = darkMode ? "#0a0a18" : "#ffffff";
   const border = darkMode ? "border-white/[0.05]" : "border-black/[0.06]";
@@ -57,6 +65,49 @@ export default function RightSidebar({ open }: RightSidebarProps) {
       style={{ backgroundColor: surface }}
     >
       <div className="w-[256px] h-full flex flex-col overflow-hidden">
+
+        {/* Live caption strip — shown while AI is speaking */}
+        <AnimatePresence>
+          {isSpeaking && liveCaption && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className={`flex-shrink-0 overflow-hidden border-b ${sectionBorder}`}
+            >
+              <div className="px-3 py-2.5 flex items-start gap-2">
+                <Volume2 className={`w-3 h-3 mt-0.5 flex-shrink-0 ${darkMode ? "text-violet-400/60" : "text-violet-500/50"}`} />
+                <p className={`text-[11px] leading-relaxed ${darkMode ? "text-white/45" : "text-black/45"}`}>
+                  {liveCaption}
+                </p>
+              </div>
+            </motion.div>
+          )}
+          {isSpeaking && !liveCaption && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className={`flex-shrink-0 overflow-hidden border-b ${sectionBorder}`}
+            >
+              <div className="px-3 py-2.5 flex items-center gap-2">
+                <Volume2 className={`w-3 h-3 flex-shrink-0 ${darkMode ? "text-violet-400/60" : "text-violet-500/50"}`} />
+                <div className="flex items-center gap-1">
+                  {[0, 1, 2].map((i) => (
+                    <span
+                      key={i}
+                      className={`w-1 h-1 rounded-full animate-pulse ${darkMode ? "bg-violet-400/50" : "bg-violet-500/40"}`}
+                      style={{ animationDelay: `${i * 150}ms` }}
+                    />
+                  ))}
+                </div>
+                <span className={`text-[10px] ${darkMode ? "text-white/25" : "text-black/25"}`}>speaking…</span>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Transcript */}
         <div className="flex-1 flex flex-col min-h-0">

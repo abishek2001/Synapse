@@ -1,7 +1,31 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, Component, type ReactNode, type ErrorInfo } from "react";
 import { motion } from "framer-motion";
+
+// ── Error Boundary ──────────────────────────────────────────────────────────────
+
+interface EBProps { children: ReactNode; type: string }
+interface EBState { error: string | null }
+
+class CardErrorBoundary extends Component<EBProps, EBState> {
+  state: EBState = { error: null };
+  static getDerivedStateFromError(e: Error): EBState { return { error: e.message }; }
+  componentDidCatch(e: Error, info: ErrorInfo) {
+    console.error(`[${this.props.type} card error]`, e, info.componentStack);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="rounded-xl p-4 text-[11px]" style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", color: "rgba(239,68,68,0.7)" }}>
+          <span className="font-semibold uppercase tracking-wider">{this.props.type}</span> render error
+          <p className="mt-1 opacity-60 font-mono break-all">{this.state.error}</p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 import { X, GripHorizontal } from "lucide-react";
 import { useCanvasStore, type CanvasElement } from "@/store/canvas";
 import { useUIStore } from "@/store/ui";
@@ -13,6 +37,7 @@ import LookupCard from "../canvas/LookupCard";
 import DiagramCard from "../canvas/DiagramCard";
 import Render3DCard from "../canvas/Render3DCard";
 import SimulationCard from "./SimulationCard";
+import SkeletonCard from "../canvas/SkeletonCard";
 import type { CanvasTool } from "./InfiniteCanvas";
 
 interface Props {
@@ -24,16 +49,23 @@ interface Props {
   onGroupHover?: (groupId: string | null) => void;
 }
 
-// InfiniteCanvas returns early (no capture, no pan/rubber-band) when the pointer
-// event target is inside [data-element-id]. That means React handlers here have
-// full, uncontested ownership of pointer events on elements.
+/**
+ * Counter-scale: only activates when zoomed IN beyond birthScale.
+ * - canvasScale ≤ birthScale → return 1 (element shrinks naturally with canvas,
+ *   world-space footprint = logical width — group bounds and layout stay correct)
+ * - canvasScale > birthScale → return birthScale/canvasScale (caps visual size at
+ *   the element's natural CSS dimensions so it stays usable when zoomed way in)
+ */
+function computeCounterScale(canvasScale: number, birthScale: number): number {
+  if (canvasScale <= birthScale) return 1;
+  return birthScale / canvasScale;
+}
 
 export default function ElementCard({ element, isSelected, onSelect, canvasScale, currentTool, onGroupHover }: Props) {
   const { moveElement, removeElement, updateElementText, updateStickyContent, setElementHeight } = useCanvasStore();
   const { darkMode } = useUIStore();
 
-  // Measure actual rendered height and report it to the store so GroupBoundary
-  // can use real dimensions instead of static estimates.
+  // Measure actual rendered height so GroupBoundary can use real dimensions.
   const rootRef = useRef<HTMLDivElement | null>(null);
   const setRef = useCallback((node: HTMLDivElement | null) => {
     rootRef.current = node;
@@ -42,7 +74,7 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
     const el = rootRef.current;
     if (!el) return;
     const obs = new ResizeObserver(() => {
-      // offsetHeight is transform-independent — unaffected by canvas zoom/pan scale
+      // offsetHeight is transform-independent — unaffected by canvas zoom or counter-scale
       const h = el.offsetHeight;
       if (h > 0) setElementHeight(element.id, h);
     });
@@ -55,23 +87,25 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
     (element.type === "sticky" && !element.sticky?.content),
   );
 
-  // Persists drag state across renders without causing re-renders
+  // Birth-scale counter-transform
+  const birthScale = element.birthScale ?? 1;
+  const counterScale = computeCounterScale(canvasScale, birthScale);
+
+  // ── Drag state ───────────────────────────────────────────────────────────────
   const drag = useRef<{
     active: boolean; moved: boolean;
     startX: number; startY: number;
     origX: number; origY: number;
-    // For group drag: all members' starting positions
     groupMembers: { id: string; x: number; y: number }[] | null;
   }>({ active: false, moved: false, startX: 0, startY: 0, origX: 0, origY: 0, groupMembers: null });
 
-  // Snapshot group member positions at drag start (if element is grouped)
   const snapshotGroup = () => {
     if (!element.groupId) return null;
     const all = useCanvasStore.getState().elements;
     return all.filter(e => e.groupId === element.groupId).map(e => ({ id: e.id, x: e.x, y: e.y }));
   };
 
-  // ── Grip handle: drag in pan OR select mode ───────────────────────────────
+  // ── Grip handle: drag in pan OR select mode ──────────────────────────────────
   const onGripDown = (e: React.PointerEvent) => {
     if (currentTool === "interaction" || currentTool === "pen") return;
     if (e.button !== 0) return;
@@ -84,13 +118,13 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
 
-  // ── Root: click or drag in select mode ───────────────────────────────────
+  // ── Root: click or drag in select mode ──────────────────────────────────────
   const onRootDown = (e: React.PointerEvent) => {
     if (currentTool !== "select") return;
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
     if (target.closest("button, textarea, input")) return;
-    if (drag.current.active) return; // grip already started drag
+    if (drag.current.active) return;
     const d = drag.current;
     d.active = true; d.moved = false;
     d.startX = e.clientX; d.startY = e.clientY;
@@ -123,7 +157,18 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
     if (!d.moved) onSelect(element.id, e.shiftKey);
   };
 
-  // ── Text element ──────────────────────────────────────────────────────────
+  // ── Shared wrapper style (positioning + birth-scale counter-transform) ───────
+  const wrapStyle: React.CSSProperties = {
+    position: "absolute",
+    left: element.x,
+    top: element.y,
+    width: element.w,
+    zIndex: element.zIndex,
+    transform: `scale(${counterScale})`,
+    transformOrigin: "0 0",
+  };
+
+  // ── Text element ─────────────────────────────────────────────────────────────
 
   if (element.type === "text") {
     const content    = element.text?.content ?? "";
@@ -138,10 +183,12 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
       <div
         ref={setRef}
         data-element-id={element.id}
-        className="absolute group"
-        style={{ left: element.x, top: element.y, width: element.w, zIndex: element.zIndex,
+        className="group"
+        style={{
+          ...wrapStyle,
           outline: isSelected ? "2px solid rgba(124,58,237,0.5)" : "none",
-          outlineOffset: 6, borderRadius: 8 }}
+          outlineOffset: 6, borderRadius: 8,
+        }}
         onPointerDown={onRootDown}
         onPointerMove={onRootMove}
         onPointerUp={onRootUp}
@@ -184,22 +231,18 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
     );
   }
 
-  // ── Sticky element ────────────────────────────────────────────────────────
+  // ── Sticky element ───────────────────────────────────────────────────────────
 
   if (element.type === "sticky") {
     const content = element.sticky?.content ?? "";
     const bg      = element.sticky?.color ?? "#fef08a";
 
     return (
-      <motion.div
+      <div
         ref={setRef}
         data-element-id={element.id}
-        initial={{ opacity: 0, scale: 0.85, rotate: -1.5 }}
-        animate={{ opacity: 1, scale: 1, rotate: 0 }}
-        className="absolute group shadow-md"
-        style={{ left: element.x, top: element.y, width: element.w, backgroundColor: bg,
-          borderRadius: 8, zIndex: element.zIndex,
-          outline: isSelected ? "2px solid rgba(124,58,237,0.5)" : "none", outlineOffset: 4 }}
+        className="group"
+        style={wrapStyle}
         onPointerDown={onRootDown}
         onPointerMove={onRootMove}
         onPointerUp={onRootUp}
@@ -207,57 +250,84 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
         onPointerEnter={() => onGroupHover?.(element.groupId ?? null)}
         onPointerLeave={() => onGroupHover?.(null)}
       >
-        <div className="flex items-start justify-between p-1 pb-0">
-          <div className="cursor-grab active:cursor-grabbing p-1"
-            onPointerDown={onGripDown}
-            onPointerMove={onRootMove}
-            onPointerUp={onRootUp}
-            onPointerCancel={onRootUp}>
-            <GripHorizontal className="w-3 h-3 text-black/20" />
+        <motion.div
+          initial={{ opacity: 0, scale: 0.85, rotate: -1.5 }}
+          animate={{ opacity: 1, scale: 1, rotate: 0 }}
+          className="shadow-md"
+          style={{ backgroundColor: bg, borderRadius: 8,
+            outline: isSelected ? "2px solid rgba(124,58,237,0.5)" : "none", outlineOffset: 4 }}
+        >
+          <div className="flex items-start justify-between p-1 pb-0">
+            <div className="cursor-grab active:cursor-grabbing p-1"
+              onPointerDown={onGripDown}
+              onPointerMove={onRootMove}
+              onPointerUp={onRootUp}
+              onPointerCancel={onRootUp}>
+              <GripHorizontal className="w-3 h-3 text-black/20" />
+            </div>
+            <button onClick={(e) => { e.stopPropagation(); removeElement(element.id); }}
+              className="p-1 text-black/20 hover:text-black/50 transition-colors opacity-0 group-hover:opacity-100">
+              <X className="w-2.5 h-2.5" />
+            </button>
           </div>
-          <button onClick={(e) => { e.stopPropagation(); removeElement(element.id); }}
-            className="p-1 text-black/20 hover:text-black/50 transition-colors opacity-0 group-hover:opacity-100">
-            <X className="w-2.5 h-2.5" />
-          </button>
-        </div>
-        <div className="px-3 pb-3">
-          {editing ? (
-            <textarea autoFocus value={content}
-              onChange={(e) => updateStickyContent(element.id, e.target.value)}
-              onBlur={() => { if (content.trim()) setEditing(false); }}
-              placeholder="Note..."
-              className="bg-transparent resize-none outline-none w-full text-black/70"
-              style={{ fontFamily: "var(--font-caveat), 'Segoe Print', cursive", fontSize: 18, lineHeight: 1.4 }}
-              rows={3} />
-          ) : (
-            <p onClick={() => setEditing(true)}
-              className="cursor-text text-black/70 whitespace-pre-wrap min-h-[50px]"
-              style={{ fontFamily: "var(--font-caveat), 'Segoe Print', cursive", fontSize: 18, lineHeight: 1.4 }}>
-              {content || "Click to edit..."}
-            </p>
-          )}
-        </div>
-      </motion.div>
+          <div className="px-3 pb-3">
+            {editing ? (
+              <textarea autoFocus value={content}
+                onChange={(e) => updateStickyContent(element.id, e.target.value)}
+                onBlur={() => { if (content.trim()) setEditing(false); }}
+                placeholder="Note..."
+                className="bg-transparent resize-none outline-none w-full text-black/70"
+                style={{ fontFamily: "var(--font-caveat), 'Segoe Print', cursive", fontSize: 18, lineHeight: 1.4 }}
+                rows={3} />
+            ) : (
+              <p onClick={() => setEditing(true)}
+                className="cursor-text text-black/70 whitespace-pre-wrap min-h-[50px]"
+                style={{ fontFamily: "var(--font-caveat), 'Segoe Print', cursive", fontSize: 18, lineHeight: 1.4 }}>
+                {content || "Click to edit..."}
+              </p>
+            )}
+          </div>
+        </motion.div>
+      </div>
     );
   }
 
-  // ── Artifact element ──────────────────────────────────────────────────────
+  // ── Pending (skeleton) element ───────────────────────────────────────────────
+
+  if (element.pending) {
+    return (
+      <div
+        ref={setRef}
+        data-element-id={element.id}
+        style={wrapStyle}
+      >
+        <motion.div
+          initial={{ opacity: 0, scale: 0.92 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ type: "spring", damping: 22, stiffness: 260 }}
+        >
+          <SkeletonCard artifactType={element.type} />
+        </motion.div>
+      </div>
+    );
+  }
+
+  // ── Artifact element ─────────────────────────────────────────────────────────
 
   const { artifact } = element;
   if (!artifact) return null;
 
   return (
-    <motion.div
+    <div
       ref={setRef}
       data-element-id={element.id}
-      initial={{ opacity: 0, scale: 0.94, y: 8 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      transition={{ type: "spring", damping: 22, stiffness: 260 }}
-      className="absolute group"
-      style={{ left: element.x, top: element.y, width: element.w, zIndex: element.zIndex,
+      className="group"
+      style={{
+        ...wrapStyle,
         outline: isSelected && artifact.type !== "flashcard" ? "2px solid rgba(124,58,237,0.4)" : "none",
         outlineOffset: 8, borderRadius: 12,
-        cursor: element.groupId ? "default" : "grab" }}
+        cursor: element.groupId ? "default" : "grab",
+      }}
       onPointerDown={onRootDown}
       onPointerMove={onRootMove}
       onPointerUp={onRootUp}
@@ -265,7 +335,7 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
       onPointerEnter={() => onGroupHover?.(element.groupId ?? null)}
       onPointerLeave={() => onGroupHover?.(null)}
     >
-      {/* Hover toolbar */}
+      {/* Hover toolbar — outside motion.div so it's not affected by entrance animation */}
       <div className="absolute -top-7 left-0 right-0 flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity z-10 px-0.5">
         <div
           className="flex items-center gap-1 px-1.5 py-0.5 rounded-md cursor-grab active:cursor-grabbing"
@@ -291,28 +361,37 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
         </button>
       </div>
 
-      {artifact.type === "flashcard" ? (
-        <div className="rounded-2xl overflow-hidden transition-shadow duration-150"
-          style={{ background: darkMode ? "rgba(16,16,28,0.97)" : "rgba(255,255,255,0.98)",
-            border: isSelected ? "1.5px solid rgba(124,58,237,0.55)" : darkMode ? "1px solid rgba(255,255,255,0.07)" : "1px solid rgba(0,0,0,0.07)",
-            boxShadow: isSelected
-              ? "0 0 0 4px rgba(124,58,237,0.1), 0 8px 36px rgba(0,0,0,0.18)"
-              : darkMode ? "0 4px 24px rgba(0,0,0,0.42)" : "0 2px 14px rgba(0,0,0,0.07)" }}>
-          <div className="p-4">
-            <FlashcardCard artifact={artifact} />
+      {/* Entrance animation wrapper */}
+      <motion.div
+        initial={{ opacity: 0, scale: 0.94, y: 8 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        transition={{ type: "spring", damping: 22, stiffness: 260 }}
+      >
+        {artifact.type === "flashcard" ? (
+          <div className="rounded-2xl overflow-hidden transition-shadow duration-150"
+            style={{ background: darkMode ? "rgba(16,16,28,0.97)" : "rgba(255,255,255,0.98)",
+              border: isSelected ? "1.5px solid rgba(124,58,237,0.55)" : darkMode ? "1px solid rgba(255,255,255,0.07)" : "1px solid rgba(0,0,0,0.07)",
+              boxShadow: isSelected
+                ? "0 0 0 4px rgba(124,58,237,0.1), 0 8px 36px rgba(0,0,0,0.18)"
+                : darkMode ? "0 4px 24px rgba(0,0,0,0.42)" : "0 2px 14px rgba(0,0,0,0.07)" }}>
+            <div className="p-4">
+              <CardErrorBoundary type="flashcard">
+                <FlashcardCard artifact={artifact} />
+              </CardErrorBoundary>
+            </div>
           </div>
-        </div>
-      ) : (
-        <div className="py-1">
-          {artifact.type === "visual"     && <VisualCard artifact={artifact} />}
-          {artifact.type === "diagram"    && <DiagramCard artifact={artifact} />}
-          {artifact.type === "graph"      && <GraphCard artifact={artifact} />}
-          {artifact.type === "notation"   && <NotationCard artifact={artifact} dark={darkMode} />}
-          {artifact.type === "lookup"     && <LookupCard artifact={artifact} />}
-          {artifact.type === "simulation" && <SimulationCard artifact={artifact} expanded />}
-          {artifact.type === "render3d"   && <Render3DCard artifact={artifact} />}
-        </div>
-      )}
-    </motion.div>
+        ) : (
+          <div className="py-1">
+            {artifact.type === "visual"     && <CardErrorBoundary type="visual"><VisualCard artifact={artifact} /></CardErrorBoundary>}
+            {artifact.type === "diagram"    && <CardErrorBoundary type="diagram"><DiagramCard artifact={artifact} /></CardErrorBoundary>}
+            {artifact.type === "graph"      && <CardErrorBoundary type="graph"><GraphCard artifact={artifact} /></CardErrorBoundary>}
+            {artifact.type === "notation"   && <CardErrorBoundary type="notation"><NotationCard artifact={artifact} dark={darkMode} /></CardErrorBoundary>}
+            {artifact.type === "lookup"     && <CardErrorBoundary type="lookup"><LookupCard artifact={artifact} /></CardErrorBoundary>}
+            {artifact.type === "simulation" && <CardErrorBoundary type="simulation"><SimulationCard artifact={artifact} expanded /></CardErrorBoundary>}
+            {artifact.type === "render3d"   && <CardErrorBoundary type="render3d"><Render3DCard artifact={artifact} /></CardErrorBoundary>}
+          </div>
+        )}
+      </motion.div>
+    </div>
   );
 }

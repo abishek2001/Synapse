@@ -179,7 +179,8 @@ Rendered by the `FlowArrows` SVG component:
 - **Zoom range**: 10% – 400% (`MIN_ZOOM = 0.1`, `MAX_ZOOM = 4`)
 - **Zoom**: mouse scroll wheel (centered on cursor), trackpad pinch (`ctrlKey` wheel), `Ctrl`+scroll
 - **Pan**: Space + drag (temporary hand mode — restores previous tool on release), middle-mouse drag, Hand tool drag, two-finger trackpad scroll
-- **Fit all**: auto-triggered when `groups.length` changes (new AI module added)
+- **Zoom to new group**: when `groups.length` increases by 1 (AI adds a single module), the canvas zooms to that group so it appears at a comfortable readable size
+- **Fit all**: when `groups.length` increases by more than 1 (mock data load, initial restore) — fits all content in view
 
 ### Gesture / scroll discrimination (wheel events)
 
@@ -196,6 +197,44 @@ Two simultaneous pointers anywhere on the canvas (including over elements or in 
 - **Midpoint translation** → pan simultaneously with zoom
 - Single-pointer operations (rubber-band, pen stroke, element drag) are cancelled when a second pointer lands
 - Click events are suppressed after a pinch gesture ends
+
+---
+
+## Element Birth-Scale (Counter-Transform)
+
+Each element stores `birthScale = 1` (always). `ElementCard` applies a CSS counter-transform so that:
+
+- **Zooming in past 1×** → element stays at 100% of its natural CSS size (does not grow larger)
+- **Zooming out below 1×** → element shrinks proportionally with the canvas (no counter-transform applied)
+
+This keeps every element's **world-space footprint equal to its logical `w`/`h`** at zoom ≤ 1, so `GroupBoundary` bounds and layout spacing are always correct without needing to know the current zoom.
+
+### Formula
+
+```ts
+// canvasScale ≤ birthScale (≤ 1): no counter-transform, scale naturally
+counterScale = 1
+
+// canvasScale > birthScale (> 1): cap at natural size
+counterScale = birthScale / canvasScale   // = 1 / canvasScale when birthScale = 1
+```
+
+`counterScale` is applied as `transform: scale(counterScale)` with `transformOrigin: "0 0"` on the outer positioning div.
+
+### GroupBoundary tracks canvasScale
+
+Because elements shrink in world-space when zoomed in (`counterScale < 1`), `GroupBoundary` and `computeGroupBounds` receive `canvasScale` as a parameter and compute each element's visual right/bottom edges as:
+
+```ts
+right  = el.x + el.w * counterScale
+bottom = el.y + (el.h ?? estimateElemH(el.type)) * counterScale
+```
+
+This ensures the group boundary always wraps the actual visible content, not the logical coordinates.
+
+### Height measurement
+
+`ElementCard`'s `ResizeObserver` reads `offsetHeight` (transform-independent) so the stored `el.h` is always the natural layout height. `GroupBoundary` then scales it by `counterScale` to get the visual height.
 
 ---
 

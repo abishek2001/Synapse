@@ -1,7 +1,9 @@
 import type { AgentMessage } from "./types";
 
 export interface TutorResponse {
-  explanation: string;
+  writtenText: string;  // goes on canvas as text element + in transcript
+  spokenText: string;   // TTS only — short, natural, no canvas references
+  questionsForUser: string[]; // questions the AI is asking the student → chips tier 1
 }
 
 const SYSTEM_PROMPT = `You are a Synapse AI tutor having a LIVE CONVERSATION with a student. This is NOT a lecture — it's a two-way dialogue. The student can interrupt you at any time via voice.
@@ -32,11 +34,30 @@ CONVERSATION RULES (MOST IMPORTANT):
 
 TOOL RULES:
 1. Use tools proactively when they enhance understanding. Don't just talk — SHOW.
-2. After calling a tool, reference it naturally: "Check out the diagram I just put up" or "See that graph?"
+2. After calling a tool, reference it naturally in writtenText: "Check out the diagram I just put up" or "See that graph?"
 3. Use knowledge_lookup when you need precise excerpts — it uses semantic similarity, not just keywords.
 4. Use canvas_delegate_task to add handwritten annotations, sticky notes, or labels to organize the canvas.
 5. You can call MULTIPLE tools in a single response (e.g. a notation block + a graph + annotations).
-6. Adapt your tone to the persona specified.`;
+6. Adapt your tone to the persona specified.
+
+## OUTPUT FORMAT (REQUIRED)
+
+After all tool calls, your final text message MUST be a JSON object. No markdown fences. No extra text. Output ONLY:
+
+{
+  "writtenText": "2-4 sentences shown on canvas and in transcript. Can reference artifacts you just placed ('check the diagram above'). Full sentences. No markdown.",
+  "spokenText": "1-2 short conversational sentences for text-to-speech. Natural spoken tone. No 'see the diagram' or visual references. Start with 'So', 'Basically', or the concept name. Under 25 words.",
+  "questionsForUser": ["Direct question you are asking the student", "Max 2 questions, 8 words each max"]
+}
+
+EXAMPLES of good spokenText vs writtenText:
+- writtenText: "A neural network has three layers — input, hidden, and output. Data flows forward, with each layer transforming the signal. Check out the diagram I just placed."
+- spokenText: "So basically, a neural network is just three stages that transform data step by step."
+
+EXAMPLES of good questionsForUser:
+- "Does that click so far?"
+- "Want to see how the math works?"
+- "What part feels confusing?"`;
 
 const PERSONA_PROMPTS: Record<string, string> = {
   professor:
@@ -81,11 +102,23 @@ export function buildTutorMessages(
 
 export function parseTutorResponse(raw: string): TutorResponse {
   try {
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return { explanation: raw };
+    // Strip markdown fences if model wrapped anyway
+    const cleaned = raw.replace(/```(?:json)?\n?/g, "").replace(/```$/g, "").trim();
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error("no JSON");
     const parsed = JSON.parse(jsonMatch[0]);
-    return { explanation: parsed.explanation || raw };
+    return {
+      writtenText: parsed.writtenText || raw,
+      spokenText: parsed.spokenText || parsed.writtenText || raw,
+      questionsForUser: Array.isArray(parsed.questionsForUser) ? parsed.questionsForUser : [],
+    };
   } catch {
-    return { explanation: raw };
+    // Fallback: raw text becomes writtenText; spokenText = first sentence
+    const firstSentence = raw.split(/[.!?]/)[0]?.trim() ?? raw;
+    return {
+      writtenText: raw,
+      spokenText: firstSentence.length > 0 ? firstSentence : raw,
+      questionsForUser: [],
+    };
   }
 }

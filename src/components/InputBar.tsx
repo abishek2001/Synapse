@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import { Plus, X, FileText, Check, Mic, MicOff, ChevronDown, Upload, Link } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSessionStore, type UploadedFile } from "@/store/session";
-import { isLikelyUrl, stripUrl } from "@/lib/utils/detect-url";
+import { useCanvasStore } from "@/store/canvas";
+import { useGroundingStore } from "@/store/grounding";
+import { isLikelyUrl, stripUrl, detectUrls } from "@/lib/utils/detect-url";
 import { startListening, stopListening, isRecognitionSupported } from "@/lib/voice/speech";
 
 export interface Persona { id: string; name: string; desc: string; }
@@ -30,6 +32,8 @@ export default function InputBar() {
   const recognitionOk = useRef(false);
   const router = useRouter();
   const initSession = useSessionStore((s) => s.initSession);
+  const clearCanvas = useCanvasStore((s) => s.clearCanvas);
+  const resetGrounding = useGroundingStore((s) => s.reset);
 
   useEffect(() => { recognitionOk.current = isRecognitionSupported(); }, []);
 
@@ -47,7 +51,13 @@ export default function InputBar() {
         }),
       ),
     );
-    initSession(query, persona.id, uploaded);
+
+    // Extract any URLs embedded in the query text
+    const detectedUrls = detectUrls(query);
+
+    clearCanvas();
+    resetGrounding();
+    initSession(query, persona.id, uploaded, detectedUrls);
     router.push(`/workspace?q=${encodeURIComponent(query)}&persona=${persona.id}`);
   };
 
