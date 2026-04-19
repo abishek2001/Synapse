@@ -11,12 +11,13 @@ import type {
   SimulationArtifact,
   Render3DArtifact,
 } from "./types";
+import { chatCompletion } from "@/lib/logging/openai";
 import { semanticSearch } from "@/lib/grounding/retrieval";
 import { SIMULATION_SYSTEM_PROMPT, buildSimulationPrompt } from "@/lib/simulation/prompt";
 import { sanitizeSimulationCode } from "@/lib/simulation/sanitize";
 import { RENDER3D_SYSTEM_PROMPT, buildRender3DPrompt } from "@/lib/render3d/prompt";
 import { sanitizeRender3DCode } from "@/lib/render3d/sanitize";
-import { openai } from "@/lib/openai-client";
+import { rawClient as openai } from "@/lib/logging/openai";
 import { resolveSketchfabModel, buildEmbedUrl } from "@/lib/sketchfab";
 
 export interface DelegatedAnnotation {
@@ -32,14 +33,19 @@ export interface ToolCallResult {
   result: string;
 }
 
+export interface ToolCallOpts {
+  signal?: AbortSignal;
+}
+
 export async function handleToolCall(
   name: string,
   args: Record<string, unknown>,
   documentContext?: string,
+  opts: ToolCallOpts = {},
 ): Promise<ToolCallResult> {
   switch (name) {
     case "canvas_generate_visual":
-      return handleGenerateVisual(args);
+      return handleGenerateVisual(args, opts);
     case "canvas_generate_graph":
       return handleGenerateGraph(args);
     case "canvas_generate_notation":
@@ -53,7 +59,7 @@ export async function handleToolCall(
     case "canvas_generate_diagram":
       return handleGenerateDiagram(args);
     case "canvas_generate_simulation":
-      return handleGenerateSimulation(args);
+      return handleGenerateSimulation(args, opts);
     case "canvas_generate_3d_render":
       return handleGenerate3DRender(args);
     default:
@@ -63,6 +69,7 @@ export async function handleToolCall(
 
 async function handleGenerateVisual(
   args: Record<string, unknown>,
+  opts: ToolCallOpts = {},
 ): Promise<{ artifact: VisualArtifact; result: string }> {
   const { title, description, style } = args as {
     title: string;
@@ -85,15 +92,19 @@ Requirements:
 - Keep it warm, inviting, and educational — like a whiteboard sketch
 - NO external references, NO images, NO scripts`;
 
-  const res = await openai.chat.completions.create({
-    model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
-    messages: [
-      { role: "system", content: "You are an SVG diagram generator that creates beautiful handwritten-style educational diagrams. They should look like they were drawn on a whiteboard or notebook — warm, organic, with a cursive/handwriting font. Output ONLY raw SVG markup. No markdown, no explanation, no code fences." },
-      { role: "user", content: svgPrompt },
-    ],
-    temperature: 0.5,
-    max_tokens: 2048,
-  });
+  const res = await chatCompletion(
+    "tool.visual",
+    {
+      model: process.env.OPENAI_MODEL ?? "gpt-4o",
+      messages: [
+        { role: "system", content: "You are an SVG diagram generator that creates beautiful handwritten-style educational diagrams. They should look like they were drawn on a whiteboard or notebook — warm, organic, with a cursive/handwriting font. Output ONLY raw SVG markup. No markdown, no explanation, no code fences." },
+        { role: "user", content: svgPrompt },
+      ],
+      temperature: 0.5,
+      max_tokens: 2048,
+    },
+    { signal: opts.signal },
+  );
 
   let svg = res.choices[0]?.message?.content ?? "";
   svg = svg.replace(/```(?:svg|xml)?\n?/g, "").replace(/```$/g, "").trim();
@@ -286,6 +297,7 @@ function handleGenerateDiagram(
 
 async function handleGenerateSimulation(
   args: Record<string, unknown>,
+  opts: ToolCallOpts = {},
 ): Promise<{ artifact: SimulationArtifact; result: string }> {
   const { topic, context: ctx } = args as { topic: string; context?: string };
 
@@ -305,18 +317,22 @@ async function handleGenerateSimulation(
       text: { verbosity: "high" },
       // Reasoning + a full HTML simulation easily uses 4-6k tokens; budget headroom.
       max_output_tokens: 12000,
-    });
+    }, { signal: opts.signal });
     raw = res.output_text ?? "";
   } else {
-    const res = await openai.chat.completions.create({
-      model,
-      messages: [
-        { role: "system", content: SIMULATION_SYSTEM_PROMPT },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: 0.4,
-      max_tokens: 6000,
-    });
+    const res = await chatCompletion(
+      "tool.simulation",
+      {
+        model,
+        messages: [
+          { role: "system", content: SIMULATION_SYSTEM_PROMPT },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.4,
+        max_tokens: 6000,
+      },
+      { signal: opts.signal },
+    );
     raw = res.choices[0]?.message?.content ?? "";
   }
 

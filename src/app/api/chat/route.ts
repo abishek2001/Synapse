@@ -57,24 +57,65 @@ export async function POST(req: NextRequest) {
   // ── SSE stream ─────────────────────────────────────────────────────────────
   const encoder = new TextEncoder();
 
+  const t0 = Date.now();
+  const reqId = Math.random().toString(36).slice(2, 8);
+  console.log(`[chat:${reqId}] ▶ open  query="${query.slice(0, 60)}" mode=${learningMode ?? "—"}`);
+
   const stream = new ReadableStream({
     async start(controller) {
-      const emit = (event: StreamEvent) => {
-        const line = `data: ${JSON.stringify(event)}\n\n`;
-        controller.enqueue(encoder.encode(line));
+      let closed = false;
+      const safeClose = () => {
+        if (closed) return;
+        closed = true;
+        try { controller.close(); } catch { /* already closed */ }
       };
+
+      const emit = (event: StreamEvent) => {
+        if (closed) return;
+        try {
+          const line = `data: ${JSON.stringify(event)}\n\n`;
+          controller.enqueue(encoder.encode(line));
+        } catch {
+          // Client disconnected mid-stream — stop trying to write.
+          closed = true;
+          return;
+        }
+        const dt = Date.now() - t0;
+        const summary =
+          event.type === "artifact_pending" ? `${event.artifactType} "${event.title}"`
+          : event.type === "artifact_done"   ? `id=${event.pendingId}`
+          : event.type === "thinking"        ? event.message
+          : event.type === "error"           ? event.message
+          : "";
+        console.log(`[chat:${reqId}] +${dt}ms  ${event.type}${summary ? `  ${summary}` : ""}`);
+      };
+
+      // Forward client cancellation (stop button, tab close) to OpenAI calls.
+      req.signal.addEventListener("abort", () => {
+        console.log(`[chat:${reqId}] ✋ client aborted (${Date.now() - t0}ms)`);
+      });
 
       try {
         await runOrchestrator(
           { query, persona, history, documentContext, canvasContext, sessionContext, studyPlan, mode, learningMode },
           emit,
+          req.signal,
         );
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : "Unknown error";
-        console.error("Chat API error:", message);
-        emit({ type: "error", message });
+        // Aborts come back as DOMException("AbortError") or OpenAI APIUserAbortError.
+        const isAbort =
+          (err instanceof Error && (err.name === "AbortError" || err.name === "APIUserAbortError")) ||
+          req.signal.aborted;
+        if (isAbort) {
+          console.log(`[chat:${reqId}] aborted cleanly`);
+        } else {
+          const message = err instanceof Error ? err.message : "Unknown error";
+          console.error(`[chat:${reqId}] ✖ error:`, message);
+          emit({ type: "error", message });
+        }
       } finally {
-        controller.close();
+        safeClose();
+        console.log(`[chat:${reqId}] ■ close (${Date.now() - t0}ms total)`);
       }
     },
   });

@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
+import { rawClient as openai } from "@/lib/logging/openai";
 import { buildTutorMessages } from "@/lib/agents/tutor";
 import type { AgentMessage } from "@/lib/agents/types";
-import { openai } from "@/lib/openai-client";
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
   const messages = buildTutorMessages(persona, query, history, documentContext);
 
   const stream = await openai.chat.completions.create({
-    model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+    model: process.env.OPENAI_MODEL ?? "gpt-4o",
     messages: messages.map((m) => ({ role: m.role, content: m.content })),
     temperature: 0.7,
     max_tokens: 1024,

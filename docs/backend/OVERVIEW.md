@@ -46,15 +46,25 @@ src/lib/agents/       Orchestrator, Strategy, Tutor, Friend, Observer agents
 src/lib/tools/        Tool schemas (OpenAI function definitions), handlers, artifact types
 src/lib/grounding/    Session context, study plan, retrieval (semantic search)
 src/lib/simulation/   Three.js simulation prompt + code sanitizer
+src/lib/logging/      Wrapped OpenAI client + per-call JSON logger (writes logs/llm/)
 src/app/api/          Next.js route handlers (thin wrappers over lib functions)
 ```
 
 ---
 
-## Model
+## Model & client
 
-All LLM calls use `process.env.OPENAI_MODEL` (defaults to `gpt-4o-mini`).
-API key: `process.env.OPENAI_API_KEY` (required, set in `.env.local`).
+All LLM calls go through `src/lib/logging/openai.ts`:
+
+- `chatCompletion(label, params, { signal? })` → wraps `openai.chat.completions.create`
+- `embeddings(label, params, { signal? })` → wraps `openai.embeddings.create`
+- `rawClient` → exported for streaming use (currently only `/api/chat/stream`)
+
+Every wrapped call writes a JSON file to `logs/llm/<timestamp>__<label>__<id>.json` containing the request body, response, duration, and any error. Logging is best-effort and never blocks or breaks a turn. The directory is gitignored.
+
+The `signal` parameter is plumbed from the originating Next.js request all the way into the OpenAI SDK, so when the browser aborts the SSE fetch (the Stop button), every in-flight call cancels and the route closes cleanly.
+
+Defaults: `process.env.OPENAI_MODEL` (`gpt-4o` if unset), `process.env.OPENAI_API_KEY` required in `.env.local`.
 
 ---
 

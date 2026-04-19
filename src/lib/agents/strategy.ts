@@ -1,7 +1,7 @@
+import { chatCompletion } from "@/lib/logging/openai";
 import type { StudyPlan } from "@/lib/grounding/study-plan";
 import type { SessionContext } from "@/lib/grounding/session-context";
 import { serializeForPrompt, getSessionStats } from "@/lib/grounding/session-context";
-import { openai } from "@/lib/openai-client";
 
 export interface TeachingDecision {
   action:
@@ -140,6 +140,7 @@ export async function getTeachingDecision(
   sessionContext: SessionContext,
   studyPlan: StudyPlan | null,
   recentHistory: { role: string; content: string }[],
+  signal?: AbortSignal,
 ): Promise<TeachingDecision> {
   const ctxPrompt = serializeForPrompt(sessionContext);
   const stats = getSessionStats(sessionContext);
@@ -167,15 +168,19 @@ Session stats: ${stats.questionsAsked} questions asked, ${stats.mastered} concep
 Decide the best action and which artifacts to produce.`;
 
   try {
-    const res = await openai.chat.completions.create({
-      model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
-      messages: [
-        { role: "system", content: STRATEGY_SYSTEM },
-        { role: "user", content: prompt },
-      ],
-      temperature: 0.5,
-      max_tokens: 600,
-    });
+    const res = await chatCompletion(
+      "strategy.decide",
+      {
+        model: process.env.OPENAI_MODEL ?? "gpt-4o",
+        messages: [
+          { role: "system", content: STRATEGY_SYSTEM },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.3,
+        max_tokens: 600,
+      },
+      { signal },
+    );
 
     const raw = res.choices[0]?.message?.content ?? "{}";
     const cleaned = raw.replace(/```(?:json)?\n?/g, "").replace(/```$/g, "").trim();
@@ -215,8 +220,8 @@ export async function generateSessionSummary(
     .join("\n");
 
   try {
-    const res = await openai.chat.completions.create({
-      model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+    const res = await chatCompletion("strategy.summary", {
+      model: process.env.OPENAI_MODEL ?? "gpt-4o",
       messages: [
         {
           role: "system",

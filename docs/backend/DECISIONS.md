@@ -4,6 +4,21 @@ A record of non-obvious design choices, trade-offs made, and significant changes
 
 ---
 
+## 2026-04-18 — All OpenAI calls go through a logged client + are abortable
+
+**Problem:** Each module spun up its own `new OpenAI({ apiKey: ... })`, there was no record of what was actually sent to or returned from the model, and there was no way for the user to cancel an in-flight chat turn — the spinner just kept spinning.
+
+**Decision:**
+- Added `src/lib/logging/openai.ts` exporting a single `rawClient` plus `chatCompletion(label, params, opts)` and `embeddings(label, params, opts)` wrappers. Every wrapped call writes a JSON file under `logs/llm/` (timestamp + label + short id) containing the request body, the full response, duration, and any error. Logging is fire-and-forget — it never blocks the LLM call or surfaces a failure to the caller.
+- Refactored every OpenAI call site (`strategy.ts`, `orchestrator.ts`, `tools/handlers.ts`, `grounding/study-plan.ts`, `grounding/retrieval.ts`, `api/extract-title`, `api/simulate`) to use the wrapper. `api/chat/stream` keeps the raw client because streaming bodies aren't single-shot serializable.
+- Threaded an optional `signal: AbortSignal` through `runOrchestrator → executeTutorTurn / executeFriendTurn / getTeachingDecision / handleToolCall → chatCompletion`. `/api/chat` passes `req.signal`, so when the browser aborts the SSE fetch, the server's pending OpenAI request short-circuits with `APIUserAbortError`.
+- Client side: `useAIChat` keeps a per-turn `AbortController` and exports a `stop()` function. `CanvasInputBar` replaced the passive `Loader2` spinner with a pulsing red `Square` button that calls `stop()`. The hook's catch branch detects `AbortError`, removes the in-flight skeleton cards + toast, and posts a "Stopped." tutor message instead of an error.
+- `logs/` added to `.gitignore`.
+
+**Why one wrapper instead of per-call logging:** centralizing means new call sites get logging + abort support automatically and there's one place to change the storage format (e.g. switch to JSONL or push to a backend later).
+
+---
+
 ## 2026-04-13 — Diagram artifact replaces raw SVG for structured content
 
 **Problem:** `canvas_generate_visual` had the LLM emit raw SVG markup. For anything with nodes (neural networks, architecture diagrams, flowcharts) the SVG quality was poor — overlapping labels, straight arrows, no interactivity.
@@ -69,7 +84,7 @@ This gives the tutor LLM two converging signals: the filtered tool list (what it
 | Constant | Location | Value | Rationale |
 |---|---|---|---|
 | `MAX_TOOL_ROUNDS` | orchestrator.ts | 4 | Prevents infinite loops; 1–2 rounds is typical |
-| `OPENAI_MODEL` | env var | `gpt-4o-mini` | Fast + cheap for both strategy and tutor calls |
+| `OPENAI_MODEL` | env var | `gpt-4o` | Higher reasoning quality for both strategy and tutor calls; mini was the previous default |
 | Simulation max_tokens | handlers.ts | 4096 | Three.js HTML can be large; needs headroom |
 | Strategy max_tokens | strategy.ts | 600 | Decision JSON is small; 600 is generous |
 | Tutor max_tokens | orchestrator.ts | 1536 per round | Enough for explanation + tool call args |

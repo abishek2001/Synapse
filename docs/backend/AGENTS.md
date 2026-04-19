@@ -7,7 +7,7 @@ Four agents operate inside the orchestrator. Only two make LLM calls per turn (S
 ## Strategy Agent
 
 **File:** `src/lib/agents/strategy.ts`
-**LLM calls per turn:** 1 (gpt-4o-mini, ~300ms, 600 tokens max)
+**LLM calls per turn:** 1 (gpt-4o, 600 tokens max)
 **Runs when:** `sessionContext` is available (i.e. study plan has been initialized)
 
 ### Purpose

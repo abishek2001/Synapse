@@ -42,3 +42,6 @@ next-env.d.ts
 
 # Kokoro TTS model files (large binaries, download via scripts/download-kokoro.mjs)
 /public/models/
+
+# LLM request/response logs (written by src/lib/logging/llm-logger.ts)
+/logs/
