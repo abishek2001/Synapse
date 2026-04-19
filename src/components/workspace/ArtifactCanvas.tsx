@@ -455,6 +455,7 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
             <DoubtPopup
               worldX={doubtPopup.worldX}
               worldY={doubtPopup.worldY}
+              originGroupId={doubtPopup.originGroupId}
               screenX={doubtScreenPos.screenX}
               screenY={doubtScreenPos.screenY}
               prefill={doubtPopup.prefill}

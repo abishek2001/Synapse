@@ -1,5 +1,5 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
-import { chatCompletion } from "@/lib/logging/openai";
+import { chatCompletion, pickModel } from "@/lib/logging/openai";
 import { buildTutorSystemPrompt, parseTutorResponse } from "./tutor";
 import { buildFriendMessages } from "./friend";
 import { getTeachingDecision, type TeachingDecision } from "./strategy";
@@ -15,7 +15,9 @@ import type {
   SessionContextPatch,
   StreamEvent,
 } from "./types";
-const MODEL = process.env.OPENAI_MODEL ?? "gpt-4o";
+// Tutor + friend live on the "complex" tier — heavy multi-tool reasoning
+// with tool-call JSON output. See pickModel() in @/lib/logging/openai for tiers.
+const MODEL = pickModel("complex");
 
 export async function runOrchestrator(
   input: OrchestratorInput,
@@ -24,7 +26,7 @@ export async function runOrchestrator(
 ): Promise<OrchestratorResult> {
   const {
     query, persona, history, documentContext, canvasContext,
-    sessionContext, studyPlan, mode, learningMode = null,
+    sessionContext, studyPlan, mode, learningMode = null, focus,
   } = input;
 
   // Manual friend invocation only (Call a Friend button)
@@ -47,8 +49,9 @@ export async function runOrchestrator(
         studyPlan,
         history.slice(-6).map((m) => ({ role: m.role, content: m.content })),
         signal,
+        focus?.candidates ?? [],
       );
-      console.log(`[orch] strategy ${Date.now() - t}ms → action=${decision.action} artifacts=${decision.suggestedArtifacts.join(",") || "—"}`);
+      console.log(`[orch] strategy ${Date.now() - t}ms → action=${decision.action} artifacts=${decision.suggestedArtifacts.join(",") || "—"} anchor=${decision.anchorGroupId ?? "—"} tangent=${decision.isTangent}`);
     } catch (err) {
       decision = null;
       console.warn(`[orch] strategy ✖ ${Date.now() - t}ms`, err instanceof Error ? err.message : err);
@@ -369,7 +372,10 @@ The pedagogical layer matched this concept against six characteristics (does it 
   if (pauseForInput) {
     onEvent?.({ type: "pause_for_input" });
   }
-  onEvent?.({ type: "done", contextPatch });
+
+  const anchorGroupId = decision?.anchorGroupId ?? null;
+  const isTangent = !!decision?.isTangent;
+  onEvent?.({ type: "done", contextPatch, anchorGroupId, isTangent });
 
   return {
     type: "tutor",
@@ -391,6 +397,8 @@ The pedagogical layer matched this concept against six characteristics (does it 
     rawResponse: tutorResponse.writtenText,
     followUpQuestions,
     pauseForInput,
+    anchorGroupId,
+    isTangent,
   };
 }
 

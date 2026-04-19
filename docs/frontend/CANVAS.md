@@ -280,8 +280,53 @@ Dots move with pan and scale with zoom to create the infinite-canvas illusion.
 
 ### How it triggers
 1. **Double-click empty canvas** → `handleCanvasDoubleClick` → `openDoubtPopup(worldX, worldY)`
-2. **Right-click** → context menu → "Ask a doubt here"
-3. **SelectionBar** → "Ask about selection" → `openDoubtPopup` pre-filled
+2. **Right-click** → context menu → "Ask a doubt here" (or "Ask about this" inside a group — passes the group id as `originGroupId`)
+3. **SelectionBar** → "Ask AI" → `openDoubtPopup` pre-filled with the first selected group as `originGroupId`. The Ask AI button is now visible for **single-element selection** too, since marking one artifact and asking about it is the headline use case.
 
 ### DoubtPopup positioning
 Renders in **screen space** (fixed, not canvas-world) so it stays put during zoom/pan. Screen position = `worldX × scale + panX + containerLeft`.
+
+---
+
+## Tangent Modules + Back Pill
+
+A **tangent module** is a turn that branches off an existing module (the user marked a module and asked a follow-up about it) instead of extending the linear study plan rightward. The system distinguishes "main" modules from "tangents" so it can place them sensibly and offer a way back.
+
+### Data model
+
+`CanvasGroup` carries two extra optional fields:
+
+- `parentGroupId` — the anchor module a tangent branched from
+- `isTangent` — `true` when the group was spawned as a tangent
+
+`useCanvasStore` tracks two ids:
+
+- `currentMainGroupId` — the user's "home" module on the main thread, set whenever a non-tangent module is added
+- `lastTangentGroupId` — the most recent tangent, used by the back pill
+
+Actions: `setCurrentMain`, `setLastTangent`, `clearTangent`.
+
+### Anchor detection (client → server)
+
+`useAIChat.sendMessage(text, { focusGroupId? })` builds a prioritized `FocusCandidate[]` list:
+
+1. **Explicit focus** — `focusGroupId` passed by `DoubtPopup` / `SelectionBar` / `CanvasContextMenu`
+2. **Selection** — unique `groupId`s of `selectedElementIds`
+3. **Current main** — `currentMainGroupId`
+
+Up to 3 candidates are sent to `/api/chat` as `{ focus: { candidates } }`. The strategy LLM receives them in its prompt and returns `anchorGroupId` (must be one of the supplied ids — server validates) and `isTangent`. The optimistic anchor (first candidate) is also used client-side to position the in-flight skeleton cards so they appear under the anchor instead of jumping in from the right edge when `done` fires.
+
+### Placement (`addModule`)
+
+`addModule(title, artifacts, _, writtenText, opts?)` accepts `{ anchorGroupId, isTangent }`:
+
+- **With anchor** → places the new group at `(anchorBounds.x, anchorBounds.y + anchorBounds.h + GROUP_GAP_Y)` and slides rightward in `GROUP_GAP_X`-sized steps via a collision check (`findNonOverlappingX`) until it doesn't overlap any sibling. The connection arrow is drawn from the anchor → new group.
+- **No anchor** → original behavior preserved: `nextGroupStartX(elements)` at the canvas baseline (`y = 200`), arrow from the previous group.
+
+`addModule` stamps `parentGroupId`/`isTangent` on the new group and updates `currentMainGroupId` (if not a tangent) or `lastTangentGroupId` (if a tangent). It now returns the new group id so callers can act on it.
+
+### Back-to-main pill
+
+`TangentReturnPill` is rendered inside `WorkspaceView` above `CanvasInputBar`. It shows whenever `lastTangentGroupId !== null && currentMainGroupId !== null && they differ`. Clicking it calls `artifactCanvasRef.current?.zoomToGroup(currentMainGroupId)` and `clearTangent()` to dismiss the pill.
+
+Auto-zoom on new groups (`ArtifactCanvas` — zoom to the most recently added group) is unchanged: the user *does* want to see the tangent when it lands. The pill takes over for the return navigation.

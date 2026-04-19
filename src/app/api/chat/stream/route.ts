@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { rawClient as openai, normalizeChatParams } from "@/lib/logging/openai";
+import { rawClient as openai, normalizeChatParams, pickModel } from "@/lib/logging/openai";
 import { buildTutorMessages } from "@/lib/agents/tutor";
 import type { AgentMessage } from "@/lib/agents/types";
 
@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
 
   const stream = await openai.chat.completions.create(
     normalizeChatParams({
-      model: process.env.OPENAI_MODEL ?? "gpt-4o",
+      model: pickModel("complex"),
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
       temperature: 0.7,
       max_tokens: 1024,

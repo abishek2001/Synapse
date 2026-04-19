@@ -135,6 +135,10 @@ export interface CanvasGroup {
   color: string;
   orderIndex: number;
   createdAt: number;
+  /** If this group was spawned as a tangent off another module, the source. */
+  parentGroupId?: string;
+  /** True when this module branched off a marked/anchor module (not the linear thread). */
+  isTangent?: boolean;
 }
 
 export interface ModuleConnection {
@@ -198,6 +202,12 @@ interface CanvasState {
   isMockMode: boolean;
   pendingModule: PendingModule | null;
 
+  // Tangent / main-thread tracking
+  /** The user's "current" main module — what we return to after a tangent. */
+  currentMainGroupId: string | null;
+  /** The most recent tangent module — controls the visibility of the back pill. */
+  lastTangentGroupId: string | null;
+
   // Element actions
   addElement: (el: CanvasElement) => void;
   addPendingElement: (el: CanvasElement) => void;
@@ -219,7 +229,20 @@ interface CanvasState {
 
   // High-level "add module" (called by AI chat — creates elements + group)
   // writtenText: if provided, placed as a text element at the top of the group
-  addModule: (title: string, artifacts: CanvasArtifact[], crumbs?: Crumb[], writtenText?: string) => void;
+  // opts.anchorGroupId: place + connect from this existing group instead of the previous one
+  // opts.isTangent: stamp the new group as a tangent (controls back pill + main-thread tracking)
+  addModule: (
+    title: string,
+    artifacts: CanvasArtifact[],
+    crumbs?: Crumb[],
+    writtenText?: string,
+    opts?: { anchorGroupId?: string | null; isTangent?: boolean },
+  ) => string;
+
+  // Tangent / main-thread actions
+  setCurrentMain: (groupId: string | null) => void;
+  setLastTangent: (groupId: string | null) => void;
+  clearTangent: () => void;
 
   // Pending-module lifecycle (drives the dashed boundary while AI streams artifacts)
   startPendingModule: () => void;
@@ -274,6 +297,56 @@ function nextGroupStartX(elements: CanvasElement[]): number {
 }
 
 const CANVAS_START_Y = 200; // all groups sit on the same horizontal baseline
+const GROUP_GAP_Y = 140; // vertical gap between an anchor and its tangent module
+const GROUP_GAP_X = 60;  // horizontal nudge if a tangent collides with a sibling
+
+/**
+ * Compute the world-space bounding box of a group from its current elements.
+ * Uses estimateElemH for height when an element has no measured h yet.
+ */
+function computeGroupBoundsFromElements(
+  elements: CanvasElement[],
+  groupId: string,
+): { x: number; y: number; w: number; h: number } | null {
+  const inGroup = elements.filter((e) => e.groupId === groupId);
+  if (inGroup.length === 0) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const el of inGroup) {
+    const h = el.h ?? estimateElemH(el.type);
+    minX = Math.min(minX, el.x);
+    minY = Math.min(minY, el.y);
+    maxX = Math.max(maxX, el.x + el.w);
+    maxY = Math.max(maxY, el.y + h);
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+/**
+ * Find the X coordinate at which a group of width `width` placed at `(startX, y)`
+ * would no longer overlap any existing element on the same horizontal band
+ * `[y, y + height]`. Slides rightward in GROUP_GAP_X steps.
+ */
+function findNonOverlappingX(
+  elements: CanvasElement[],
+  startX: number,
+  y: number,
+  width: number,
+  height: number,
+): number {
+  let x = startX;
+  // Cap iterations to avoid pathological loops.
+  for (let i = 0; i < 200; i++) {
+    const collides = elements.some((el) => {
+      const elH = el.h ?? estimateElemH(el.type);
+      const horizOverlap = el.x < x + width && el.x + el.w > x;
+      const vertOverlap = el.y < y + height && el.y + elH > y;
+      return horizOverlap && vertOverlap;
+    });
+    if (!collides) return x;
+    x += GROUP_GAP_X;
+  }
+  return x;
+}
 
 /** Layout artifacts for a new group starting at (startX, startY). */
 function layoutArtifacts(
@@ -1250,6 +1323,8 @@ export const useCanvasStore = create<CanvasState>()(
   selectedElementIds: [],
   isMockMode: false,
   pendingModule: null,
+  currentMainGroupId: null,
+  lastTangentGroupId: null,
 
   // ── Element actions ─────────────────────────────────────────────────────────
 
@@ -1359,18 +1434,67 @@ export const useCanvasStore = create<CanvasState>()(
 
   // ── addModule: high-level (called by AI chat) ─────────────────────────────
 
-  addModule: (title, artifacts, _crumbs, writtenText) =>
+  addModule: (title, artifacts, _crumbs, writtenText, opts) => {
+    const groupId = `grp-${uid()}`;
     set((s) => {
       const groupIdx = s.groups.length;
-      const groupId = `grp-${uid()}`;
       const color = GROUP_COLORS[groupIdx % GROUP_COLORS.length];
 
+      const isTangent = !!opts?.isTangent;
+      const anchorGroup = opts?.anchorGroupId
+        ? s.groups.find((g) => g.id === opts.anchorGroupId) ?? null
+        : null;
+
+      // Decide placement: anchor-relative (tangent) vs. linear right edge
+      let startX: number;
+      let startY: number;
+      let connectionFromId: string | null = null;
+
+      if (anchorGroup) {
+        const anchorBounds = computeGroupBoundsFromElements(s.elements, anchorGroup.id);
+        if (anchorBounds) {
+          // Estimate the new module's footprint so we can slide on collisions
+          const cols = Math.min(MAX_COLS, Math.max(1, artifacts.length));
+          const colWidth = ELEM_WIDTHS[artifacts[0]?.type ?? "flashcard"] ?? 360;
+          const estW = Math.max(
+            ELEM_WIDTHS.text ?? 480,
+            colWidth * cols + ELEM_GAP * (cols - 1),
+          );
+          const rows = Math.ceil(artifacts.length / MAX_COLS) || 1;
+          const rowH = artifacts
+            .slice(0, MAX_COLS)
+            .reduce((m, a) => Math.max(m, estimateElemH(a.type)), 0);
+          const estH =
+            (writtenText ? (ELEM_H_EST.text ?? 140) + ELEM_GAP : 0) +
+            rows * rowH +
+            (rows - 1) * ELEM_GAP;
+
+          const desiredX = anchorBounds.x;
+          const desiredY = anchorBounds.y + anchorBounds.h + GROUP_GAP_Y;
+          startX = findNonOverlappingX(s.elements, desiredX, desiredY, estW, estH);
+          startY = desiredY;
+        } else {
+          startX = nextGroupStartX(s.elements);
+          startY = CANVAS_START_Y;
+        }
+        connectionFromId = anchorGroup.id;
+      } else {
+        startX = nextGroupStartX(s.elements);
+        startY = CANVAS_START_Y;
+        const prevGroup = s.groups[groupIdx - 1];
+        connectionFromId = prevGroup?.id ?? null;
+      }
+
       const group: CanvasGroup = {
-        id: groupId, name: title, color,
-        orderIndex: groupIdx, createdAt: Date.now(),
+        id: groupId,
+        name: title,
+        color,
+        orderIndex: groupIdx,
+        createdAt: Date.now(),
+        parentGroupId: anchorGroup?.id,
+        isTangent,
       };
 
-      const startX = nextGroupStartX(s.elements);
       const zBase = groupIdx * 100;
 
       // Text element at top of group (tutor's written explanation)
@@ -1379,7 +1503,7 @@ export const useCanvasStore = create<CanvasState>()(
             id: `el-txt-${uid()}`,
             type: "text",
             x: startX,
-            y: CANVAS_START_Y,
+            y: startY,
             w: Math.max(ELEM_WIDTHS.text ?? 480, (ELEM_WIDTHS[artifacts[0]?.type] ?? 360) * Math.min(artifacts.length, 2) + ELEM_GAP * (Math.min(artifacts.length, 2) - 1)),
             groupId,
             zIndex: zBase,
@@ -1391,35 +1515,45 @@ export const useCanvasStore = create<CanvasState>()(
 
       // Lay out artifacts below the text element
       const artifactStartY = textEl
-        ? CANVAS_START_Y + (ELEM_H_EST.text ?? 52) + ELEM_GAP
-        : CANVAS_START_Y;
+        ? startY + (ELEM_H_EST.text ?? 52) + ELEM_GAP
+        : startY;
 
       const newEls = layoutArtifacts(artifacts, groupId, startX, artifactStartY, zBase + 1);
 
-      // Connect to previous group
-      const prevGroup = s.groups[groupIdx - 1];
-      const newConn: ModuleConnection | null = prevGroup
-        ? { id: `conn-${uid()}`, fromModuleId: prevGroup.id, toModuleId: groupId }
+      const newConn: ModuleConnection | null = connectionFromId
+        ? { id: `conn-${uid()}`, fromModuleId: connectionFromId, toModuleId: groupId }
         : null;
 
       const updateEvent: CanvasUpdateEvent = {
         id: `upd-${uid()}`,
         type: "module_added",
         title: `Added: ${title}`,
-        detail: `${artifacts.length} artifact${artifacts.length !== 1 ? "s" : ""}${writtenText ? " + explanation" : ""} on canvas`,
+        detail: `${artifacts.length} artifact${artifacts.length !== 1 ? "s" : ""}${writtenText ? " + explanation" : ""} on canvas${isTangent ? " (tangent)" : ""}`,
         timestamp: Date.now(),
         moduleId: groupId,
       };
 
       const allNewEls = textEl ? [textEl, ...newEls] : newEls;
 
+      // Track main vs tangent so the back pill + future placement can find them.
+      const nextMain = isTangent ? s.currentMainGroupId : groupId;
+      const nextTangent = isTangent ? groupId : s.lastTangentGroupId;
+
       return {
         groups: [...s.groups, group],
         elements: [...s.elements, ...allNewEls],
         connections: newConn ? [...s.connections, newConn] : s.connections,
         updates: [...s.updates, updateEvent],
+        currentMainGroupId: nextMain,
+        lastTangentGroupId: nextTangent,
       };
-    }),
+    });
+    return groupId;
+  },
+
+  setCurrentMain: (groupId) => set({ currentMainGroupId: groupId }),
+  setLastTangent: (groupId) => set({ lastTangentGroupId: groupId }),
+  clearTangent: () => set({ lastTangentGroupId: null }),
 
   // ── Pending module (transient state during a streaming AI turn) ─────────────
 
@@ -1491,7 +1625,17 @@ export const useCanvasStore = create<CanvasState>()(
   // ── Reset ────────────────────────────────────────────────────────────────────
 
   clearCanvas: () =>
-    set({ elements: [], groups: [], connections: [], updates: [], selectedElementIds: [], strokes: [], pendingModule: null }),
+    set({
+      elements: [],
+      groups: [],
+      connections: [],
+      updates: [],
+      selectedElementIds: [],
+      strokes: [],
+      pendingModule: null,
+      currentMainGroupId: null,
+      lastTangentGroupId: null,
+    }),
     }),
     {
       name: "synapse-canvas",
@@ -1502,6 +1646,8 @@ export const useCanvasStore = create<CanvasState>()(
         groups: s.groups,
         connections: s.connections,
         updates: s.updates,
+        currentMainGroupId: s.currentMainGroupId,
+        lastTangentGroupId: s.lastTangentGroupId,
       }),
     },
   ),

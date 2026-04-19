@@ -2,11 +2,71 @@
 
 import { useCallback, useRef } from "react";
 import { useSessionStore } from "@/store/session";
-import { useCanvasStore, ELEM_WIDTHS, type CanvasElement } from "@/store/canvas";
+import { useCanvasStore, ELEM_WIDTHS, estimateElemH, type CanvasElement } from "@/store/canvas";
 import { useGroundingStore } from "@/store/grounding";
-import type { StreamEvent } from "@/lib/agents/types";
+import type { FocusCandidate, StreamEvent } from "@/lib/agents/types";
 import type { CanvasArtifact } from "@/lib/tools/types";
 import { speak, stopSpeaking } from "@/lib/voice/speech";
+
+// ── Focus / anchor candidate derivation ────────────────────────────────────
+
+/**
+ * Build the prioritized list of candidate "anchor" groups for this turn:
+ * 1. Explicit focus (from DoubtPopup / SelectionBar / context menu)
+ * 2. Selection-derived groups (uniqued)
+ * 3. Current main module (the one we'll return to after a tangent)
+ * Returns up to 3 unique candidates.
+ */
+function deriveFocusCandidates(focusGroupId?: string): FocusCandidate[] {
+  const { groups, elements, selectedElementIds, currentMainGroupId } =
+    useCanvasStore.getState();
+  if (groups.length === 0) return [];
+  const byId = new Map(groups.map((g) => [g.id, g] as const));
+
+  const out: FocusCandidate[] = [];
+  const seen = new Set<string>();
+  const push = (id: string | null | undefined, tag: Partial<FocusCandidate>) => {
+    if (!id || seen.has(id)) return;
+    const g = byId.get(id);
+    if (!g) return;
+    out.push({ groupId: id, title: g.name, ...tag });
+    seen.add(id);
+  };
+
+  push(focusGroupId, { isExplicitFocus: true });
+
+  if (selectedElementIds.length > 0) {
+    const groupIds = new Set<string>();
+    for (const id of selectedElementIds) {
+      const el = elements.find((e) => e.id === id);
+      if (el?.groupId) groupIds.add(el.groupId);
+    }
+    for (const gid of groupIds) push(gid, { isFromSelection: true });
+  }
+
+  push(currentMainGroupId, { isCurrentMain: true });
+
+  return out.slice(0, 3);
+}
+
+/** Compute world-space bounds of a group from its elements (no React deps). */
+function boundsForGroup(
+  groupId: string,
+): { x: number; y: number; w: number; h: number } | null {
+  const inGroup = useCanvasStore
+    .getState()
+    .elements.filter((e) => e.groupId === groupId);
+  if (inGroup.length === 0) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const el of inGroup) {
+    const h = el.h ?? estimateElemH(el.type);
+    minX = Math.min(minX, el.x);
+    minY = Math.min(minY, el.y);
+    maxX = Math.max(maxX, el.x + el.w);
+    maxY = Math.max(maxY, el.y + h);
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
 
 // ── Canvas context serializer ──────────────────────────────────────────────
 
@@ -64,11 +124,20 @@ export function useAIChat() {
   const writtenTextRef = useRef<string>("");
   const spokenTextRef  = useRef<string>("");
   const questionsRef   = useRef<string[]>([]);
+  // Anchor info for the in-flight turn — set in sendMessage, read by the
+  // artifact_pending handler (skeleton placement) and the done handler
+  // (final addModule call).
+  const turnAnchorRef = useRef<{
+    candidates: FocusCandidate[];
+    optimisticAnchorId: string | null;
+    finalAnchorId: string | null;
+    isTangent: boolean;
+  }>({ candidates: [], optimisticAnchorId: null, finalAnchorId: null, isTangent: false });
   // Aborts the in-flight /api/chat fetch when the user clicks Stop.
   const abortRef = useRef<AbortController | null>(null);
 
   const sendMessage = useCallback(
-    async (text: string) => {
+    async (text: string, opts?: { focusGroupId?: string }) => {
       if (!text.trim() || isStreaming) return;
 
       if (isSpeaking) {
@@ -96,6 +165,19 @@ export function useAIChat() {
       spokenTextRef.current  = "";
       questionsRef.current   = [];
       startPendingModule();
+
+      // Derive candidate anchors once per turn so skeletons can use them too.
+      const candidates = deriveFocusCandidates(opts?.focusGroupId);
+      // Optimistic anchor: prefer the explicit focus, else the first candidate.
+      // The server's strategy decision can override on `done`.
+      const optimisticAnchorId =
+        opts?.focusGroupId ?? candidates[0]?.groupId ?? null;
+      turnAnchorRef.current = {
+        candidates,
+        optimisticAnchorId,
+        finalAnchorId: null,
+        isTangent: false,
+      };
 
       const toastId = `toast-${Date.now()}`;
       addToast({ id: toastId, artifactType: "visual", title: "Thinking…", status: "preparing" });
@@ -129,6 +211,7 @@ export function useAIChat() {
             sessionContext,
             studyPlan,
             learningMode,
+            focus: candidates.length > 0 ? { candidates } : undefined,
           }),
         });
 
@@ -211,15 +294,34 @@ export function useAIChat() {
         case "artifact_pending": {
           const w = ELEM_WIDTHS[event.artifactType] ?? 360;
           const allEls = useCanvasStore.getState().elements;
-          const rightEdge = allEls.reduce((max, e) => Math.max(max, e.x + e.w), 80);
           const elId = `el-pending-${event.pendingId}`;
           pendingMap.current.set(event.pendingId, elId);
           turnElementIdsRef.current.add(elId);
+
+          // Place the skeleton near the optimistic anchor so it doesn't visually
+          // jump when the real module lands at done. Falls back to the right edge.
+          const anchorId = turnAnchorRef.current.optimisticAnchorId;
+          const anchorBounds = anchorId ? boundsForGroup(anchorId) : null;
+
+          let x: number;
+          let y: number;
+          if (anchorBounds) {
+            // Stack skeletons under the anchor; nudge each new one rightward
+            // by its width so they tile instead of stacking on top of each other.
+            const placedSkeletons = pendingMap.current.size - 1;
+            x = anchorBounds.x + placedSkeletons * (w + 24);
+            y = anchorBounds.y + anchorBounds.h + 140;
+          } else {
+            const rightEdge = allEls.reduce((max, e) => Math.max(max, e.x + e.w), 80);
+            x = rightEdge + 80;
+            y = 200;
+          }
+
           addPendingElement({
             id: elId,
             type: event.artifactType as import("@/store/canvas").ElementType,
-            x: rightEdge + 80,
-            y: 200,
+            x,
+            y,
             w,
             zIndex: allEls.length + 10,
             createdAt: Date.now(),
@@ -309,6 +411,16 @@ export function useAIChat() {
           const patch = event.contextPatch;
           if (patch && sessionContext) applyPatch(patch);
 
+          // Resolve final anchor: prefer server's strategy decision, fall back
+          // to the optimistic anchor we set client-side at sendMessage time.
+          const serverAnchor = event.anchorGroupId ?? null;
+          const serverIsTangent = !!event.isTangent;
+          const optimistic = turnAnchorRef.current.optimisticAnchorId;
+          const finalAnchorId = serverAnchor ?? optimistic ?? null;
+          const isTangent = serverAnchor != null ? serverIsTangent : false;
+          turnAnchorRef.current.finalAnchorId = finalAnchorId;
+          turnAnchorRef.current.isTangent = isTangent;
+
           // Clean up any unresolved pending elements (stream errored mid-generation
           // for that artifact). Their IDs are still in the turn set, so filter them
           // out below by checking `!pending`.
@@ -337,13 +449,27 @@ export function useAIChat() {
           // Build grouped module — prefer AI-generated title, fall back to user query
           const label = moduleTitleRef.current ||
             (userQuery.length > 50 ? userQuery.slice(0, 50) + "…" : userQuery);
+          let newGroupId: string | null = null;
           if (resolvedArtifacts.length > 0 || writtenTextRef.current) {
-            addModule(
+            newGroupId = addModule(
               label,
               resolvedArtifacts,
               undefined,
               writtenTextRef.current || undefined,
+              { anchorGroupId: finalAnchorId, isTangent },
             );
+          }
+
+          // Update main/tangent tracking so the back pill knows where "home" is.
+          // addModule already stamps these, but we're explicit here for the case
+          // where addModule was skipped (no artifacts + no writtenText).
+          if (newGroupId) {
+            const store = useCanvasStore.getState();
+            if (isTangent) {
+              store.setLastTangent(newGroupId);
+            } else {
+              store.setCurrentMain(newGroupId);
+            }
           }
 
           // Annotations (canvas_delegate_task)

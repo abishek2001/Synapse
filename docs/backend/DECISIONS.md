@@ -4,6 +4,24 @@ A record of non-obvious design choices, trade-offs made, and significant changes
 
 ---
 
+## 2026-04-18 — Tangent modules + back pill (anchor-aware module placement)
+
+**Problem:** Every turn appended a new module to the right edge of the canvas with an arrow from the chronologically previous group. When the user marked a specific module and asked a follow-up about it, the new answer landed far away from what they were looking at and was wired to the wrong parent — the linear "next module," not the module the question was actually about. The user's mental model ("this is a tangent off that") wasn't reflected on the canvas, and there was no way to get back to the main study thread after a tangent.
+
+**Decision:**
+- **Two new fields on `CanvasGroup`** (`parentGroupId`, `isTangent`) plus two new ids on the canvas store (`currentMainGroupId`, `lastTangentGroupId`) with `setCurrentMain` / `setLastTangent` / `clearTangent` actions. Both ids are persisted alongside groups so the back pill survives reloads.
+- **`addModule` is anchor-aware.** New `opts: { anchorGroupId, isTangent }` argument: when an anchor is supplied, the new group is placed at `(anchorBounds.x, anchorBounds.y + anchorBounds.h + GROUP_GAP_Y)` and slid rightward in `GROUP_GAP_X` steps via a collision check until it doesn't overlap a sibling. The connection arrow is drawn from the anchor (not from the chronologically previous group). Without an anchor, the original `nextGroupStartX` + previous-group behavior is preserved. `addModule` now also returns the new group id.
+- **Client builds candidates, server confirms.** `useAIChat.sendMessage(text, { focusGroupId? })` builds an ordered `FocusCandidate[]` from explicit focus → selection → current main (max 3) and sends it as `{ focus: { candidates } }`. The strategy LLM gets the candidates in its prompt, an explicit ANCHOR / TANGENT RULES section, and returns `anchorGroupId` (validated against the supplied ids — never trusted blindly) plus `isTangent`. A single-candidate fast path biases toward that anchor when the model says tangent. The `done` SSE event carries `{ anchorGroupId, isTangent }` so the client knows where to place the final module and which id (current main vs last tangent) to update.
+- **Skeletons land near the anchor.** The `artifact_pending` handler reads the optimistic anchor (set in `sendMessage`) and tiles skeleton cards under it instead of always at the right edge — eliminates the visual jump when the real module materializes.
+- **DoubtPopup / SelectionBar / CanvasContextMenu pass an explicit focus.** `openDoubtPopup` gained a fourth `originGroupId` argument; SelectionBar passes the first selected group; the context menu's "Ask about this" passes the right-clicked group; DoubtPopup falls back to nearest-group-by-distance when no origin is given. SelectionBar's "Ask AI" is now visible for **single-element selection** too (was 2+), since marking one artifact and asking about it is the headline use case.
+- **Back-to-main pill.** New `TangentReturnPill` rendered in `WorkspaceView`. Visible whenever `lastTangentGroupId` and `currentMainGroupId` differ. Click → `artifactCanvasRef.current?.zoomToGroup(currentMainGroupId)` + `clearTangent()`. Auto-zoom on the newest group is unchanged — the user *should* see the tangent when it appears; the pill is only for return navigation.
+
+**Why server-side anchor confirmation (not pure client heuristics):** the user's intent ("is this a deep-dive on what I marked or the next step in the plan?") needs the same context the strategy agent already has — the study plan, recent conversation, and the question itself. Asking the LLM costs us ~50 tokens but makes placement actually correct on ambiguous turns, and the single-candidate fast path skips the round trip in the common case where there's only one obvious anchor.
+
+**Out of scope (intentional):** nested tangents (tangent off a tangent — currently `lastTangentGroupId` is a single slot, not a stack), auto-collapsing tangents into the TOC, and an explicit "promote tangent to main" affordance.
+
+---
+
 ## 2026-04-18 — All OpenAI calls go through a logged client + are abortable
 
 **Problem:** Each module spun up its own `new OpenAI({ apiKey: ... })`, there was no record of what was actually sent to or returned from the model, and there was no way for the user to cancel an in-flight chat turn — the spinner just kept spinning.

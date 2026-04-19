@@ -35,8 +35,13 @@ export default function SelectionBar() {
   const handleAskAboutSelection = () => {
     const aboutText = groupNames.length > 0
       ? groupNames.map((n) => `"${n}"`).join(", ")
-      : `${selectedElementIds.length} selected elements`;
-    openDoubtPopup(400, 300, `Explain the relationship and connection between: ${aboutText}`);
+      : `${selectedElementIds.length} selected element${selectedElementIds.length === 1 ? "" : "s"}`;
+    const prompt = selectedElementIds.length === 1
+      ? `Explain "${aboutText}" in more detail`
+      : `Explain the relationship and connection between: ${aboutText}`;
+    // Anchor the doubt to the first selected element's group, if any
+    const originGroupId = groupIds[0];
+    openDoubtPopup(400, 300, prompt, originGroupId);
   };
 
   const handleGroup = () => {
@@ -93,15 +98,13 @@ export default function SelectionBar() {
           </button>
         )}
 
-        {selectedElementIds.length > 1 && (
-          <button
-            onClick={handleAskAboutSelection}
-            className="flex items-center gap-1.5 text-[11px] font-medium text-white/80 hover:text-white transition-colors px-2 py-1 rounded-full hover:bg-white/10"
-          >
-            <HelpCircle className="w-3.5 h-3.5" />
-            Ask AI
-          </button>
-        )}
+        <button
+          onClick={handleAskAboutSelection}
+          className="flex items-center gap-1.5 text-[11px] font-medium text-white/80 hover:text-white transition-colors px-2 py-1 rounded-full hover:bg-white/10"
+        >
+          <HelpCircle className="w-3.5 h-3.5" />
+          Ask AI
+        </button>
 
         <div className="w-px h-4 bg-white/20 mx-1" />
 

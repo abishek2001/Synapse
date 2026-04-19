@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { chatCompletion } from "@/lib/logging/openai";
+import { chatCompletion, pickModel } from "@/lib/logging/openai";
 
 export async function POST(req: NextRequest) {
   try {
@@ -7,7 +7,7 @@ export async function POST(req: NextRequest) {
     if (!text) return NextResponse.json({ title: "" });
 
     const res = await chatCompletion("extract-title", {
-      model: process.env.OPENAI_MODEL ?? "gpt-4o",
+      model: pickModel("easy"),
       messages: [
         {
           role: "system",

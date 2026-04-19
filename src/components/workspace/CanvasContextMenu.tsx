@@ -99,7 +99,7 @@ export default function CanvasContextMenu({
           <Item
             icon={HelpCircle}
             label="Ask about this"
-            onClick={() => openDoubtPopup(worldX, worldY, `Explain the concept "${group.name}" in detail`)}
+            onClick={() => openDoubtPopup(worldX, worldY, `Explain the concept "${group.name}" in detail`, group.id)}
           />
           <div className="h-px my-1" style={{ backgroundColor: dividerColor }} />
           <Item

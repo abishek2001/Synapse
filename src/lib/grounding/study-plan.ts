@@ -1,4 +1,4 @@
-import { chatCompletion } from "@/lib/logging/openai";
+import { chatCompletion, pickModel } from "@/lib/logging/openai";
 
 export interface StudyModule {
   id: string;
@@ -26,7 +26,7 @@ export async function generateStudyPlan(
     : "";
 
   const res = await chatCompletion("study-plan.generate", {
-    model: process.env.OPENAI_MODEL ?? "gpt-4o",
+    model: pickModel("medium"),
     messages: [
       {
         role: "system",

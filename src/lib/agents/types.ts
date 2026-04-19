@@ -13,6 +13,19 @@ export interface FriendResponse {
   followUp: string;
 }
 
+export interface FocusCandidate {
+  groupId: string;
+  title: string;
+  isCurrentMain?: boolean;
+  isExplicitFocus?: boolean;
+  isFromSelection?: boolean;
+}
+
+export interface FocusInput {
+  /** Candidate groups the question might be "about", in priority order. */
+  candidates: FocusCandidate[];
+}
+
 export interface OrchestratorInput {
   query: string;
   persona: string;
@@ -23,6 +36,8 @@ export interface OrchestratorInput {
   studyPlan: StudyPlan | null;
   mode?: "tutor" | "friend";
   learningMode?: "guided" | "auto" | null;
+  /** Module-anchor candidates supplied by the client (selection/focus/current main). */
+  focus?: FocusInput;
 }
 
 export type SessionContextPatch = Partial<SessionContext> & {
@@ -48,6 +63,10 @@ export interface OrchestratorResult {
   rawResponse: string;
   followUpQuestions?: string[];  // Strategy agent topic suggestions (chips tier 2)
   pauseForInput?: boolean;
+  /** Group this turn anchors to (existing module). null/undefined → linear/right-edge placement. */
+  anchorGroupId?: string | null;
+  /** True when the new module branches off the anchor (vs. extending the main thread). */
+  isTangent?: boolean;
 }
 
 // ── SSE stream events emitted by the orchestrator ──────────────────────────
@@ -66,5 +85,10 @@ export type StreamEvent =
     }
   | { type: "follow_up"; questions: string[] }  // chips tier 2 — strategy suggestions
   | { type: "pause_for_input" }
-  | { type: "done"; contextPatch: SessionContextPatch }
+  | {
+      type: "done";
+      contextPatch: SessionContextPatch;
+      anchorGroupId?: string | null;
+      isTangent?: boolean;
+    }
   | { type: "error"; message: string };
