@@ -51,6 +51,10 @@ interface SessionState {
 
   docHeadings: string[];
 
+  // null = waiting for user to pick; "guided" = step-by-step interactive; "auto" = comprehensive one-shot
+  learningMode: "guided" | "auto" | null;
+  setLearningMode: (mode: "guided" | "auto" | null) => void;
+
   initSession: (query: string, persona: string, files: UploadedFile[], urls?: string[]) => void;
   setDocuments: (docs: ParsedDocument[]) => void;
   setDocHeadings: (headings: string[]) => void;
@@ -100,6 +104,7 @@ const initialState = {
   speakReady: false,
   docHeadings: [] as string[],
   moduleQueue: [] as string[],
+  learningMode: null as "guided" | "auto" | null,
 };
 
 export const useSessionStore = create<SessionState>()(
@@ -121,6 +126,7 @@ export const useSessionStore = create<SessionState>()(
       sceneConfig: null,
       followUpQuestions: [],
       moduleQueue: [],
+      learningMode: null,
       showSources: files.length > 0 || urls.length > 0,
     }),
 
@@ -160,6 +166,7 @@ export const useSessionStore = create<SessionState>()(
   setDocHeadings: (docHeadings) => set({ docHeadings }),
   setModuleQueue: (moduleQueue) => set({ moduleQueue }),
   shiftModuleQueue: () => set((s) => ({ moduleQueue: s.moduleQueue.slice(1) })),
+  setLearningMode: (learningMode) => set({ learningMode }),
   reset: () => set(initialState),
     }),
     {

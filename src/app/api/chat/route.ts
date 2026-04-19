@@ -23,6 +23,7 @@ export async function POST(req: NextRequest) {
     sessionContext?: SessionContext | null;
     studyPlan?: StudyPlan | null;
     mode?: "tutor" | "friend";
+    learningMode?: "guided" | "auto" | null;
   };
 
   try {
@@ -43,6 +44,7 @@ export async function POST(req: NextRequest) {
     sessionContext = null,
     studyPlan = null,
     mode,
+    learningMode = null,
   } = body;
 
   if (!query) {
@@ -64,7 +66,7 @@ export async function POST(req: NextRequest) {
 
       try {
         await runOrchestrator(
-          { query, persona, history, documentContext, canvasContext, sessionContext, studyPlan, mode },
+          { query, persona, history, documentContext, canvasContext, sessionContext, studyPlan, mode, learningMode },
           emit,
         );
       } catch (err: unknown) {

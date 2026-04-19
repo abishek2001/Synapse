@@ -22,6 +22,7 @@ export interface OrchestratorInput {
   sessionContext: SessionContext | null;
   studyPlan: StudyPlan | null;
   mode?: "tutor" | "friend";
+  learningMode?: "guided" | "auto" | null;
 }
 
 export type SessionContextPatch = Partial<SessionContext> & {
