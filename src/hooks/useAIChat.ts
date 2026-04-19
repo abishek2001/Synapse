@@ -55,6 +55,8 @@ export function useAIChat() {
   const writtenTextRef = useRef<string>("");
   const spokenTextRef  = useRef<string>("");
   const questionsRef   = useRef<string[]>([]);
+  // Aborts the in-flight /api/chat fetch when the user clicks Stop.
+  const abortRef = useRef<AbortController | null>(null);
 
   const sendMessage = useCallback(
     async (text: string) => {
@@ -87,6 +89,9 @@ export function useAIChat() {
       const toastId = `toast-${Date.now()}`;
       addToast({ id: toastId, artifactType: "visual", title: "Thinking…", status: "preparing" });
 
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       try {
         const history = messages
           .filter((m) => m.role !== "system")
@@ -101,6 +106,7 @@ export function useAIChat() {
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
           body: JSON.stringify({
             query: text.trim(),
             persona,
@@ -144,15 +150,32 @@ export function useAIChat() {
           catch { /* ignore */ }
         }
       } catch (err) {
-        console.error("SSE chat error:", err);
-        addMessage({
-          id: crypto.randomUUID(),
-          role: "tutor",
-          content: "Something went wrong. Let me try again…",
-          timestamp: Date.now(),
-        });
-        removeToast(toastId);
+        const aborted = err instanceof DOMException && err.name === "AbortError";
+        if (aborted) {
+          // Drop any skeleton cards the user can still see.
+          for (const [, elId] of pendingMap.current) {
+            useCanvasStore.getState().removeElement(elId);
+          }
+          pendingMap.current.clear();
+          removeToast(toastId);
+          addMessage({
+            id: crypto.randomUUID(),
+            role: "tutor",
+            content: "Stopped.",
+            timestamp: Date.now(),
+          });
+        } else {
+          console.error("SSE chat error:", err);
+          addMessage({
+            id: crypto.randomUUID(),
+            role: "tutor",
+            content: "Something went wrong. Let me try again…",
+            timestamp: Date.now(),
+          });
+          removeToast(toastId);
+        }
       } finally {
+        abortRef.current = null;
         setStreaming(false);
       }
     },
@@ -325,7 +348,21 @@ export function useAIChat() {
     );
   }, [setSpeaking, setSpeakReady]);
 
+  // Cancel the in-flight chat request. Server-side OpenAI calls receive the
+  // aborted signal and short-circuit; client-side we tear down skeletons +
+  // toast in the catch block above.
+  const stop = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    if (isSpeaking) {
+      stopSpeaking();
+      setSpeaking(false);
+    }
+  }, [isSpeaking, setSpeaking]);
+
   const latestTutor = [...messages].reverse().find((m) => m.role === "tutor");
 
-  return { sendMessage, speakLatest, isStreaming, latestTutor };
+  return { sendMessage, stop, speakLatest, isStreaming, latestTutor };
 }

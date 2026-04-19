@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import OpenAI from "openai";
+import { chatCompletion } from "@/lib/logging/openai";
 import { SIMULATION_SYSTEM_PROMPT, buildSimulationPrompt } from "@/lib/simulation/prompt";
 import { sanitizeSimulationCode } from "@/lib/simulation/sanitize";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? "" });
 
 export async function POST(req: NextRequest) {
   try {
@@ -25,15 +23,19 @@ export async function POST(req: NextRequest) {
 
     const userPrompt = buildSimulationPrompt(topic, context);
 
-    const res = await openai.chat.completions.create({
-      model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
-      messages: [
-        { role: "system", content: SIMULATION_SYSTEM_PROMPT },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: 0.7,
-      max_tokens: 4096,
-    });
+    const res = await chatCompletion(
+      "simulate.api",
+      {
+        model: process.env.OPENAI_MODEL ?? "gpt-4o",
+        messages: [
+          { role: "system", content: SIMULATION_SYSTEM_PROMPT },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0.7,
+        max_tokens: 4096,
+      },
+      { signal: req.signal },
+    );
 
     const raw = res.choices[0]?.message?.content ?? "";
     const { safe, code, issues } = sanitizeSimulationCode(raw);

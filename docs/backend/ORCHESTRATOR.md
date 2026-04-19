@@ -98,7 +98,7 @@ This means the tutor LLM receives both:
 | Constant | Value | Purpose |
 |---|---|---|
 | `MAX_TOOL_ROUNDS` | 4 | Max OpenAI calls per turn |
-| `MODEL` | `OPENAI_MODEL` env or `gpt-4o-mini` | Model for all calls |
+| `MODEL` | `OPENAI_MODEL` env or `gpt-4o` | Model for all calls |
 
 ---
 

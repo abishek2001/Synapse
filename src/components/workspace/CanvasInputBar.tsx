@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Send, Mic, MicOff, Loader2, Volume2, X, Sparkles, BookOpen, Wand2 } from "lucide-react";
+import { Send, Mic, MicOff, Square, Volume2, X, Sparkles, BookOpen, Wand2 } from "lucide-react";
 import { useSessionStore } from "@/store/session";
 import { useUIStore } from "@/store/ui";
 import { useGroundingStore } from "@/store/grounding";
@@ -31,7 +31,7 @@ export default function CanvasInputBar() {
   } = useSessionStore();
 
   const { darkMode } = useUIStore();
-  const { sendMessage, speakLatest, isStreaming, latestTutor } = useAIChat();
+  const { sendMessage, stop, speakLatest, isStreaming, latestTutor } = useAIChat();
   const [input, setInput] = useState("");
   const [bubbleDismissed, setBubbleDismissed] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -403,11 +403,17 @@ export default function CanvasInputBar() {
               disabled={isStreaming}
             />
 
-            {/* Streaming indicator in place of send */}
+            {/* While a turn is in flight: pulsing Stop button (cancels fetch + OpenAI calls) */}
             {isStreaming ? (
-              <div className={`w-7 h-7 flex items-center justify-center flex-shrink-0 ${darkMode ? "text-white/25" : "text-black/25"}`}>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              </div>
+              <motion.button
+                onClick={stop}
+                animate={{ scale: [1, 1.08, 1] }}
+                transition={{ repeat: Infinity, duration: 1.4, ease: "easeInOut" }}
+                className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 bg-red-500/90 hover:bg-red-500 text-white shadow-[0_0_12px_rgba(239,68,68,0.45)]"
+                title="Stop"
+              >
+                <Square className="w-3 h-3 fill-current" />
+              </motion.button>
             ) : (
               <>
                 {/* Speak button — appears when AI response is ready for TTS */}

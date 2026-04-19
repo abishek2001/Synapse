@@ -58,7 +58,7 @@ data: { "type": "error", "message": "string" }
 - Pipeline: Strategy Agent (skipped in `auto` mode) → Tool Loop (4 rounds in guided, 8 in auto) → Observer
 - `canvasContext` is a text summary of existing elements; AI skips duplicating them
 - `followUpQuestions` come from the Strategy agent, not the tutor LLM
-- Model: `OPENAI_MODEL` env var (default `gpt-4o-mini`)
+- Model: `OPENAI_MODEL` env var (default `gpt-4o`)
 
 ---
 
@@ -250,5 +250,5 @@ Extracts a short topic title (3–8 words) from document text. Called during bri
 ```
 
 **Implementation notes**
-- Uses `gpt-4o-mini` with a tight system prompt and `max_tokens: 24`
+- Uses `gpt-4o` with a tight system prompt and `max_tokens: 24`
 - Falls back to `""` on any error (best-effort, non-critical)

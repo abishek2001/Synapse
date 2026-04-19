@@ -1,5 +1,5 @@
-import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import { chatCompletion } from "@/lib/logging/openai";
 import { buildTutorSystemPrompt, parseTutorResponse } from "./tutor";
 import { buildFriendMessages } from "./friend";
 import { getTeachingDecision, type TeachingDecision } from "./strategy";
@@ -16,12 +16,12 @@ import type {
   StreamEvent,
 } from "./types";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? "" });
-const MODEL = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+const MODEL = process.env.OPENAI_MODEL ?? "gpt-4o";
 
 export async function runOrchestrator(
   input: OrchestratorInput,
   onEvent?: (e: StreamEvent) => void,
+  signal?: AbortSignal,
 ): Promise<OrchestratorResult> {
   const {
     query, persona, history, documentContext, canvasContext,
@@ -30,7 +30,7 @@ export async function runOrchestrator(
 
   // Manual friend invocation only (Call a Friend button)
   if (mode === "friend") {
-    return executeFriendTurn(query, sessionContext, onEvent);
+    return executeFriendTurn(query, sessionContext, onEvent, signal);
   }
 
   // ── PLAN ──────────────────────────────────────────────────────────────────
@@ -40,22 +40,28 @@ export async function runOrchestrator(
   // already tells the model to be comprehensive, no need for per-turn pedagogy.
   let decision: TeachingDecision | null = null;
   if (sessionContext && learningMode !== "auto") {
+    const t = Date.now();
     try {
       decision = await getTeachingDecision(
         query,
         sessionContext,
         studyPlan,
         history.slice(-6).map((m) => ({ role: m.role, content: m.content })),
+        signal,
       );
-    } catch {
+      console.log(`[orch] strategy ${Date.now() - t}ms → action=${decision.action} artifacts=${decision.suggestedArtifacts.join(",") || "—"}`);
+    } catch (err) {
       decision = null;
+      console.warn(`[orch] strategy ✖ ${Date.now() - t}ms`, err instanceof Error ? err.message : err);
     }
+  } else if (!sessionContext) {
+    console.log(`[orch] strategy SKIPPED (no sessionContext) — tutor will run with no decision hint`);
   }
 
   // ── EXECUTE ───────────────────────────────────────────────────────────────
   return executeTutorTurn(
     query, persona, history, documentContext, canvasContext,
-    decision, sessionContext, learningMode, onEvent,
+    decision, sessionContext, learningMode, onEvent, signal,
   );
 }
 
@@ -63,16 +69,21 @@ async function executeFriendTurn(
   query: string,
   sessionContext: OrchestratorInput["sessionContext"],
   onEvent?: (e: StreamEvent) => void,
+  signal?: AbortSignal,
 ): Promise<OrchestratorResult> {
   onEvent?.({ type: "thinking", message: "Crafting analogy…" });
 
   const messages = buildFriendMessages(query, query);
-  const res = await openai.chat.completions.create({
-    model: MODEL,
-    messages: messages.map((m) => ({ role: m.role, content: m.content })),
-    temperature: 0.7,
-    max_tokens: 1024,
-  });
+  const res = await chatCompletion(
+    "friend.analogy",
+    {
+      model: MODEL,
+      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      temperature: 0.7,
+      max_tokens: 1024,
+    },
+    { signal },
+  );
 
   const raw = res.choices[0]?.message?.content ?? "";
   let friend: FriendResponse;
@@ -134,6 +145,7 @@ async function executeTutorTurn(
   sessionContext: OrchestratorInput["sessionContext"],
   learningMode: "guided" | "auto" | null,
   onEvent?: (e: StreamEvent) => void,
+  signal?: AbortSignal,
 ): Promise<OrchestratorResult> {
   let systemPrompt = buildTutorSystemPrompt(persona, documentContext, learningMode);
 
@@ -196,20 +208,30 @@ Follow this guidance. The artifact types listed are what the pedagogical layer d
     const forceTools = round === 0 && artifacts.length === 0 && initialToolChoice === "required";
     const toolChoiceRound = forceTools ? ("required" as const) : ("auto" as const);
 
-    const res = await openai.chat.completions.create({
-      model: MODEL,
-      messages,
-      tools: toolsForRound,
-      tool_choice: toolChoiceRound,
-      temperature: 0.7,
-      max_tokens: maxTokens,
-      // Force JSON output whenever the model is allowed to write content (i.e. tool_choice="auto").
-      // When tool_choice="required" the model cannot return content, so JSON mode would be a no-op.
-      // OpenAI requires the prompt to mention "json" — our system prompt does.
-      ...(toolChoiceRound === "auto" ? { response_format: { type: "json_object" as const } } : {}),
-    });
+    const tRound = Date.now();
+    console.log(`[orch] round ${round} tools=${toolsForRound.length} choice=${toolChoiceRound} jsonMode=${toolChoiceRound === "auto"}`);
+    const res = await chatCompletion(
+      `tutor.round${round}`,
+      {
+        model: MODEL,
+        messages,
+        tools: toolsForRound,
+        tool_choice: toolChoiceRound,
+        temperature: 0.7,
+        max_tokens: maxTokens,
+        // Force JSON output whenever the model is allowed to write content (i.e. tool_choice="auto").
+        // When tool_choice="required" the model cannot return content, so JSON mode would be a no-op.
+        // OpenAI requires the prompt to mention "json" — our system prompt does.
+        ...(toolChoiceRound === "auto" ? { response_format: { type: "json_object" as const } } : {}),
+      },
+      { signal },
+    );
+    const dtRound = Date.now() - tRound;
 
     const assistantMsg = res.choices[0].message;
+    const toolCount = assistantMsg.tool_calls?.length ?? 0;
+    const finish = res.choices[0].finish_reason;
+    console.log(`[orch] round ${round} ← ${dtRound}ms finish=${finish} toolCalls=${toolCount}${toolCount === 0 && assistantMsg.content ? ` contentLen=${assistantMsg.content.length}` : ""}`);
 
     if (!assistantMsg.tool_calls?.length) {
       // Final round — no more tools; this content is the structured JSON response
@@ -252,8 +274,10 @@ Follow this guidance. The artifact types listed are what the pedagogical layer d
       let fnArgs: Record<string, unknown> = {};
       try { fnArgs = JSON.parse(toolCall.function.arguments); } catch { fnArgs = {}; }
 
+      const tTool = Date.now();
       try {
-        const toolResult = await handleToolCall(fnName, fnArgs, documentContext);
+        const toolResult = await handleToolCall(fnName, fnArgs, documentContext, { signal });
+        console.log(`[orch]   tool ${fnName} ${Date.now() - tTool}ms → ${toolResult.artifact ? `artifact(${toolResult.artifact.type})` : toolResult.annotations ? `${toolResult.annotations.length} annotations` : "no output"}`);
         if (toolResult.artifact) {
           // If this was a knowledge_lookup, accumulate its citations for later artifacts
           if (fnName === "knowledge_lookup" && toolResult.artifact.type === "lookup") {

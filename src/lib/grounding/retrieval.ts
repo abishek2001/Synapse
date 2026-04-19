@@ -1,6 +1,4 @@
-import OpenAI from "openai";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY ?? "" });
+import { embeddings } from "@/lib/logging/openai";
 
 export interface RetrievalChunk {
   text: string;
@@ -70,7 +68,7 @@ export async function buildRetrievalIndex(
   const texts = rawChunks.map((c) => c.text);
 
   try {
-    const res = await openai.embeddings.create({
+    const res = await embeddings("retrieval.index", {
       model: "text-embedding-3-small",
       input: texts,
     });
@@ -115,7 +113,7 @@ export async function semanticSearch(
   }
 
   try {
-    const res = await openai.embeddings.create({
+    const res = await embeddings("retrieval.query", {
       model: "text-embedding-3-small",
       input: query,
     });

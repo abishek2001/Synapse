@@ -155,20 +155,15 @@ app/workspace/page.tsx (Suspense wrapper)
 - **Wiring**: `WorkspaceView` passes `(groupId) => artifactCanvasRef.current?.zoomToGroup(groupId)` as `onZoomToGroup`
 
 ### `CanvasInputBar` (`src/components/workspace/CanvasInputBar.tsx`)
-- **Reads**: `useSessionStore` (`voiceMode, liveCaption, isSpeaking, speakReady, followUpQuestions, learningMode, messages, query, pendingVoiceText, moduleQueue`), `useAIChat` (`sendMessage, speakLatest, isStreaming, latestTutor`)
-- **Writes**: `setVoiceMode, setLiveCaption, setFollowUpQuestions, setLearningMode, setPendingVoiceText, setModuleQueue, shiftModuleQueue` (session store); `sendMessage, speakLatest` (`useAIChat`)
-- **Modes**: normal (column of cards above an input pill) | voice (floating pulse pill + live caption)
-- **Layout (top → bottom inside the bottom-center column, `max-w-xl`)**:
-  1. **Mode picker card** (one-shot) — shown when `learningMode === null && messages.length === 0 && !isStreaming`. Two buttons: **Guided** (`BookOpen`, neutral) and **Auto Explore** (`Wand2`, violet accent). Picking a mode calls `handlePickMode(mode)` which sets `learningMode` and either fires a single comprehensive prompt (auto, no plan) or queues every module from `useGroundingStore.studyPlan` into `moduleQueue` (auto, multi-module plan), or just sends the topic as the first message (guided).
-  2. **Dismissible Synapse bubble** — shown when `latestTutor && !showModePicker && !bubbleDismissed`. Compact dark card with a `Sparkles` Synapse badge, an inline Speak button (when `speakReady && !isSpeaking`), an X to dismiss, and a `max-h-[30vh]` scrollable body containing `latestTutor.content`. A `useEffect` resurfaces the bubble (clears `bubbleDismissed`) whenever a new tutor message arrives (tracked via `lastShownTutorId` ref).
-  3. **Follow-up chips** — `followUpQuestions.slice(0, 2)` rendered as tier-1 violet chips. Hidden during streaming or when the mode picker is showing. Clicking a chip clears the array and sends the question.
-  4. **Single-line input pill** — text input + (streaming spinner | speak/mic/send buttons).
-- **YouTube-style live captions** (rendered outside the column, fixed position): `bottom-28 left-1/2`, dark translucent pill with white text, shown only while `isSpeaking && liveCaption`. Replaces the older "snippet card above the input bar" — captions now appear as a TV-style overlay over the canvas during TTS playback.
-- **Auto-prompt effects**:
-  - When `pendingVoiceText` is set and not streaming → calls `sendMessage(pendingVoiceText)` and clears it.
-  - When `moduleQueue.length > 0` and not streaming → shifts the head of the queue and sends it. Used by Auto Explore mode to chain through every module of a multi-module study plan.
-- **Defaulting**: if the user types into the pill or clicks a chip without picking a mode, `learningMode` is silently set to `"guided"`.
-- **Speak button** (in input pill): `Volume2` appears when `speakReady === true`. Clicking calls `speakLatest()` and clears `speakReady`.
+- **Reads**: `useSessionStore` (messages, voiceMode, liveCaption, isSpeaking, speakReady, followUpQuestions, etc.)
+- **Writes**: `setVoiceMode`, `setLiveCaption`, `sendMessage`, `stop`, `speakLatest` via `useAIChat`
+- **Modes**: normal (full input bar) | voice (floating pulse pill + live caption)
+- **Follow-up chip tiers**:
+  - Tier 1 (violet) — `questionsForUser` from the tutor's structured response; prepended first
+  - Tier 2 (neutral) — `followUpQuestions` from the strategy agent; appended after tier-1
+  - Chips clear immediately on click; deduplication applied between tiers
+- **Speak button**: a `Volume2` button appears above the send button when `speakReady === true` (AI response is ready but TTS hasn't auto-played). Clicking calls `speakLatest()` which triggers TTS and clears `speakReady`.
+- **Stop button**: while `isStreaming === true` the Send button slot is replaced by a pulsing red `Square` button. Clicking calls `stop()` from `useAIChat`, which aborts the in-flight `/api/chat` fetch — the server forwards the abort to OpenAI and the client tears down skeleton cards + the "Thinking…" toast.
 
 ### `RightSidebar` (`src/components/workspace/RightSidebar.tsx`)
 - **Props**: `open: boolean, onToggle: () => void`
@@ -205,7 +200,7 @@ app/workspace/page.tsx (Suspense wrapper)
 ## Hooks
 
 ### `useAIChat` (`src/hooks/useAIChat.ts`)
-- **Returns**: `{ sendMessage, speakLatest, isStreaming, latestTutor }`
+- **Returns**: `{ sendMessage, stop, speakLatest, isStreaming, latestTutor }`
 - **Pipeline**: user message → `/api/chat` SSE → read events → update stores + canvas
 - **Canvas context**: `serializeCanvasContext()` converts current canvas elements into a text summary (type, title, groupId) sent with every request to avoid duplicate artifacts
 - **SSE events handled**:
@@ -218,6 +213,7 @@ app/workspace/page.tsx (Suspense wrapper)
   - `error` → adds error tutor message
 - **Module title source**: `moduleTitle` comes from the tutor's structured JSON response (3-6 word topic title). Falls back to the truncated user query if the tutor didn't emit one. This becomes the `group.name` shown by `GroupBoundary`.
 - **Delayed speech**: on `done`, sets `speakReady = true`. User clicks the Speak button → `speakLatest()` speaks `spokenText` (not `writtenText`).
+- **Cancellation**: each `sendMessage` call creates an `AbortController` stored in `abortRef`; the controller's signal is passed to `fetch("/api/chat", { signal })` and to `stopSpeaking()` cleanup. `stop()` aborts the controller — the catch branch detects `AbortError`, removes any pending skeleton cards + the toast, and adds a single "Stopped." tutor message. Server-side, `/api/chat` forwards `req.signal` into `runOrchestrator`, which threads it through `chatCompletion()` so the OpenAI request itself terminates.
 - **`speakLatest()`**: reads `spokenTextRef.current`, calls `speak()` with a word-boundary callback that updates `liveCaption` word-by-word via `SpeechSynthesisUtterance.onboundary`; clears `liveCaption` on end. Sets `speakReady = false`.
 
 ---
