@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import WorkspaceNavbar from "./WorkspaceNavbar";
 import ArtifactCanvas, { type ArtifactCanvasHandle } from "./ArtifactCanvas";
@@ -24,14 +24,13 @@ import { createSessionContext } from "@/lib/grounding/session-context";
 import { preloadKokoro } from "@/lib/voice/kokoro";
 
 export default function WorkspaceView() {
-  const searchParams = useSearchParams();
-  const urlQuery = searchParams.get("q") || "Untitled Session";
-  const urlPersona = searchParams.get("persona") || "professor";
+  const router = useRouter();
   const parsedRef = useRef(false);
 
   const {
     query,
     persona,
+    sessionId,
     files,
     urls,
     documents,
@@ -44,7 +43,6 @@ export default function WorkspaceView() {
     setDocuments,
     setDocHeadings,
     setCanvasTitle,
-    initSession,
   } = useSessionStore();
 
   const { setStudyPlan, setSessionContext, setRetrievalIndexed } = useGroundingStore();
@@ -88,10 +86,9 @@ export default function WorkspaceView() {
   );
 
   useEffect(() => {
-    // Re-init if there's no session OR if the URL query doesn't match the stored query
-    // (handles direct URL navigation, back/forward, and stale localStorage state)
-    if (!query || query !== urlQuery) initSession(urlQuery, urlPersona, []);
-  }, [query, urlQuery, urlPersona, initSession]);
+    // No active session — send user back to landing page
+    if (!sessionId || !query) router.replace("/");
+  }, [sessionId, query, router]);
 
   // Start downloading the Kokoro TTS model in the background so it's
   // ready by the time the user clicks Speak for the first time.
@@ -101,8 +98,8 @@ export default function WorkspaceView() {
     if (bridgeInitRef.current) return;
     bridgeInitRef.current = true;
 
-    const displayQ = query || urlQuery;
-    const displayP = persona || urlPersona;
+    const displayQ = query;
+    const displayP = persona;
     const hasFiles = files.length > 0;
     const hasUrls  = urls.length > 0;
     const hasSources = hasFiles || hasUrls;
@@ -356,7 +353,7 @@ export default function WorkspaceView() {
     }
   }, [showBridge, files, documents, setDocuments]);
 
-  const displayQuery = query || urlQuery;
+  const displayQuery = query;
   const displayTitle = canvasTitle || displayQuery;
 
   return (
@@ -365,7 +362,7 @@ export default function WorkspaceView() {
         {showBridge && (
           <BridgeScreen
             query={displayQuery}
-            persona={persona || urlPersona}
+            persona={persona}
             stages={stages}
             logs={logs}
             contextCard={contextCard}

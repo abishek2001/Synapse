@@ -25,7 +25,7 @@ export default function CanvasInputBar() {
   } = useSessionStore();
 
   const { darkMode } = useUIStore();
-  const { sendMessage, speakLatest, isStreaming, latestTutor } = useAIChat();
+  const { sendMessage, speakLatest, isStreaming } = useAIChat();
   const [input, setInput] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const recognitionOk = useRef(false);
@@ -83,7 +83,7 @@ export default function CanvasInputBar() {
     }
   };
 
-  void isSpeaking;
+  // isSpeaking used for captions below
 
   const barBg = darkMode
     ? "rgba(15,15,28,0.94)"
@@ -98,11 +98,6 @@ export default function CanvasInputBar() {
   const chipTier1 = darkMode
     ? "bg-violet-500/[0.12] hover:bg-violet-500/[0.22] text-violet-300/80 hover:text-violet-200 border border-violet-500/25"
     : "bg-violet-500/[0.08] hover:bg-violet-500/[0.16] text-violet-600/80 hover:text-violet-700 border border-violet-400/30";
-  // Tier 2: strategy suggestions — neutral
-  const chipTier2 = darkMode
-    ? "bg-white/[0.05] hover:bg-white/[0.10] text-white/40 hover:text-white/65 border border-white/[0.06]"
-    : "bg-black/[0.03] hover:bg-black/[0.07] text-black/35 hover:text-black/60 border border-black/[0.06]";
-
   // Voice mode: floating pill
   if (voiceMode) {
     return (
@@ -141,32 +136,35 @@ export default function CanvasInputBar() {
   }
 
   return (
+    <>
+    {/* YouTube-style live captions — fixed bottom center, shown while AI is speaking */}
+    <AnimatePresence>
+      {isSpeaking && liveCaption && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 8 }}
+          transition={{ duration: 0.15 }}
+          className="fixed bottom-28 left-1/2 -translate-x-1/2 z-50 pointer-events-none px-6 py-2 rounded-lg max-w-2xl text-center"
+          style={{
+            backgroundColor: "rgba(0,0,0,0.75)",
+            backdropFilter: "blur(4px)",
+          }}
+        >
+          <span
+            className="text-white font-medium leading-relaxed"
+            style={{ fontSize: 17 }}
+          >
+            {liveCaption}
+          </span>
+        </motion.div>
+      )}
+    </AnimatePresence>
+
     <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 w-full max-w-lg px-4 pointer-events-none">
       <div className="pointer-events-auto flex flex-col gap-1.5">
 
-        {/* AI caption / latest tutor snippet */}
-        <AnimatePresence mode="wait">
-          {latestTutor && !isStreaming && (
-            <motion.div
-              key={latestTutor.id}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.2 }}
-              className="text-[12px] leading-snug line-clamp-2 px-4 py-2 rounded-xl shadow-sm"
-              style={{
-                backgroundColor: barBg,
-                border: `1px solid ${barBorder}`,
-                backdropFilter: "blur(16px)",
-                color: darkMode ? "rgba(255,255,255,0.55)" : "rgba(0,0,0,0.5)",
-              }}
-            >
-              {latestTutor.content}
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Follow-up chips — tier 1 (violet, tutor questions) + tier 2 (neutral, suggestions) */}
+        {/* Follow-up chips — max 2, tier 1 only */}
         <AnimatePresence>
           {followUpQuestions.length > 0 && !isStreaming && (
             <motion.div
@@ -176,23 +174,19 @@ export default function CanvasInputBar() {
               transition={{ duration: 0.18 }}
               className="flex flex-wrap gap-1.5"
             >
-              {followUpQuestions.slice(0, 5).map((q, i) => {
-                // First 2 are tutor's direct questions (tier 1), rest are strategy suggestions (tier 2)
-                const isTier1 = i < 2;
-                return (
-                  <motion.button
-                    key={q}
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    transition={{ delay: i * 0.05, duration: 0.14 }}
-                    onClick={() => handleChipClick(q)}
-                    className={`text-[11.5px] px-3 py-1 rounded-full transition-all whitespace-nowrap ${isTier1 ? chipTier1 : chipTier2}`}
-                    style={{ backdropFilter: "blur(12px)" }}
-                  >
-                    {q}
-                  </motion.button>
-                );
-              })}
+              {followUpQuestions.slice(0, 2).map((q, i) => (
+                <motion.button
+                  key={q}
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: i * 0.05, duration: 0.14 }}
+                  onClick={() => handleChipClick(q)}
+                  className={`text-[11.5px] px-3 py-1 rounded-full transition-all whitespace-nowrap ${chipTier1}`}
+                  style={{ backdropFilter: "blur(12px)" }}
+                >
+                  {q}
+                </motion.button>
+              ))}
             </motion.div>
           )}
         </AnimatePresence>
@@ -261,5 +255,6 @@ export default function CanvasInputBar() {
         </div>
       </div>
     </div>
+    </>
   );
 }

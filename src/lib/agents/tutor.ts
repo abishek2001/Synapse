@@ -1,6 +1,7 @@
 import type { AgentMessage } from "./types";
 
 export interface TutorResponse {
+  moduleTitle: string;  // 3-6 word topic label used as the group/module heading on canvas
   writtenText: string;  // goes on canvas as text element + in transcript
   spokenText: string;   // TTS only — short, natural, no canvas references
   questionsForUser: string[]; // questions the AI is asking the student → chips tier 1
@@ -45,6 +46,7 @@ TOOL RULES:
 After all tool calls, your final text message MUST be a JSON object. No markdown fences. No extra text. Output ONLY:
 
 {
+  "moduleTitle": "3-6 word topic title for this module (e.g. 'How Neural Networks Learn', 'Digestive System Overview', 'Newton's Laws of Motion'). This becomes the group heading on the canvas. No colons. No filler like 'Introduction to'.",
   "writtenText": "2-4 sentences shown on canvas and in transcript. Can reference artifacts you just placed ('check the diagram above'). Full sentences. No markdown.",
   "spokenText": "1-2 short conversational sentences for text-to-speech. Natural spoken tone. No 'see the diagram' or visual references. Start with 'So', 'Basically', or the concept name. Under 25 words.",
   "questionsForUser": ["Direct question you are asking the student", "Max 2 questions, 8 words each max"]
@@ -108,6 +110,7 @@ export function parseTutorResponse(raw: string): TutorResponse {
     if (!jsonMatch) throw new Error("no JSON");
     const parsed = JSON.parse(jsonMatch[0]);
     return {
+      moduleTitle: parsed.moduleTitle || "",
       writtenText: parsed.writtenText || raw,
       spokenText: parsed.spokenText || parsed.writtenText || raw,
       questionsForUser: Array.isArray(parsed.questionsForUser) ? parsed.questionsForUser : [],
@@ -116,6 +119,7 @@ export function parseTutorResponse(raw: string): TutorResponse {
     // Fallback: raw text becomes writtenText; spokenText = first sentence
     const firstSentence = raw.split(/[.!?]/)[0]?.trim() ?? raw;
     return {
+      moduleTitle: "",
       writtenText: raw,
       spokenText: firstSentence.length > 0 ? firstSentence : raw,
       questionsForUser: [],

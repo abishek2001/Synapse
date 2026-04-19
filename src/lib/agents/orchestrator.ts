@@ -96,6 +96,7 @@ async function executeFriendTurn(
 
   onEvent?.({
     type: "tutor_response",
+    moduleTitle: "",
     writtenText,
     spokenText,
     questionsForUser: [friend.followUp],
@@ -263,6 +264,7 @@ Follow this guidance. The artifact types listed are what the pedagogical layer d
   // Emit structured tutor response
   onEvent?.({
     type: "tutor_response",
+    moduleTitle: tutorResponse.moduleTitle,
     writtenText: tutorResponse.writtenText,
     spokenText: tutorResponse.spokenText,
     questionsForUser: tutorResponse.questionsForUser,

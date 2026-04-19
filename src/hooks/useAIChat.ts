@@ -51,6 +51,7 @@ export function useAIChat() {
   // pendingId → canvas element id for skeleton resolution
   const pendingMap = useRef<Map<string, string>>(new Map());
   // Accumulated per-turn state
+  const moduleTitleRef = useRef<string>("");
   const writtenTextRef = useRef<string>("");
   const spokenTextRef  = useRef<string>("");
   const questionsRef   = useRef<string[]>([]);
@@ -78,6 +79,7 @@ export function useAIChat() {
       const canvasContext = serializeCanvasContext(elements);
 
       pendingMap.current.clear();
+      moduleTitleRef.current = "";
       writtenTextRef.current = "";
       spokenTextRef.current  = "";
       questionsRef.current   = [];
@@ -197,6 +199,7 @@ export function useAIChat() {
 
         case "tutor_response": {
           // Store for TTS and module building
+          moduleTitleRef.current = event.moduleTitle;
           writtenTextRef.current = event.writtenText;
           spokenTextRef.current  = event.spokenText;
           questionsRef.current   = event.questionsForUser;
@@ -257,8 +260,9 @@ export function useAIChat() {
             useCanvasStore.getState().removeElement(el.id);
           }
 
-          // Build grouped module with writtenText as explanation block
-          const label = userQuery.length > 50 ? userQuery.slice(0, 50) + "…" : userQuery;
+          // Build grouped module — prefer AI-generated title, fall back to user query
+          const label = moduleTitleRef.current ||
+            (userQuery.length > 50 ? userQuery.slice(0, 50) + "…" : userQuery);
           if (resolvedArtifacts.length > 0 || writtenTextRef.current) {
             addModule(
               label,

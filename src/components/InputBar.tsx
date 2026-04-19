@@ -58,7 +58,7 @@ export default function InputBar() {
     clearCanvas();
     resetGrounding();
     initSession(query, persona.id, uploaded, detectedUrls);
-    router.push(`/workspace?q=${encodeURIComponent(query)}&persona=${persona.id}`);
+    router.push("/workspace");
   };
 
   const toggleVoice = () => {

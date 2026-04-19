@@ -37,7 +37,7 @@ const ELEM_H_EST: Record<string, number> = {
   simulation: 400,
   render3d:   440,
   diagram:    320,
-  text:        52,
+  text:       140,  // Tutor explanations are multi-line; 480px wide → ~3-4 lines @ 14px
   sticky:     170,
 };
 

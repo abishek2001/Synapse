@@ -58,7 +58,7 @@ export interface InfiniteCanvasHandle {
   panBy: (dx: number, dy: number) => void;
   screenToWorld: (screenX: number, screenY: number) => { x: number; y: number };
   worldToScreen: (worldX: number, worldY: number) => { x: number; y: number };
-  zoomToRect: (x: number, y: number, w: number, h: number, padding?: number) => void;
+  zoomToRect: (x: number, y: number, w: number, h: number, padding?: number, minScale?: number) => void;
   fitAll: (bounds: { x: number; y: number; w: number; h: number }) => void;
 }
 
@@ -167,11 +167,12 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
         const t = transformRef.current;
         return { x: wx * t.scale + t.x + rect.left, y: wy * t.scale + t.y + rect.top };
       },
-      zoomToRect: (x, y, w, h, padding = 80) => {
+      zoomToRect: (x, y, w, h, padding = 80, minScale = 0) => {
         const rect = containerRef.current?.getBoundingClientRect();
         if (!rect) return;
         const vw = rect.width, vh = rect.height;
-        const s = Math.min((vw - padding * 2) / w, (vh - padding * 2) / h, MAX_ZOOM);
+        const fitScale = Math.min((vw - padding * 2) / w, (vh - padding * 2) / h, MAX_ZOOM);
+        const s = Math.max(fitScale, minScale);
         const tx = vw / 2 - (x + w / 2) * s;
         const ty = vh / 2 - (y + h / 2) * s;
         setSmoothing(true);

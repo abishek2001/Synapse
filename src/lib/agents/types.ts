@@ -57,6 +57,7 @@ export type StreamEvent =
   | { type: "artifact_done"; pendingId: string; artifact: CanvasArtifact }
   | {
       type: "tutor_response";
+      moduleTitle: string;    // 3-6 word topic label for the group heading
       writtenText: string;    // for canvas text element + transcript
       spokenText: string;     // for TTS only
       questionsForUser: string[]; // chips tier 1 — AI asking student

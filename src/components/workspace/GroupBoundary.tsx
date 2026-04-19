@@ -3,9 +3,9 @@
 import { estimateElemH, type CanvasGroup, type CanvasElement } from "@/store/canvas";
 import { useUIStore } from "@/store/ui";
 
-const PAD_X = 14;
-const PAD_TOP = 26;
-const PAD_BOTTOM = 14;
+const PAD_X = 20;
+const PAD_TOP = 52;
+const PAD_BOTTOM = 20;
 
 /** Visual world-space right/bottom edges of an element, accounting for counter-scale. */
 function visualEdges(el: CanvasElement, canvasScale: number): { right: number; bottom: number } {
@@ -44,6 +44,13 @@ export default function GroupBoundary({ group, elements, hasSelectedMember, isHo
   const w = maxX - minX + PAD_X * 2;
   const h = maxY - minY + PAD_TOP + PAD_BOTTOM;
 
+  // Counter-scale label font so it stays at natural size regardless of zoom,
+  // matching the same logic ElementCard applies to artifact content.
+  const labelCounterScale = canvasScale > 1 ? 1 / canvasScale : 1;
+  const labelFontSize = 15 * labelCounterScale;
+  const labelPadTop = 14 * labelCounterScale;
+  const labelPadLeft = 20 * labelCounterScale;
+
   const bgColor = darkMode
     ? group.color.replace(/[\d.]+\)$/, "0.07)")
     : group.color;
@@ -54,8 +61,7 @@ export default function GroupBoundary({ group, elements, hasSelectedMember, isHo
       ? "rgba(255,255,255,0.04)"
       : "rgba(0,0,0,0.05)";
 
-  const labelBg   = darkMode ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)";
-  const labelText = darkMode ? "rgba(255,255,255,0.28)" : "rgba(0,0,0,0.3)";
+  const labelText = darkMode ? "rgba(255,255,255,0.55)" : "rgba(0,0,0,0.45)";
 
   return (
     <div
@@ -69,14 +75,22 @@ export default function GroupBoundary({ group, elements, hasSelectedMember, isHo
         transition: "border-color 0.15s",
       }}
     >
-      <div className="absolute top-3 left-4">
+      <div
+        className="absolute overflow-hidden"
+        style={{ top: labelPadTop, left: labelPadLeft, right: labelPadLeft }}
+      >
         <span
-          className="px-2.5 py-0.5 rounded-full inline-block"
           style={{
-            backgroundColor: labelBg,
+            display: "block",
             color: labelText,
             fontFamily: "var(--font-caveat), 'Segoe Print', Georgia, serif",
-            fontSize: 13, fontWeight: 600, letterSpacing: "0.01em",
+            fontSize: labelFontSize,
+            fontWeight: 700,
+            letterSpacing: "0.01em",
+            lineHeight: 1.3,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
           }}
         >
           {group.name}

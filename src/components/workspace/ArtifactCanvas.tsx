@@ -63,7 +63,7 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
       const els = useCanvasStore.getState().elements;
       const scale = useUIStore.getState().canvasScale;
       const bounds = computeGroupBounds(groupId, els, scale);
-      if (bounds) canvasHandleRef.current?.zoomToRect(bounds.x, bounds.y, bounds.w, bounds.h, 60);
+      if (bounds) canvasHandleRef.current?.zoomToRect(bounds.x, bounds.y, bounds.w, bounds.h, 60, 1.0);
     },
   }));
 
@@ -296,11 +296,11 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
     if (groups.length === 0) return;
 
     if (delta === 1) {
-      // Single new group added by AI — zoom to it so it appears at comfortable size
+      // New AI group — zoom to it at natural (100%) scale, shrinking only if it doesn't fit
       const newGroup = groups[groups.length - 1];
       const bounds = computeGroupBounds(newGroup.id, elements, canvasScale);
       if (bounds) {
-        canvasHandleRef.current?.zoomToRect(bounds.x, bounds.y, bounds.w, bounds.h, 80);
+        canvasHandleRef.current?.zoomToRect(bounds.x, bounds.y, bounds.w, bounds.h, 80, 1.0);
       }
     } else {
       // Multiple groups at once (mock load, initial restore) — fit everything
@@ -352,7 +352,6 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
           strokeColor={penColor}
           onTransformChange={(t) => { setCanvasScale(t.scale); setGlobalCanvasScale(t.scale); }}
         >
-          {topic && <CanvasTitle topic={topic} dark={darkMode} />}
           {intro && <CanvasIntroText intro={intro} dark={darkMode} />}
           {elements.length === 0 && !intro && <EmptyHint dark={darkMode} />}
 
@@ -377,6 +376,7 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
             <FlowArrows
               connections={connections}
               elements={elements}
+              canvasScale={canvasScale}
               selectedGroupIds={groups
                 .filter((g) =>
                   elements.filter((e) => e.groupId === g.id).some((e) => selectedElementIds.includes(e.id)),
@@ -631,31 +631,79 @@ function EmptyHint({ dark }: { dark: boolean }) {
 interface FlowArrowsProps {
   connections: { id: string; fromModuleId: string; toModuleId: string }[];
   elements: CanvasElement[];
+  canvasScale: number;
   selectedGroupIds: string[];
 }
 
-function FlowArrows({ connections, elements, selectedGroupIds }: FlowArrowsProps) {
+function FlowArrows({ connections, elements, canvasScale, selectedGroupIds }: FlowArrowsProps) {
   const edges = connections.map((conn) => {
-    const fromBounds = computeGroupBounds(conn.fromModuleId, elements);
-    const toBounds   = computeGroupBounds(conn.toModuleId,   elements);
-    if (!fromBounds || !toBounds) return null;
+    // Pass canvasScale so bounds match the counter-scaled visual positions
+    const from = computeGroupBounds(conn.fromModuleId, elements, canvasScale);
+    const to   = computeGroupBounds(conn.toModuleId,   elements, canvasScale);
+    if (!from || !to) return null;
 
     const isHighlighted = selectedGroupIds.includes(conn.fromModuleId) || selectedGroupIds.includes(conn.toModuleId);
-    return {
-      id: conn.id,
-      x1: fromBounds.x + fromBounds.w / 2,
-      y1: fromBounds.y + fromBounds.h,
-      x2: toBounds.x   + toBounds.w   / 2,
-      y2: toBounds.y,
-      highlighted: isHighlighted,
-    };
-  }).filter(Boolean) as { id: string; x1: number; y1: number; x2: number; y2: number; highlighted: boolean }[];
+
+    const fromCX = from.x + from.w / 2;
+    const fromCY = from.y + from.h / 2;
+    const toCX   = to.x   + to.w   / 2;
+    const toCY   = to.y   + to.h   / 2;
+
+    // Measure gap between each pair of facing edges.
+    // A positive gap means the faces are separated (not overlapping on that axis).
+    // Pick the pair with the smallest non-negative gap — those are the nearest faces.
+    const candidates: { gap: number; x1: number; y1: number; x2: number; y2: number }[] = [];
+
+    const gapRight  = to.x           - (from.x + from.w); // from right → to left
+    const gapLeft   = from.x         - (to.x   + to.w);   // from left  → to right
+    const gapBottom = to.y           - (from.y + from.h);  // from bottom → to top
+    const gapTop    = from.y         - (to.y   + to.h);    // from top   → to bottom
+
+    if (gapRight  >= 0) candidates.push({ gap: gapRight,  x1: from.x + from.w, y1: fromCY,          x2: to.x,           y2: toCY           });
+    if (gapLeft   >= 0) candidates.push({ gap: gapLeft,   x1: from.x,           y1: fromCY,          x2: to.x + to.w,   y2: toCY           });
+    if (gapBottom >= 0) candidates.push({ gap: gapBottom, x1: fromCX,           y1: from.y + from.h, x2: toCX,           y2: to.y           });
+    if (gapTop    >= 0) candidates.push({ gap: gapTop,    x1: fromCX,           y1: from.y,          x2: toCX,           y2: to.y + to.h    });
+
+    // Fallback: boxes overlap — use center-to-center dominant axis
+    if (candidates.length === 0) {
+      if (Math.abs(toCX - fromCX) >= Math.abs(toCY - fromCY)) {
+        const s = toCX >= fromCX ? 1 : -1;
+        candidates.push({ gap: 0, x1: from.x + (s > 0 ? from.w : 0), y1: fromCY, x2: to.x + (s > 0 ? 0 : to.w), y2: toCY });
+      } else {
+        const s = toCY >= fromCY ? 1 : -1;
+        candidates.push({ gap: 0, x1: fromCX, y1: from.y + (s > 0 ? from.h : 0), x2: toCX, y2: to.y + (s > 0 ? 0 : to.h) });
+      }
+    }
+
+    const { x1, y1, x2, y2 } = candidates.reduce((a, b) => a.gap <= b.gap ? a : b);
+
+    // Quadratic bezier: one control point at the midpoint, offset perpendicularly.
+    // This is S-curve-proof by construction — a quadratic bezier with one control point
+    // cannot change direction more than once.
+    const mx = (x1 + x2) / 2;
+    const my = (y1 + y2) / 2;
+    // Perpendicular offset scales with distance so short lines stay subtle
+    const dist = Math.hypot(x2 - x1, y2 - y1);
+    const perp = Math.min(dist * 0.15, 40);
+    // Rotate 90° from the line direction
+    const lineLen = dist || 1;
+    const nx = -(y2 - y1) / lineLen;
+    const ny =  (x2 - x1) / lineLen;
+    const qx = mx + nx * perp;
+    const qy = my + ny * perp;
+
+    return { id: conn.id, x1, y1, x2, y2, qx, qy, highlighted: isHighlighted };
+  }).filter(Boolean) as {
+    id: string; x1: number; y1: number; x2: number; y2: number;
+    qx: number; qy: number; highlighted: boolean;
+  }[];
 
   if (edges.length === 0) return null;
 
-  const pad = 2000;
-  const allX = edges.flatMap((e) => [e.x1, e.x2]);
-  const allY = edges.flatMap((e) => [e.y1, e.y2]);
+  // SVG viewport covers all edge endpoints with padding
+  const pad = 200;
+  const allX = edges.flatMap((e) => [e.x1, e.x2, e.qx]);
+  const allY = edges.flatMap((e) => [e.y1, e.y2, e.qy]);
   const minX = Math.min(...allX) - pad;
   const minY = Math.min(...allY) - pad;
   const maxX = Math.max(...allX) + pad;
@@ -667,33 +715,31 @@ function FlowArrows({ connections, elements, selectedGroupIds }: FlowArrowsProps
       style={{ overflow: "visible", width: maxX - minX, height: maxY - minY, left: minX, top: minY }}
     >
       <defs>
-        <marker id="fa-dim" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-          <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="rgba(124,58,237,0.4)" />
+        <marker id="fa-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M 0 2 L 9 5 L 0 8 z" fill="rgba(124,58,237,0.45)" />
         </marker>
-        <marker id="fa-bright" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-          <path d="M 0 1.5 L 10 5 L 0 8.5 z" fill="rgba(124,58,237,0.85)" />
+        <marker id="fa-arrow-hi" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M 0 2 L 9 5 L 0 8 z" fill="rgba(124,58,237,0.85)" />
         </marker>
       </defs>
       {edges.map((e) => {
-        const sx = e.x1 - minX, sy = e.y1 - minY, ex = e.x2 - minX, ey = e.y2 - minY;
-        const curve = Math.min(Math.abs(ey - sy) * 0.4, 100);
-        const path = `M ${sx} ${sy} C ${sx} ${sy + curve}, ${ex} ${ey - curve}, ${ex} ${ey}`;
-        const stroke = e.highlighted ? "rgba(124,58,237,0.7)" : "rgba(124,58,237,0.22)";
-        const marker = e.highlighted ? "url(#fa-bright)" : "url(#fa-dim)";
+        const sx = e.x1 - minX, sy = e.y1 - minY;
+        const ex = e.x2 - minX, ey = e.y2 - minY;
+        const qx = e.qx - minX, qy = e.qy - minY;
+        // Quadratic bezier: M start Q control end
+        const path = `M ${sx} ${sy} Q ${qx} ${qy}, ${ex} ${ey}`;
+        const stroke = e.highlighted ? "rgba(124,58,237,0.6)" : "rgba(124,58,237,0.18)";
+        const marker = e.highlighted ? "url(#fa-arrow-hi)" : "url(#fa-arrow)";
         return (
-          <g key={e.id}>
-            <path d={path} fill="none" stroke="rgba(124,58,237,0.05)" strokeWidth={6} strokeLinecap="round" />
-            <path
-              d={path} fill="none" stroke={stroke}
-              strokeWidth={1.5} strokeLinecap="round"
-              strokeDasharray={e.highlighted ? undefined : "7 5"}
-              markerEnd={marker}
-            >
-              {!e.highlighted && (
-                <animate attributeName="stroke-dashoffset" from="24" to="0" dur="1.5s" repeatCount="indefinite" />
-              )}
-            </path>
-          </g>
+          <path
+            key={e.id}
+            d={path}
+            fill="none"
+            stroke={stroke}
+            strokeWidth={1.5}
+            strokeLinecap="round"
+            markerEnd={marker}
+          />
         );
       })}
     </svg>
