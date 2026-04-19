@@ -358,6 +358,18 @@ export function playDemoModule(opts: PlayModuleOpts): PlayModuleHandle {
       }
     }
 
+    if (mod.sideEffects && typeof window !== "undefined") {
+      const fx = mod.sideEffects;
+      if (typeof fx.handTracking === "boolean") {
+        window.dispatchEvent(
+          new CustomEvent("synapse:set_hand_tracking", { detail: fx.handTracking }),
+        );
+      }
+      if (fx.showHelp) {
+        window.dispatchEvent(new CustomEvent("synapse:show_help"));
+      }
+    }
+
     if (cancelled()) return { groupId: newGroupId };
     await awaitTtsOrCap(cancelled);
 

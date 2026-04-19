@@ -64,6 +64,18 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
   const canvasHandleRef = useRef<InfiniteCanvasHandle>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
 
+  // Allow demo playback (or any external trigger) to flip hand tracking on/off
+  // by dispatching a `synapse:set_hand_tracking` event with a boolean detail.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<boolean>).detail;
+      if (typeof detail === "boolean") setHandTrackingEnabled(detail);
+      else setHandTrackingEnabled((p) => !p);
+    };
+    window.addEventListener("synapse:set_hand_tracking", handler);
+    return () => window.removeEventListener("synapse:set_hand_tracking", handler);
+  }, []);
+
   useImperativeHandle(ref, () => ({
     zoomToGroup(groupId: string) {
       const els = useCanvasStore.getState().elements;

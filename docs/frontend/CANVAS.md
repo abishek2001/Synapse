@@ -262,6 +262,10 @@ Visual feedback:
 
 Speech-to-text input is intercepted by `lib/voice/commands.ts → classifyCommand` BEFORE it reaches the chat orchestrator. Short, well-formed navigation phrases dispatch a `CanvasCommand` over the `synapse:canvas-command` window event (`ArtifactCanvas` listens). Anything that doesn't match a strict pattern falls through to the LLM as a normal tutor question — so "zoom in" steers the canvas, while "can you zoom in on the Maxwell equation?" still asks the tutor.
 
+**Programmatic toggles** (used by scripted demos to flip the product's hands-free surface on mid-walkthrough):
+- `synapse:set_hand_tracking` — `CustomEvent<boolean>`. `ArtifactCanvas` listens and sets the local `handTrackingEnabled` state. Detail = `true`/`false` to force a value, or omit to toggle.
+- `synapse:show_help` — fired by both the voice "show gestures" command and the demo `sideEffects.showHelp` flag. `HandTrackingOverlay` listens and toggles its cheatsheet panel.
+
 Optional wake-words `synapse` / `canvas` / `hey synapse` are stripped before matching, and a leading `please` is forgiven.
 
 | Phrase(s) | Command |

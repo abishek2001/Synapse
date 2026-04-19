@@ -47,6 +47,20 @@ export interface DemoModule {
    *  it lands. They render as standalone (un-grouped) elements so they feel
    *  like the user / TA scribbled them in the margins. */
   annotations?: DemoAnnotation[];
+  /** Optional side-effects fired AFTER the group lands. Used to showcase
+   *  product capabilities mid-demo (e.g. flip on hand tracking + open the
+   *  gesture cheatsheet during the "voice & hands" module). */
+  sideEffects?: DemoSideEffects;
+}
+
+/** Declarative side-effects executed by the playback engine once a module
+ *  fully lands on the canvas. Kept declarative so module data remains
+ *  serialisable. */
+export interface DemoSideEffects {
+  /** Toggle hand-tracking on (true) or off (false). */
+  handTracking?: boolean;
+  /** Pop open the gesture / voice cheatsheet. */
+  showHelp?: boolean;
 }
 
 export interface DemoScript {

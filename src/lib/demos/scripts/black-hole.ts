@@ -1,11 +1,14 @@
 import type { DemoScript } from "../types";
+import { voiceGesturesModule } from "./_voice-gestures";
 
 /** ─────────────────────────────────────────────────────────────────────────
  *  Demo 1: Black Holes
- *  5 modules. Hits all required visuals:
+ *  6 modules. Hits all required visuals:
  *  - 3D: event horizon + accretion disk (Module 2), tidal stretching (Module 3)
  *  - Graphs: escape velocity with M slider, tidal force log (Module 2 & 3)
  *  - Tree: visual.hierarchy of black hole types (Module 4)
+ *  - Detection methods (Module 5)
+ *  - Voice + gestures product showcase (Module 6, shared)
  *  ───────────────────────────────────────────────────────────────────────── */
 export const blackHoleDemo: DemoScript = {
   id: "black-hole",
@@ -423,10 +426,14 @@ function update(t) {
           y_label: "BH mass (×10⁸ M☉)",
         },
       ],
+      nextPrompt: "Now show me how to drive Synapse with my voice and hands.",
       annotations: [
         { kind: "sticky", content: "EHT (2019) — first photo\nLIGO (2015) — first merger heard", anchor: "right", color: "#e9d5ff" },
         { kind: "text",   content: "M–σ relation:\nbigger galaxy ⇒ bigger central BH", anchor: "below", offsetY: -10 },
       ],
     },
+
+    // ─── Module 6: Voice + gestures showcase ─────────────────────────────
+    voiceGesturesModule("event horizons, spaghettification, and the BH zoo"),
   ],
 };

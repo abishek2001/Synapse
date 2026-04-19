@@ -254,3 +254,35 @@ This is the AFK story end-to-end: gestures handle direct manipulation (pan / zoo
 7. Developer switches to Select tool → clicks groups, shifts between selections, tests `SelectionBar`.
 8. Developer switches to Pen tool → draws annotations that render above all artifacts.
 9. Developer clicks *"● Mock Active"* again → `clearModules()` + `setMockMode(false)`. Canvas empties.
+
+---
+
+## Flow 9 — Scripted Demos (keyword-triggered, step-through)
+
+Curated end-to-end demos under `src/lib/demos/scripts/` (`heart`, `black-hole`, `eigenvectors`, `climate`, `dna`, `projectile`). Each is a `DemoScript` with a `keywords` array, an ordered list of `DemoModule`s, and per-module `nextPrompt` + `annotations` + optional `sideEffects`.
+
+**Entry — keyword on the landing page:**
+1. User types one of the recognised keywords (e.g. `heart`, `blackhole`, `eigenvector`) into the landing `InputBar` and hits Enter.
+2. `matchDemoByQuery` (`src/lib/demos/match.ts`) hits → the previous session is archived, canvas is cleared, `useDemoStore.queueScript(id)` is called, router navigates to `/workspace`.
+3. `WorkspaceView` mounts, calls `useDemoStore.consumePending()`, skips `BridgeScreen`, and after a 60 ms layout settle calls `useDemoStore.start(script)`.
+
+**Entry — DemoButton from the workspace:**
+1. User clicks the demo dropdown (bottom-right of the canvas) and picks a script.
+2. `useDemoStore.start(script)` clears canvas, plays module 0.
+
+**Per-module loop (`playDemoModule`):**
+1. `setLearningMode("guided")`, `setStreaming(true)`, open the dashed `PendingGroupBoundary`.
+2. First skeleton placed → tutor title set → tutor message added to transcript.
+3. Remaining skeletons stream in (jittered timing) and each resolves with its real artifact (`addPendingElement` → `resolvePendingElement`); each transition logs an `artifact_added` activity-feed entry and plays the artifact-added SFX.
+4. Skeletons are removed and rebuilt as a real grouped module via `addModule`, anchored to the previous module's group (left-to-right chain).
+5. `setSpeakReady(true)` → TTS plays `spokenText`.
+6. Annotations (sticky / text) drop one by one in the margins, anchored to the new group's bounding box (`top-right`, `below`, etc.).
+7. Optional `sideEffects` fire: `handTracking: true` dispatches `synapse:set_hand_tracking`; `showHelp: true` dispatches `synapse:show_help` (opens the gesture cheatsheet in `HandTrackingOverlay`).
+8. Wait for TTS to finish (capped at 12 s).
+9. The module's `nextPrompt` (if set) is pre-filled into the workspace `CanvasInputBar` — the Send button pulses; the user clicks Send (or edits first) to invoke `useDemoStore.advance()` and run the next module.
+10. The last module leaves `nextPrompt` empty (or includes a final showcase like `voiceGesturesModule`), at which point `useDemoStore` clears `script` and ends the run.
+
+**Voice + gestures showcase module (shared):**
+- The factory `voiceGesturesModule(topicLabel)` (`src/lib/demos/scripts/_voice-gestures.ts`) returns a final module appended to the heart and black-hole demos.
+- Drops a 5-gesture hierarchy diagram, a voice-command flowchart, and a "try it now" flashcard, plus margin stickies.
+- Sets `sideEffects: { handTracking: true, showHelp: true }` so the camera flips on and the cheatsheet pops the moment the module lands — the presenter can lift their hand and try gestures live.

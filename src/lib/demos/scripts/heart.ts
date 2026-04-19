@@ -1,12 +1,14 @@
 import type { DemoScript } from "../types";
+import { voiceGesturesModule } from "./_voice-gestures";
 
 /** ─────────────────────────────────────────────────────────────────────────
  *  Demo 5: The Human Heart (guided)
- *  5 modules. Hits all required visuals:
- *  - 3D: stylized 4-chamber heart with pulsing animation (Module 1)
- *  - Graphs: pressure-volume loop, Wiggers diagram with HR slider (Module 3)
+ *  6 modules. Hits all required visuals:
+ *  - 3D: anatomical Sketchfab heart (Module 1)
+ *  - Graphs: Wiggers diagram with HR slider (Module 3)
  *  - Tree: visual.hierarchy of cardiovascular disease branches (Module 4)
  *  - Simulation: live animated ECG with adjustable heart rate (Module 5)
+ *  - Voice + gestures product showcase (Module 6, shared)
  *  ───────────────────────────────────────────────────────────────────────── */
 export const heartDemo: DemoScript = {
   id: "heart",
@@ -27,96 +29,12 @@ export const heartDemo: DemoScript = {
         {
           id: "ht-r3d-heart",
           type: "render3d",
-          title: "Beating four-chamber heart",
+          title: "Anatomical 3D heart",
           status: "rendered",
-          topic: "Stylized 3D human heart with four labeled chambers and pulsing motion",
-          camera_distance: 6,
-          bg_color: "#0a0510",
-          code: `
-camera.position.set(2.5, 1.5, 5.5);
-controls.target.set(0, 0, 0);
-
-// Material palettes — red for oxygenated (left), blue for deoxygenated (right)
-const matRed   = new THREE.MeshPhongMaterial({ color: 0xb43040, shininess: 60, transparent: true, opacity: 0.92 });
-const matBlue  = new THREE.MeshPhongMaterial({ color: 0x3a6db4, shininess: 60, transparent: true, opacity: 0.92 });
-const matRedL  = new THREE.MeshPhongMaterial({ color: 0xd86070, shininess: 60, transparent: true, opacity: 0.85 });
-const matBlueL = new THREE.MeshPhongMaterial({ color: 0x6098dc, shininess: 60, transparent: true, opacity: 0.85 });
-
-const heart = new THREE.Group();
-scene.add(heart);
-
-// Right atrium (top-back, blue light)
-const rAtrium = new THREE.Mesh(new THREE.SphereGeometry(0.55, 32, 32), matBlueL);
-rAtrium.position.set(-0.55, 0.85, 0);
-rAtrium.scale.set(1.0, 0.7, 0.9);
-heart.add(rAtrium);
-
-// Left atrium (top-back, red light)
-const lAtrium = new THREE.Mesh(new THREE.SphereGeometry(0.55, 32, 32), matRedL);
-lAtrium.position.set(0.55, 0.85, 0);
-lAtrium.scale.set(1.0, 0.7, 0.9);
-heart.add(lAtrium);
-
-// Right ventricle (bottom-front, blue dark)
-const rVent = new THREE.Mesh(new THREE.SphereGeometry(0.85, 32, 32), matBlue);
-rVent.position.set(-0.55, -0.35, 0.05);
-rVent.scale.set(1.0, 1.25, 1.0);
-heart.add(rVent);
-
-// Left ventricle (bottom-front, red dark, larger — does more work)
-const lVent = new THREE.Mesh(new THREE.SphereGeometry(0.95, 32, 32), matRed);
-lVent.position.set(0.55, -0.45, 0.05);
-lVent.scale.set(1.0, 1.35, 1.0);
-heart.add(lVent);
-
-// Aorta — arching tube from top of left ventricle
-const aortaCurve = new THREE.CatmullRomCurve3([
-  new THREE.Vector3(0.7, 0.5, 0.1),
-  new THREE.Vector3(0.9, 1.4, 0.0),
-  new THREE.Vector3(0.4, 1.9, -0.4),
-  new THREE.Vector3(-0.4, 1.7, -0.5),
-]);
-const aorta = new THREE.Mesh(
-  new THREE.TubeGeometry(aortaCurve, 30, 0.18, 16, false),
-  new THREE.MeshPhongMaterial({ color: 0xc04040, shininess: 80 })
-);
-heart.add(aorta);
-
-// Pulmonary trunk — branching off right ventricle
-const pulmCurve = new THREE.CatmullRomCurve3([
-  new THREE.Vector3(-0.3, 0.5, 0.2),
-  new THREE.Vector3(-0.5, 1.3, 0.5),
-  new THREE.Vector3(-1.2, 1.6, 0.6),
-]);
-const pulm = new THREE.Mesh(
-  new THREE.TubeGeometry(pulmCurve, 28, 0.16, 16, false),
-  new THREE.MeshPhongMaterial({ color: 0x4078b8, shininess: 80 })
-);
-heart.add(pulm);
-
-// Soft red glow behind for cinematic look
-const glow = new THREE.PointLight(0xff5566, 1.6, 12);
-glow.position.set(0, 0, 2);
-scene.add(glow);
-
-// Beat animation — diastole (fill) then systole (contract)
-function update(t) {
-  // ~60 bpm — beat every 1.0 second
-  const phase = (t % 1.0) / 1.0;
-  // Atrial systole (early) then ventricular systole (mid)
-  const atrSqueeze = phase < 0.15 ? 1.0 - 0.18 * Math.sin(phase * Math.PI / 0.15) : 1.0;
-  const ventSqueeze = phase > 0.20 && phase < 0.55
-    ? 1.0 - 0.22 * Math.sin((phase - 0.20) * Math.PI / 0.35)
-    : 1.0;
-  rAtrium.scale.set(1.0 * atrSqueeze, 0.7 * atrSqueeze, 0.9 * atrSqueeze);
-  lAtrium.scale.set(1.0 * atrSqueeze, 0.7 * atrSqueeze, 0.9 * atrSqueeze);
-  rVent.scale.set(1.0 * ventSqueeze, 1.25 * ventSqueeze, 1.0 * ventSqueeze);
-  lVent.scale.set(1.0 * ventSqueeze, 1.35 * ventSqueeze, 1.0 * ventSqueeze);
-  // Slow rotation so all sides come into view
-  heart.rotation.y = Math.sin(t * 0.25) * 0.6;
-  // Glow pulses with the beat
-  glow.intensity = 1.2 + (1.0 - ventSqueeze) * 4.0;
-}`,
+          topic: "Real anatomical 3D model of a human heart (Sketchfab)",
+          embed_url:
+            "https://sketchfab.com/models/54fa880728d14c11afff78be8721620a/embed?autostart=1&ui_theme=dark&ui_infos=0&ui_controls=1",
+          code: "",
         },
         {
           id: "ht-vis-anat",
@@ -228,12 +146,12 @@ function update(t) {
           graph_type: "line",
           series: [
             {
-              fn: "(function(){var T=60/HR;var p=(t%T)/T;if(p<0.05)return 0+p/0.05*8;if(p<0.10)return 8+(p-0.05)/0.05*120;if(p<0.40)return 120-Math.pow((p-0.10)/0.30,2)*100;if(p<0.45)return 20-(p-0.40)/0.05*15;return 5+Math.sin(p*20)*1.5;})()",
+              fn: "(function(){var T=60/HR;var p=(x%T)/T;if(p<0.05)return 0+p/0.05*8;if(p<0.10)return 8+(p-0.05)/0.05*120;if(p<0.40)return 120-Math.pow((p-0.10)/0.30,2)*100;if(p<0.45)return 20-(p-0.40)/0.05*15;return 5+Math.sin(p*20)*1.5;})()",
               label: "LV pressure (mmHg)",
               color: "#b43040",
             },
             {
-              fn: "(function(){var T=60/HR;var p=(t%T)/T;if(p<0.10)return 80;if(p<0.40)return 80+Math.sin((p-0.10)/0.30*Math.PI)*40;return 80-(p-0.40)*30;})()",
+              fn: "(function(){var T=60/HR;var p=(x%T)/T;if(p<0.10)return 80;if(p<0.40)return 80+Math.sin((p-0.10)/0.30*Math.PI)*40;return 80-(p-0.40)*30;})()",
               label: "Aortic pressure (mmHg)",
               color: "#f59e0b",
               style: "dashed",
@@ -243,6 +161,7 @@ function update(t) {
             { name: "HR", label: "Heart rate (bpm)", min: 40, max: 180, step: 5, default: 70 },
           ],
           x_range: [0, 2],
+          y_range: [0, 130],
           x_label: "t (s)",
           y_label: "Pressure (mmHg)",
         },
@@ -448,10 +367,14 @@ loop();
             "On a real ECG, you measure the RR interval (peak-to-peak) and divide 60 by it. Quick clinical trick: count the big squares between two R-waves — at standard 25 mm/s paper speed, HR ≈ 300 / (number of big squares).",
         },
       ],
+      nextPrompt: "Now show me how to control all this with my voice and hands.",
       annotations: [
         { kind: "sticky", content: "P  = atria fire\nQRS = ventricles fire\nT  = ventricles reset", anchor: "right", color: "#dcfce7" },
         { kind: "text",   content: "Big square trick:\nHR ≈ 300 / squares between R-waves", anchor: "below", offsetY: -8 },
       ],
     },
+
+    // ─── Module 6: Voice + gestures showcase ─────────────────────────────
+    voiceGesturesModule("the heart from chambers to ECG"),
   ],
 };
