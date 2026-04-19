@@ -1,7 +1,8 @@
-import { chatCompletion } from "@/lib/logging/openai";
+import { chatCompletion, pickModel } from "@/lib/logging/openai";
 import type { StudyPlan } from "@/lib/grounding/study-plan";
 import type { SessionContext } from "@/lib/grounding/session-context";
 import { serializeForPrompt, getSessionStats } from "@/lib/grounding/session-context";
+import type { FocusCandidate } from "./types";
 
 export interface TeachingDecision {
   action:
@@ -19,6 +20,10 @@ export interface TeachingDecision {
   shouldAdvanceModule: boolean;
   followUpQuestions: string[];
   pauseForInput: boolean;
+  /** Group id (from focus.candidates) the new module should anchor to, or null. */
+  anchorGroupId: string | null;
+  /** True when the new module is a tangent off the anchor (vs. extending main). */
+  isTangent: boolean;
 }
 
 const STRATEGY_SYSTEM = `You are the Teaching Strategy agent for Synapse, an AI-powered learning platform with an infinite canvas. Your job is to decide the best pedagogical action AND the most effective artifacts to place on the canvas for each student turn.
@@ -114,6 +119,19 @@ Before defaulting to diagram, ask: **"Is the thing I'm explaining a real, tangib
 
 Artifact selection is independent of action — apply the 6-question rubric above to whatever the concept is, regardless of action. The ONLY exceptions: "quiz" forces flashcard primary; "advance" usually has empty suggestedArtifacts.
 
+## ANCHOR / TANGENT RULES (MODULE PLACEMENT)
+
+The student's canvas is a graph of modules connected by arrows. When a list of FOCUS CANDIDATES is supplied, the student is probably asking about one of those existing modules, not extending the linear study plan. You must decide where the new module attaches:
+
+- "anchorGroupId" = id of the candidate module this turn is "about", or null when the question is the next step in the linear study plan.
+- "isTangent" = true when the new module DEEPENS / ELABORATES one of the candidate modules (deep_dive on an existing concept). false when it's the natural NEXT step in the study plan.
+
+Heuristics:
+- If the student "marked" or selected a specific module (isExplicitFocus / isFromSelection in candidates) AND their question is a follow-up about it → isTangent: true, anchorGroupId: that candidate.
+- If the question is just "next" / "continue" / "what's next" → isTangent: false, anchorGroupId: null.
+- If you're unsure, prefer isTangent: true with the explicit/selected candidate, since attaching the answer near what the student was looking at is rarely wrong.
+- When there are zero candidates, set both to null/false.
+
 Output ONLY valid JSON:
 {
   "action": "explain|visualize|quiz|simplify|advance|summarize|deep_dive",
@@ -123,7 +141,9 @@ Output ONLY valid JSON:
   "conceptsToTrack": ["concept names mentioned in this turn"],
   "shouldAdvanceModule": false,
   "followUpQuestions": ["2-3 short content questions the STUDENT would ask next", "phrased from the student's POV"],
-  "pauseForInput": false
+  "pauseForInput": false,
+  "anchorGroupId": "grp-xxx or null",
+  "isTangent": false
 }
 
 ## followUpQuestions rules — CRITICAL, READ CAREFULLY
@@ -166,7 +186,13 @@ export async function getTeachingDecision(
   studyPlan: StudyPlan | null,
   recentHistory: { role: string; content: string }[],
   signal?: AbortSignal,
+  focusCandidates: FocusCandidate[] = [],
 ): Promise<TeachingDecision> {
+  // Fast path: zero candidates → linear placement, no LLM disambiguation needed.
+  // Single explicit candidate → bias toward tangent on that module without needing
+  // the model to repeat the id back to us; we still let it decide isTangent.
+  const fastAnchor: string | null =
+    focusCandidates.length === 1 ? focusCandidates[0].groupId : null;
   const ctxPrompt = serializeForPrompt(sessionContext);
   const stats = getSessionStats(sessionContext);
 
@@ -179,6 +205,18 @@ export async function getTeachingDecision(
     .map((m) => `${m.role}: ${m.content.slice(0, 200)}`)
     .join("\n");
 
+  const candidatesStr = focusCandidates.length > 0
+    ? `\nFOCUS CANDIDATES (existing modules the student may be asking about, in priority order):\n${focusCandidates
+        .map((c, i) => {
+          const tags: string[] = [];
+          if (c.isExplicitFocus) tags.push("explicit-focus");
+          if (c.isFromSelection) tags.push("from-selection");
+          if (c.isCurrentMain) tags.push("current-main");
+          return `  ${i + 1}. id="${c.groupId}" title="${c.title}"${tags.length ? ` [${tags.join(",")}]` : ""}`;
+        })
+        .join("\n")}`
+    : "\nFOCUS CANDIDATES: (none — treat this turn as the next step in the linear study plan)";
+
   const prompt = `${ctxPrompt}
 
 ${planInfo}
@@ -187,16 +225,17 @@ RECENT CONVERSATION:
 ${historyStr}
 
 STUDENT'S LATEST MESSAGE: "${userMessage}"
+${candidatesStr}
 
 Session stats: ${stats.questionsAsked} questions asked, ${stats.mastered} concepts mastered, ${stats.needsWork.length} need more work, ${stats.elapsedMinutes} min elapsed
 
-Decide the best action and which artifacts to produce.`;
+Decide the best action, which artifacts to produce, AND whether this turn is a tangent off one of the focus candidates (set anchorGroupId + isTangent accordingly).`;
 
   try {
     const res = await chatCompletion(
       "strategy.decide",
       {
-        model: process.env.OPENAI_MODEL ?? "gpt-4o",
+        model: pickModel("medium"),
         messages: [
           { role: "system", content: STRATEGY_SYSTEM },
           { role: "user", content: prompt },
@@ -211,6 +250,49 @@ Decide the best action and which artifacts to produce.`;
     const cleaned = raw.replace(/```(?:json)?\n?/g, "").replace(/```$/g, "").trim();
     const parsed = JSON.parse(cleaned);
 
+    // ── Anchor resolution ────────────────────────────────────────────────────
+    //
+    // Order of authority (strongest first):
+    //   1. EXPLICIT USER SIGNAL — the user marked a module via "Ask about this"
+    //      (isExplicitFocus) or selected an element inside one (isFromSelection).
+    //      This is an unambiguous click; the LLM does NOT get to override it.
+    //      gpt-4.1-mini was observed reasoning semantically (e.g. "the question
+    //      mentions P(B|A) which is conditional probability") and ignoring the
+    //      [from-selection] tag — that's the bug this guard fixes.
+    //   2. LLM DECISION — used only when no explicit signal exists. We still
+    //      validate the id against the candidate set so the model can never
+    //      invent an id.
+    //   3. SINGLE-CANDIDATE FAST PATH — when only one candidate was supplied
+    //      and the model said tangent, trust the lone candidate.
+    const candidateIds = new Set(focusCandidates.map((c) => c.groupId));
+    const explicitCandidate = focusCandidates.find(
+      (c) => c.isExplicitFocus || c.isFromSelection,
+    );
+
+    let anchorGroupId: string | null = null;
+    let isTangent = false;
+
+    if (explicitCandidate) {
+      anchorGroupId = explicitCandidate.groupId;
+      // Selecting/marking a module is itself the signal "branch off this one".
+      isTangent = true;
+      const llmAnchor = typeof parsed.anchorGroupId === "string" ? parsed.anchorGroupId : null;
+      if (llmAnchor && llmAnchor !== anchorGroupId) {
+        console.warn(
+          `[strategy] explicit user signal (${explicitCandidate.isFromSelection ? "from-selection" : "explicit-focus"}) ` +
+            `overriding LLM anchor ${llmAnchor} → ${anchorGroupId} ("${explicitCandidate.title}")`,
+        );
+      }
+    } else {
+      const rawAnchor = parsed.anchorGroupId;
+      if (typeof rawAnchor === "string" && candidateIds.has(rawAnchor)) {
+        anchorGroupId = rawAnchor;
+      } else if (fastAnchor && parsed.isTangent) {
+        anchorGroupId = fastAnchor;
+      }
+      isTangent = !!parsed.isTangent && !!anchorGroupId;
+    }
+
     return {
       action: parsed.action || "explain",
       reasoning: parsed.reasoning || "",
@@ -220,6 +302,8 @@ Decide the best action and which artifacts to produce.`;
       shouldAdvanceModule: parsed.shouldAdvanceModule || false,
       followUpQuestions: Array.isArray(parsed.followUpQuestions) ? parsed.followUpQuestions : [],
       pauseForInput: parsed.pauseForInput || false,
+      anchorGroupId,
+      isTangent,
     };
   } catch {
     return {
@@ -231,6 +315,8 @@ Decide the best action and which artifacts to produce.`;
       shouldAdvanceModule: false,
       followUpQuestions: [],
       pauseForInput: false,
+      anchorGroupId: null,
+      isTangent: false,
     };
   }
 }
@@ -246,7 +332,7 @@ export async function generateSessionSummary(
 
   try {
     const res = await chatCompletion("strategy.summary", {
-      model: process.env.OPENAI_MODEL ?? "gpt-4o",
+      model: pickModel("easy"),
       messages: [
         {
           role: "system",

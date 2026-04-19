@@ -11,7 +11,7 @@ import type {
   SimulationArtifact,
   Render3DArtifact,
 } from "./types";
-import { chatCompletion } from "@/lib/logging/openai";
+import { chatCompletion, pickModel } from "@/lib/logging/openai";
 import { semanticSearch } from "@/lib/grounding/retrieval";
 import { SIMULATION_SYSTEM_PROMPT, buildSimulationPrompt } from "@/lib/simulation/prompt";
 import { sanitizeSimulationCode } from "@/lib/simulation/sanitize";
@@ -95,7 +95,7 @@ Requirements:
   const res = await chatCompletion(
     "tool.visual",
     {
-      model: process.env.OPENAI_MODEL ?? "gpt-4o",
+      model: pickModel("medium"),
       messages: [
         { role: "system", content: "You are an SVG diagram generator that creates beautiful handwritten-style educational diagrams. They should look like they were drawn on a whiteboard or notebook — warm, organic, with a cursive/handwriting font. Output ONLY raw SVG markup. No markdown, no explanation, no code fences." },
         { role: "user", content: svgPrompt },

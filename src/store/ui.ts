@@ -6,6 +6,8 @@ interface DoubtPopup {
   worldX: number;
   worldY: number;
   prefill?: string;
+  /** Group the popup was opened from (selection / context menu / nearest group). */
+  originGroupId?: string;
 }
 
 interface ContextMenuState {
@@ -39,7 +41,12 @@ interface UIState {
   setRightSidebarOpen: (v: boolean) => void;
   setTranscriptExpanded: (v: boolean) => void;
   setUpdatesExpanded: (v: boolean) => void;
-  openDoubtPopup: (worldX: number, worldY: number, prefill?: string) => void;
+  openDoubtPopup: (
+    worldX: number,
+    worldY: number,
+    prefill?: string,
+    originGroupId?: string,
+  ) => void;
   closeDoubtPopup: () => void;
   openContextMenu: (state: ContextMenuState) => void;
   closeContextMenu: () => void;
@@ -73,8 +80,8 @@ export const useUIStore = create<UIState>((set) => ({
   setRightSidebarOpen: (rightSidebarOpen) => set({ rightSidebarOpen }),
   setTranscriptExpanded: (transcriptExpanded) => set({ transcriptExpanded }),
   setUpdatesExpanded: (updatesExpanded) => set({ updatesExpanded }),
-  openDoubtPopup: (worldX, worldY, prefill) =>
-    set({ doubtPopup: { worldX, worldY, prefill } }),
+  openDoubtPopup: (worldX, worldY, prefill, originGroupId) =>
+    set({ doubtPopup: { worldX, worldY, prefill, originGroupId } }),
   closeDoubtPopup: () => set({ doubtPopup: null }),
   openContextMenu: (contextMenu) => set({ contextMenu }),
   closeContextMenu: () => set({ contextMenu: null }),

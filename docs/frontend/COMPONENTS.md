@@ -163,7 +163,14 @@ app/workspace/page.tsx (Suspense wrapper)
 - **Reads**: `useCanvasStore` (selectedElementIds, elements, groups)
 - **Visible when**: `selectedElementIds.length >= 1`
 - **Actions**: clear selection, group selected elements, ungroup (when all selected share one `groupId`), ask doubt about selection
+- **Ask AI**: visible for **any selection size** (1+). Opens the doubt popup pre-filled with a "explain this" / "explain the relationship between these" prompt and passes the first selected group's id as `originGroupId` so the doubt anchors to the marked module.
 - **Primary UI for group management** — GroupBoundary intentionally has no toolbar
+
+### `TangentReturnPill` (`src/components/workspace/TangentReturnPill.tsx`)
+- **Reads**: `useCanvasStore` (`groups`, `currentMainGroupId`, `lastTangentGroupId`, `clearTangent`), `useUIStore` (darkMode)
+- **Props**: `onReturn(groupId)` — wired in `WorkspaceView` to `artifactCanvasRef.current?.zoomToGroup(...)`
+- **Visible when**: `lastTangentGroupId && currentMainGroupId && they differ`. Hidden as soon as the user starts a new linear turn (which becomes the new `currentMainGroupId`) or clicks the pill (which calls `clearTangent()`).
+- **Position**: floating pill anchored bottom-center inside the canvas area, above `CanvasInputBar`. Violet accent on the back arrow; truncates long module names to 32 chars.
 
 ### `LeftSidebar` (`src/components/workspace/LeftSidebar.tsx`)
 - **Props**: `open: boolean, onToggle: () => void, onZoomToGroup?: (groupId: string) => void, overlay?: boolean`
@@ -291,16 +298,18 @@ app/workspace/page.tsx (Suspense wrapper)
 
 ### `useAIChat` (`src/hooks/useAIChat.ts`)
 - **Returns**: `{ sendMessage, stop, speakLatest, playMessage, toggleMessage, playingMessageId, isStreaming, latestTutor }`
-- **Pipeline**: user message → `/api/chat` SSE → read events → update stores + canvas
+- **Signature**: `sendMessage(text, opts?: { focusGroupId?: string })`. The optional `focusGroupId` is the explicit "this question is about that module" hint coming from `DoubtPopup` / `SelectionBar` / `CanvasContextMenu`.
+- **Pipeline**: user message → derive focus candidates → `/api/chat` SSE → read events → update stores + canvas
 - **Canvas context**: `serializeCanvasContext()` converts current canvas elements into a text summary (type, title, groupId) sent with every request to avoid duplicate artifacts
+- **Focus candidates**: `deriveFocusCandidates(focusGroupId?)` builds an ordered, deduplicated list (max 3) from explicit focus → selection-derived groups → `currentMainGroupId`. Sent in the request body as `{ focus: { candidates } }`. Skipped entirely when there are no groups yet. The first candidate is also remembered in `turnAnchorRef` so skeleton placement can use it before the server's strategy decision arrives.
 - **SSE events handled**:
   - `thinking` — no UI action
-  - `artifact_pending` → `addPendingElement` → `SkeletonCard` appears immediately + `addUpdate({type: "artifact_generating", title: "Generating <type>", detail: <artifact title>})`
+  - `artifact_pending` → `addPendingElement` placed under the optimistic anchor (tiles right-ward as more skeletons appear); falls back to right-edge placement when no anchor. Also pushes `addUpdate({type: "artifact_generating", title: "Generating <type>", detail: <artifact title>})`.
   - `artifact_done` → `resolvePendingElement` → skeleton replaced by real artifact + `addUpdate({type: "artifact_added", title: "Drew <type>", detail: <artifact title>})`
   - `artifact_error` → drops the skeleton + `addUpdate({type: "error", title: "Couldn't render <type>", detail: <reason>})`
   - `tutor_response` → stores `moduleTitle`/`writtenText`/`spokenText`/`questionsForUser` in refs; **appends a tutor message to the transcript with both `content: writtenText` AND `spokenText` attached** (so every speaker button — including per-row buttons inside the transcript that may be replayed days later via persisted state — has the TTS-friendly text without depending on a transient ref); sets tier-1 chips from `questionsForUser`
   - `follow_up` → appends tier-2 chips (strategy suggestions); deduplicates against tier-1
-  - `done` → `applyPatch`, calls `addModule(label, resolvedArtifacts, undefined, writtenText)` where `label = moduleTitleRef.current || truncate(userQuery, 50)`, sets `speakReady = true`. `addModule` itself pushes a `module_added` activity entry, so no extra `addUpdate` is needed here.
+  - `done` → `applyPatch`, then `addModule(label, resolvedArtifacts, undefined, writtenText, { anchorGroupId, isTangent })` using the server's anchor decision (validated against the candidates we sent) — falls back to the optimistic anchor if the server returned none. The new group id is then routed into either `setCurrentMain` (linear turn) or `setLastTangent` (tangent), which drives the back pill. `addModule` itself pushes a `module_added` activity entry.
   - `error` → adds error tutor message + `addUpdate({type: "error"})`
 - **Activity feed entries**: there is no transient canvas toast layer. Every visible "AI is doing X" signal is an entry in `useCanvasStore().updates` (rendered by `RightSidebar` → "Activity"). On turn start, `sendMessage` pushes a `thinking` entry (detail = the truncated user prompt); each artifact lifecycle event pushes its own entry as listed above.
 - **Module title source**: `moduleTitle` comes from the tutor's structured JSON response (3-6 word topic title). Falls back to the truncated user query if the tutor didn't emit one. This becomes the `group.name` shown by `GroupBoundary`.
@@ -314,17 +323,18 @@ app/workspace/page.tsx (Suspense wrapper)
 ## Stores
 
 ### `useCanvasStore` (`src/store/canvas.ts`)
-- **Key state**: `elements: CanvasElement[], groups: CanvasGroup[], connections, selectedElementIds, updates`
-- **Key actions**: `addElement, removeElement, moveElement, setElementHeight, updateElementText, updateStickyContent, selectElements, toggleElementSelected, clearSelection, groupSelected, ungroupElements, addUserAnnotation, removeUserAnnotation, undoLastUserAction`
+- **Key state**: `elements: CanvasElement[], groups: CanvasGroup[], connections, selectedElementIds, updates, currentMainGroupId, lastTangentGroupId`
+- **Key actions**: `addElement, removeElement, moveElement, setElementHeight, updateElementText, updateStickyContent, selectElements, toggleElementSelected, clearSelection, groupSelected, ungroupElements, addUserAnnotation, removeUserAnnotation, undoLastUserAction, setCurrentMain, setLastTangent, clearTangent`
 - **Annotation undo stack**: `annotationHistory: AnnotationHistoryEntry[]` (max 50). `addUserAnnotation` / `removeUserAnnotation` push entries; `undoLastUserAction` pops + reverses. Only the dedicated user-annotation actions touch the stack — plain `addElement` / `removeElement` (used by AI streams and mock loaders) bypass it. See `CANVAS.md → Eraser & Annotation Undo`.
 - **`addPendingElement(el)`**: adds an element with `pending: true`; renders `SkeletonCard` until resolved
 - **`resolvePendingElement(id, artifact)`**: sets `pending: false`, sets `artifact`, updates `type` — replaces skeleton with real artifact
 - **`setElementHeight(id, h)`**: writes the measured pixel height onto `el.h`; skipped when height hasn't changed to avoid spurious re-renders. **Reflow path**: when the target is a `text` element with a `groupId`, sibling artifacts in the same group that still carry `autoLaidOut: true` are shifted vertically so their top sits at exactly `textY + measuredH + 1.5 × ELEM_GAP`. This is what lets `addModule`'s estimated text height be conservative — once the paragraph paints and the `ResizeObserver` reports the real height, the diagram(s) below slide into place. User-dragged siblings (whose `autoLaidOut` was cleared by `moveElement`) are left alone.
 - **`moveElement(id, x, y)`**: moves the element AND clears `autoLaidOut` so it's no longer a candidate for auto-reflow.
-- **`addModule(title, artifacts, crumbs?, writtenText?)`**: creates group + lays out elements via a two-pass layout — first probe the artifact rows to learn `totalW`, then size the text element so `textW = clamp(totalW, TEXT_MIN_W = 480, TEXT_MAX_W = 1100)` (paragraph spans the same horizontal extent as the diagrams below it), estimate text height from content + width via `estimateTextHeight()`, then re-place artifacts at `y = CANVAS_START_Y + textH + 1.5 × ELEM_GAP`. Every laid-out element is flagged `autoLaidOut: true` so the post-mount measurement can reflow them. See `CANVAS.md → Module layout` for the full pipeline. Also pushes a `module_added` entry to `updates`.
+- **`addModule(title, artifacts, crumbs?, writtenText?, opts?)`**: creates group + lays out elements; returns the new group's id. Two-pass layout — first probe the artifact rows to learn `totalW`, then size the text element so `textW = clamp(totalW, TEXT_MIN_W = 480, TEXT_MAX_W = 1100)` (paragraph spans the same horizontal extent as the diagrams below it), estimate text height from content + width via `estimateTextHeight()`, then re-place artifacts at `y = startY + textH + 1.5 × ELEM_GAP`. Every laid-out element is flagged `autoLaidOut: true` so the post-mount measurement can reflow them. `opts.anchorGroupId` places the group below that anchor (using a collision-aware horizontal nudge) and draws the connection arrow from the anchor instead of from the chronologically previous group; `opts.isTangent` stamps `parentGroupId`/`isTangent` on the new group and updates `lastTangentGroupId` (vs. `currentMainGroupId` for non-tangents). Without `opts`, behavior matches the original right-edge placement + previous-group connection. Also pushes a `module_added` entry to `updates`. See `CANVAS.md → Module layout` for the full pipeline.
 - **`estimateTextHeight(content, width)`** (exported): conservative line-count-based estimator (15px / 22px line height, ~6.6px avg glyph, +0.4 line padding). Honours hard `\n+` paragraph breaks. Slight over-estimate so the diagram below is never placed on top of the still-flowing paragraph; corrected by the `ResizeObserver` reflow.
 - **`addUpdate(event)`**: appends a `CanvasUpdateEvent` to the activity feed (capped at the last 50 entries). This is the single source of truth for live AI status — there is no separate canvas toast layer. See `CanvasUpdateEvent.type` for the supported variants and `RightSidebar` for the rendering.
-- **Persistence**: Zustand `persist` middleware writes `{ elements, groups, connections, updates }` to `localStorage` under key `synapse-canvas`. Transient state (`strokes`, `selectedElementIds`, `isMockMode`) is excluded.
+- **Tangent tracking**: `currentMainGroupId` is the user's "home" module on the main thread; `lastTangentGroupId` is the most recent tangent. Both drive `TangentReturnPill` visibility. `clearTangent()` is called when the user clicks the pill back to main. Both ids are persisted.
+- **Persistence**: Zustand `persist` middleware writes `{ elements, groups, connections, updates, currentMainGroupId, lastTangentGroupId }` to `localStorage` under key `synapse-canvas`. Transient state (`strokes`, `selectedElementIds`, `isMockMode`) is excluded.
 
 ### `useSessionStore` (`src/store/session.ts`)
 - **Key state**: `query, persona, sessionId, files, urls, messages, isStreaming, chatError, voiceMode, liveCaption, followUpQuestions, speakReady, playingMessageId, docHeadings, learningMode, moduleQueue, pendingVoiceText`
@@ -345,6 +355,7 @@ app/workspace/page.tsx (Suspense wrapper)
 ### `useUIStore` (`src/store/ui.ts`)
 - **Key state**: `leftSidebarOpen, doubtPopup, contextMenu, darkMode, canvasScale`
 - **Key actions**: `openDoubtPopup, closeDoubtPopup, openContextMenu, closeContextMenu, setCanvasScale`
+- **`openDoubtPopup(worldX, worldY, prefill?, originGroupId?)`**: `originGroupId` is the explicit "this doubt is about that group" hint. Stored on the popup state and forwarded to `DoubtPopup` as a prop, which uses it to derive the `focusGroupId` it sends to `useAIChat.sendMessage`. Falls back to nearest-group-by-distance when not provided.
 - **`canvasScale`**: live canvas zoom level (default 1), synced from `ArtifactCanvas.onTransformChange`. Read non-reactively via `useUIStore.getState().canvasScale` in canvas store actions to stamp `birthScale` at element creation time.
 
 ### `useGroundingStore` (`src/store/grounding.ts`)

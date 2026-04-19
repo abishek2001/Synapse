@@ -3,7 +3,7 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import { X } from "lucide-react";
-import { useCanvasStore } from "@/store/canvas";
+import { useCanvasStore, estimateElemH } from "@/store/canvas";
 import { useUIStore } from "@/store/ui";
 import { useAIChat } from "@/hooks/useAIChat";
 import type { FlashcardArtifact } from "@/lib/tools/types";
@@ -14,10 +14,11 @@ interface DoubtPopupProps {
   screenX: number;
   screenY: number;
   prefill?: string;
+  originGroupId?: string;
   onClose: () => void;
 }
 
-export default function DoubtPopup({ worldX, worldY, screenX, screenY, prefill, onClose }: DoubtPopupProps) {
+export default function DoubtPopup({ worldX, worldY, screenX, screenY, prefill, originGroupId, onClose }: DoubtPopupProps) {
   const [question, setQuestion] = useState(prefill || "");
   const textRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -41,8 +42,36 @@ export default function DoubtPopup({ worldX, worldY, screenX, screenY, prefill, 
     return () => window.removeEventListener("mousedown", handler);
   }, [onClose]);
 
+  /** Resolve the group this doubt is "about": explicit origin → nearest group → null. */
+  const resolveFocusGroupId = useCallback((): string | undefined => {
+    if (originGroupId && groups.some((g) => g.id === originGroupId)) {
+      return originGroupId;
+    }
+    if (groups.length === 0) return undefined;
+    let best: { id: string; d: number } | null = null;
+    for (const g of groups) {
+      const inGroup = elements.filter((e) => e.groupId === g.id);
+      if (inGroup.length === 0) continue;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const el of inGroup) {
+        const h = el.h ?? estimateElemH(el.type);
+        minX = Math.min(minX, el.x);
+        minY = Math.min(minY, el.y);
+        maxX = Math.max(maxX, el.x + el.w);
+        maxY = Math.max(maxY, el.y + h);
+      }
+      const cx = (minX + maxX) / 2;
+      const cy = (minY + maxY) / 2;
+      const d = Math.hypot(cx - worldX, cy - worldY);
+      if (!best || d < best.d) best = { id: g.id, d };
+    }
+    return best?.id;
+  }, [originGroupId, groups, elements, worldX, worldY]);
+
   const handleSubmit = useCallback(() => {
     if (!question.trim()) return;
+
+    const focusGroupId = resolveFocusGroupId();
 
     if (isMockMode) {
       const doubtArtifact: FlashcardArtifact = {
@@ -58,27 +87,11 @@ export default function DoubtPopup({ worldX, worldY, screenX, screenY, prefill, 
       };
       const moduleTitle = `${question.slice(0, 45)}${question.length > 45 ? "..." : ""}`;
 
-      // Find nearest group to connect from
-      const nearestGroup = groups.length > 0
-        ? groups.reduce((best, g) => {
-            const bestEl = elements.find((e) => e.groupId === best.id);
-            const gEl = elements.find((e) => e.groupId === g.id);
-            if (!bestEl) return g;
-            if (!gEl) return best;
-            const da = Math.hypot(gEl.x - worldX, gEl.y - worldY);
-            const db = Math.hypot(bestEl.x - worldX, bestEl.y - worldY);
-            return da < db ? g : best;
-          })
-        : null;
-
-      addModule(moduleTitle, [doubtArtifact]);
-
-      if (nearestGroup) {
-        const newGroup = useCanvasStore.getState().groups.slice(-1)[0];
-        if (newGroup) {
-          useCanvasStore.getState().addConnection({ id: `conn-doubt-${Date.now()}`, fromModuleId: nearestGroup.id, toModuleId: newGroup.id });
-        }
-      }
+      // Anchor mock doubt to the resolved focus group (or nearest as a fallback)
+      addModule(moduleTitle, [doubtArtifact], undefined, undefined, {
+        anchorGroupId: focusGroupId ?? null,
+        isTangent: !!focusGroupId,
+      });
 
       addUpdate({
         id: `upd-${Date.now()}`,
@@ -88,11 +101,11 @@ export default function DoubtPopup({ worldX, worldY, screenX, screenY, prefill, 
         timestamp: Date.now(),
       });
     } else {
-      sendMessage(question);
+      sendMessage(question, { focusGroupId });
     }
 
     onClose();
-  }, [question, isMockMode, groups, elements, worldX, worldY, addModule, addUpdate, sendMessage, onClose]);
+  }, [question, isMockMode, resolveFocusGroupId, addModule, addUpdate, sendMessage, onClose]);
 
   // Clamp to viewport
   const popupW = 340;

@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { runOrchestrator } from "@/lib/agents/orchestrator";
-import type { AgentMessage, StreamEvent } from "@/lib/agents/types";
+import type { AgentMessage, FocusInput, StreamEvent } from "@/lib/agents/types";
 import type { SessionContext } from "@/lib/grounding/session-context";
 import type { StudyPlan } from "@/lib/grounding/study-plan";
 import { classifyError } from "@/lib/agents/error-classify";
@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
     studyPlan?: StudyPlan | null;
     mode?: "tutor" | "friend";
     learningMode?: "guided" | "auto" | null;
+    focus?: FocusInput;
   };
 
   try {
@@ -46,6 +47,7 @@ export async function POST(req: NextRequest) {
     studyPlan = null,
     mode,
     learningMode = null,
+    focus,
   } = body;
 
   if (!query) {
@@ -99,7 +101,7 @@ export async function POST(req: NextRequest) {
 
       try {
         await runOrchestrator(
-          { query, persona, history, documentContext, canvasContext, sessionContext, studyPlan, mode, learningMode },
+          { query, persona, history, documentContext, canvasContext, sessionContext, studyPlan, mode, learningMode, focus },
           emit,
           req.signal,
         );

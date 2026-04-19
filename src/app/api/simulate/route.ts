@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { chatCompletion } from "@/lib/logging/openai";
+import { chatCompletion, pickModel } from "@/lib/logging/openai";
 import { SIMULATION_SYSTEM_PROMPT, buildSimulationPrompt } from "@/lib/simulation/prompt";
 import { sanitizeSimulationCode } from "@/lib/simulation/sanitize";
 
@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
     const res = await chatCompletion(
       "simulate.api",
       {
-        model: process.env.OPENAI_MODEL ?? "gpt-4o",
+        model: pickModel("medium"),
         messages: [
           { role: "system", content: SIMULATION_SYSTEM_PROMPT },
           { role: "user", content: userPrompt },

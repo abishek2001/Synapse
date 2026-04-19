@@ -9,6 +9,7 @@ import SourcesPanel from "./SourcesPanel";
 import CallFriendModal from "./CallFriendModal";
 import CanvasInputBar from "./CanvasInputBar";
 import ChatErrorBanner from "./ChatErrorBanner";
+import TangentReturnPill from "./TangentReturnPill";
 import LeftSidebar from "./LeftSidebar";
 import RightSidebar from "./RightSidebar";
 import MockButton from "./MockButton";
@@ -26,6 +27,7 @@ import { useCanvasStore } from "@/store/canvas";
 import { createSessionContext } from "@/lib/grounding/session-context";
 import { preloadKokoro } from "@/lib/voice/kokoro";
 import { useViewport } from "@/hooks/useViewport";
+import { touchActiveSession } from "@/lib/session-archive";
 
 export default function WorkspaceView() {
   const router = useRouter();
@@ -116,15 +118,12 @@ export default function WorkspaceView() {
   // /library page reflects the latest progress (every 30s, also on unload).
   useEffect(() => {
     let cancelled = false;
-    const tick = async () => {
+    const tick = () => {
       if (cancelled) return;
-      try {
-        const { touchActiveSession } = await import("@/lib/session-archive");
-        touchActiveSession();
-      } catch {}
+      try { touchActiveSession(); } catch {}
     };
     const interval = setInterval(tick, 30_000);
-    const beforeUnload = () => { void tick(); };
+    const beforeUnload = () => { tick(); };
     window.addEventListener("beforeunload", beforeUnload);
     return () => {
       cancelled = true;
@@ -453,6 +452,11 @@ export default function WorkspaceView() {
 
                 {/* Quiz Me — only renders if there are flashcards on the canvas */}
                 <QuizMeMode />
+
+                {/* Back-to-main pill (visible only while on a tangent) */}
+                <TangentReturnPill
+                  onReturn={(groupId) => artifactCanvasRef.current?.zoomToGroup(groupId)}
+                />
 
                 {/* Canvas input bar */}
                 <CanvasInputBar />
