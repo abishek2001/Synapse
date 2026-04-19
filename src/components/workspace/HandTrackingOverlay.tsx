@@ -473,7 +473,7 @@ export default function HandTrackingOverlay({ enabled, onGesture, containerRef, 
     fist:     "Pan canvas",
     peace:    "Zoom (move ↑↓)",
     openPalm: "Idle",
-    point:    "Pointing",
+    point:    "Pointing (hold to select)",
     none:     "No hand",
   };
 
@@ -596,7 +596,7 @@ export default function HandTrackingOverlay({ enabled, onGesture, containerRef, 
               </button>
             </div>
             <div className="flex flex-col gap-1.5 text-[11px]">
-              <CheatRow color="#6366f1" label="Point" desc="Move cursor" />
+              <CheatRow color="#6366f1" label="Point" desc="Move cursor · hold 0.7s to select" />
               <CheatRow color="#f43f5e" label="Pinch" desc="Click / drag elements" />
               <CheatRow color="#f59e0b" label="Fist"  desc="Pan the canvas" />
               <CheatRow color="#22c55e" label="Peace ✌"  desc="Zoom (move hand ↑↓)" />

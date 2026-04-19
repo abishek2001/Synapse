@@ -215,55 +215,34 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
       : "var(--font-caveat), 'Segoe Print', Georgia, serif";
     const textColor  = element.text?.color || (darkMode ? "rgba(255,255,255,0.78)" : "rgba(0,0,0,0.78)");
 
+    // Typewriter reveal — only for AI text elements that just landed on the
+    // canvas (created in the last 1.5s with non-empty content). On reload from
+    // localStorage `createdAt` is far in the past so the text shows fully and
+    // instantly. User-created (initially empty) text elements skip animation.
     return (
-      <div
-        ref={setRef}
-        data-element-id={element.id}
-        className="group"
-        style={{
-          ...wrapStyle,
-          outline: isSelected ? "2px solid rgba(124,58,237,0.5)" : "none",
-          outlineOffset: 6, borderRadius: 8,
-        }}
-        onPointerDown={onRootDown}
-        onPointerMove={onRootMove}
-        onPointerUp={onRootUp}
-        onPointerCancel={onRootUp}
-        onPointerEnter={() => onGroupHover?.(element.groupId ?? null)}
-        onPointerLeave={() => onGroupHover?.(null)}
-      >
-        <div className="absolute -top-6 left-0 right-0 flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity">
-          <div
-            className="cursor-grab active:cursor-grabbing px-1.5 py-0.5 rounded-md"
-            style={{ backgroundColor: darkMode ? "rgba(20,20,40,0.8)" : "rgba(255,255,255,0.9)", backdropFilter: "blur(8px)" }}
-            onPointerDown={onGripDown}
-            onPointerMove={onRootMove}
-            onPointerUp={onRootUp}
-            onPointerCancel={onRootUp}
-          >
-            <GripHorizontal className="w-3 h-3" style={{ color: darkMode ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.3)" }} />
-          </div>
-          <button onClick={(e) => { e.stopPropagation(); deleteSelf(); }}
-            className="w-5 h-5 flex items-center justify-center rounded-md"
-            style={{ backgroundColor: darkMode ? "rgba(20,20,40,0.8)" : "rgba(255,255,255,0.9)", backdropFilter: "blur(8px)" }}>
-            <X className="w-3 h-3" style={{ color: darkMode ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.3)" }} />
-          </button>
-        </div>
-        {editing ? (
-          <textarea autoFocus value={content}
-            onChange={(e) => updateElementText(element.id, e.target.value)}
-            onBlur={() => { if (content.trim()) setEditing(false); }}
-            placeholder="Type here..."
-            className="bg-transparent resize-none outline-none w-full"
-            style={{ fontFamily, fontSize, color: textColor, lineHeight: 1.45 }}
-            rows={style === "body" ? 2 : 1} />
-        ) : (
-          <p onClick={() => setEditing(true)} className="cursor-text whitespace-pre-wrap"
-            style={{ fontFamily, fontSize, color: textColor, lineHeight: 1.45, minHeight: fontSize + 8 }}>
-            {content || <span style={{ opacity: 0.3 }}>Click to edit...</span>}
-          </p>
-        )}
-      </div>
+      <TextElementBody
+        elementId={element.id}
+        elementCreatedAt={element.createdAt}
+        elementGroupId={element.groupId ?? null}
+        wrapStyle={wrapStyle}
+        isSelected={isSelected}
+        darkMode={darkMode}
+        editing={editing}
+        setEditing={setEditing}
+        content={content}
+        fontFamily={fontFamily}
+        fontSize={fontSize}
+        textColor={textColor}
+        styleVariant={style}
+        setRef={setRef}
+        deleteSelf={deleteSelf}
+        updateElementText={updateElementText}
+        onRootDown={onRootDown}
+        onRootMove={onRootMove}
+        onRootUp={onRootUp}
+        onGripDown={onGripDown}
+        onGroupHover={onGroupHover}
+      />
     );
   }
 
@@ -577,6 +556,185 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
           </div>
         )}
       </motion.div>
+    </div>
+  );
+}
+
+// ── TextElementBody ──────────────────────────────────────────────────────────
+// Extracted into its own component so the typewriter reveal can hold its own
+// `useState` + `useEffect` without complicating the main ElementCard hook
+// order (early-returns in the parent would break the rules of hooks).
+//
+// Layout-stability trick: the FULL text is rendered with `visibility:hidden`
+// so the wrapper occupies its final size from the very first frame. The
+// revealed substring is overlaid via `position:absolute` and inherits the
+// same width / typography, so wrapping behaviour matches exactly. Result:
+// no reflow jitter for sibling artifacts while the text streams in.
+const TYPEWRITER_FRESH_MS = 1500;
+const TYPEWRITER_CHARS_PER_TICK = 2;
+const TYPEWRITER_TICK_MS = 16;
+
+interface TextElementBodyProps {
+  elementId: string;
+  elementCreatedAt: number;
+  elementGroupId: string | null;
+  wrapStyle: React.CSSProperties;
+  isSelected: boolean;
+  darkMode: boolean;
+  editing: boolean;
+  setEditing: (v: boolean) => void;
+  content: string;
+  fontFamily: string;
+  fontSize: number;
+  textColor: string;
+  styleVariant: string;
+  setRef: (node: HTMLDivElement | null) => void;
+  deleteSelf: () => void;
+  updateElementText: (id: string, text: string) => void;
+  onRootDown: (e: React.PointerEvent) => void;
+  onRootMove: (e: React.PointerEvent) => void;
+  onRootUp: (e: React.PointerEvent) => void;
+  onGripDown: (e: React.PointerEvent) => void;
+  onGroupHover?: (groupId: string | null) => void;
+}
+
+function TextElementBody(props: TextElementBodyProps) {
+  const {
+    elementCreatedAt, wrapStyle, isSelected, darkMode, editing, setEditing,
+    content, fontFamily, fontSize, textColor, styleVariant,
+    setRef, deleteSelf, updateElementText, elementId,
+    onRootDown, onRootMove, onRootUp, onGripDown, onGroupHover, elementGroupId,
+  } = props;
+
+  // Captured once at mount — if the element was just created and already has
+  // content, animate it in. Reloads from localStorage have stale createdAt,
+  // so we'll skip the animation. User-created (initially empty) elements also
+  // skip because content.length is 0 at this moment.
+  const animateRef = useRef<boolean>(
+    Date.now() - elementCreatedAt < TYPEWRITER_FRESH_MS && content.length > 0,
+  );
+  const [revealed, setRevealed] = useState<number>(
+    animateRef.current ? 0 : content.length,
+  );
+
+  useEffect(() => {
+    if (!animateRef.current) return;
+    if (revealed >= content.length) return;
+    const interval = setInterval(() => {
+      setRevealed((r) => {
+        const next = r + TYPEWRITER_CHARS_PER_TICK;
+        if (next >= content.length) {
+          clearInterval(interval);
+          animateRef.current = false;
+          return content.length;
+        }
+        return next;
+      });
+    }, TYPEWRITER_TICK_MS);
+    return () => clearInterval(interval);
+  }, [content.length, revealed]);
+
+  // Once content changes externally (e.g. user editing), make sure we always
+  // show what they typed instead of stalling at the streamed prefix.
+  useEffect(() => {
+    if (!animateRef.current) setRevealed(content.length);
+  }, [content]);
+
+  const isStreaming = animateRef.current && revealed < content.length;
+  const displayedText = isStreaming ? content.slice(0, revealed) : content;
+
+  return (
+    <div
+      ref={setRef}
+      data-element-id={elementId}
+      className="group"
+      style={{
+        ...wrapStyle,
+        outline: isSelected ? "2px solid rgba(124,58,237,0.5)" : "none",
+        outlineOffset: 6, borderRadius: 8,
+      }}
+      onPointerDown={onRootDown}
+      onPointerMove={onRootMove}
+      onPointerUp={onRootUp}
+      onPointerCancel={onRootUp}
+      onPointerEnter={() => onGroupHover?.(elementGroupId)}
+      onPointerLeave={() => onGroupHover?.(null)}
+    >
+      <div className="absolute -top-6 left-0 right-0 flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity">
+        <div
+          className="cursor-grab active:cursor-grabbing px-1.5 py-0.5 rounded-md"
+          style={{ backgroundColor: darkMode ? "rgba(20,20,40,0.8)" : "rgba(255,255,255,0.9)", backdropFilter: "blur(8px)" }}
+          onPointerDown={onGripDown}
+          onPointerMove={onRootMove}
+          onPointerUp={onRootUp}
+          onPointerCancel={onRootUp}
+        >
+          <GripHorizontal className="w-3 h-3" style={{ color: darkMode ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.3)" }} />
+        </div>
+        <button onClick={(e) => { e.stopPropagation(); deleteSelf(); }}
+          className="w-5 h-5 flex items-center justify-center rounded-md"
+          style={{ backgroundColor: darkMode ? "rgba(20,20,40,0.8)" : "rgba(255,255,255,0.9)", backdropFilter: "blur(8px)" }}>
+          <X className="w-3 h-3" style={{ color: darkMode ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.3)" }} />
+        </button>
+      </div>
+      {editing ? (
+        <textarea autoFocus value={content}
+          onChange={(e) => updateElementText(elementId, e.target.value)}
+          onBlur={() => { if (content.trim()) setEditing(false); }}
+          placeholder="Type here..."
+          className="bg-transparent resize-none outline-none w-full"
+          style={{ fontFamily, fontSize, color: textColor, lineHeight: 1.45 }}
+          rows={styleVariant === "body" ? 2 : 1} />
+      ) : isStreaming ? (
+        // Reserve final layout via a hidden full-text copy, overlay revealed
+        // chars on top with a blinking caret at the cursor position.
+        <div style={{ position: "relative" }}>
+          <p
+            aria-hidden
+            className="whitespace-pre-wrap"
+            style={{
+              fontFamily, fontSize, color: "transparent",
+              lineHeight: 1.45, minHeight: fontSize + 8,
+              visibility: "hidden",
+            }}
+          >
+            {content}
+          </p>
+          <p
+            className="whitespace-pre-wrap"
+            style={{
+              position: "absolute", inset: 0,
+              fontFamily, fontSize, color: textColor,
+              lineHeight: 1.45,
+            }}
+          >
+            {displayedText}
+            <span
+              aria-hidden
+              style={{
+                display: "inline-block",
+                width: 2,
+                height: fontSize,
+                marginLeft: 2,
+                verticalAlign: "text-bottom",
+                backgroundColor: textColor,
+                opacity: 0.6,
+                animation: "synapse-caret-blink 1s steps(2,start) infinite",
+              }}
+            />
+          </p>
+          <style>{`
+            @keyframes synapse-caret-blink {
+              to { opacity: 0; }
+            }
+          `}</style>
+        </div>
+      ) : (
+        <p onClick={() => setEditing(true)} className="cursor-text whitespace-pre-wrap"
+          style={{ fontFamily, fontSize, color: textColor, lineHeight: 1.45, minHeight: fontSize + 8 }}>
+          {content || <span style={{ opacity: 0.3 }}>Click to edit...</span>}
+        </p>
+      )}
     </div>
   );
 }

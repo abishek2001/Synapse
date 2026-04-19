@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, BookOpen, Phone, PanelLeftOpen, PanelRightOpen, Sun, Moon, Download } from "lucide-react";
+import { ArrowLeft, BookOpen, Phone, PanelLeftOpen, PanelRightOpen, Sun, Moon, Download, Plus } from "lucide-react";
 import { useUIStore } from "@/store/ui";
 import VoiceIsland from "./VoiceIsland";
 import { downloadStudyGuide } from "@/lib/export-session";
@@ -9,6 +9,10 @@ import { downloadStudyGuide } from "@/lib/export-session";
 interface WorkspaceNavbarProps {
   title: string;
   onCallFriend: () => void;
+  /** Archive the current session, wipe the canvas + grounding stores and
+   *  bounce back to the landing page so the user can start a fresh topic.
+   *  Triggered by the "+ New" button on the right side of the navbar. */
+  onNewSession?: () => void;
   hasFiles: boolean;
   showSources: boolean;
   onToggleSources: () => void;
@@ -19,6 +23,7 @@ interface WorkspaceNavbarProps {
 export default function WorkspaceNavbar({
   title,
   onCallFriend,
+  onNewSession,
   hasFiles,
   showSources,
   onToggleSources,
@@ -76,6 +81,25 @@ export default function WorkspaceNavbar({
 
       {/* Right */}
       <div className="flex items-center gap-1 flex-shrink-0">
+        {onNewSession && (
+          <button
+            onClick={() => {
+              if (
+                window.confirm(
+                  "Start a new session? The current canvas will be archived to your library.",
+                )
+              ) {
+                onNewSession();
+              }
+            }}
+            title="New session — archive current and start fresh"
+            className={`flex items-center gap-1.5 px-1.5 sm:px-2.5 h-7 rounded-lg text-[12px] font-medium transition-all ${btn}`}
+          >
+            <Plus className="w-3 h-3" />
+            <span className="hidden sm:inline">New</span>
+          </button>
+        )}
+
         {hasFiles && (
           <button
             onClick={onToggleSources}

@@ -549,12 +549,16 @@ export function useAIChat() {
           // Update main/tangent tracking so the back pill knows where "home" is.
           // addModule already stamps these, but we're explicit here for the case
           // where addModule was skipped (no artifacts + no writtenText).
+          // Forward progression (isTangent === false) MUST also clear
+          // `lastTangentGroupId` so the back pill disappears once the user has
+          // moved past the tangent — see canvas-store comment for rationale.
           if (newGroupId) {
             const store = useCanvasStore.getState();
             if (isTangent) {
               store.setLastTangent(newGroupId);
             } else {
               store.setCurrentMain(newGroupId);
+              store.setLastTangent(null);
             }
           }
 

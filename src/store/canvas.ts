@@ -1782,8 +1782,13 @@ export const useCanvasStore = create<CanvasState>()(
       const allNewEls = textEl ? [textEl, ...newEls] : newEls;
 
       // Track main vs tangent so the back pill + future placement can find them.
+      // When the user advances the main thread (isTangent === false) we ALSO
+      // clear `lastTangentGroupId` — once the main thread has moved past the
+      // tangent, "Back to {previous main}" is no longer meaningful (the new
+      // module IS the new main). Without this, the back pill kept showing
+      // after acknowledgements like "Understood, next" / "got it".
       const nextMain = isTangent ? s.currentMainGroupId : groupId;
-      const nextTangent = isTangent ? groupId : s.lastTangentGroupId;
+      const nextTangent = isTangent ? groupId : null;
 
       return {
         groups: [...s.groups, group],
