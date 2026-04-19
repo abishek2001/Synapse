@@ -1,6 +1,6 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { LayoutList } from "lucide-react";
 import { useCanvasStore } from "@/store/canvas";
 import { useUIStore } from "@/store/ui";
@@ -22,9 +22,12 @@ interface LeftSidebarProps {
   open: boolean;
   onToggle: () => void;
   onZoomToGroup?: (groupId: string) => void;
+  /** When true, render as a floating drawer over the canvas instead of a
+   *  docked column that pushes the canvas. Used on compact viewports. */
+  overlay?: boolean;
 }
 
-export default function LeftSidebar({ open, onZoomToGroup }: LeftSidebarProps) {
+export default function LeftSidebar({ open, onToggle, onZoomToGroup, overlay = false }: LeftSidebarProps) {
   const { groups, elements } = useCanvasStore();
   const { darkMode, highlightedSource, highlightedSourceTs, clearHighlightedSource } = useUIStore();
   const { docHeadings } = useSessionStore();
@@ -80,14 +83,8 @@ export default function LeftSidebar({ open, onZoomToGroup }: LeftSidebarProps) {
   // Sort groups by orderIndex
   const sortedGroups = [...groups].sort((a, b) => a.orderIndex - b.orderIndex);
 
-  return (
-    <motion.div
-      animate={{ width: open ? 240 : 0 }}
-      transition={{ type: "spring", damping: 28, stiffness: 300 }}
-      className={`flex-shrink-0 relative z-40 overflow-hidden border-r ${border}`}
-      style={{ backgroundColor: surface }}
-    >
-      <div className="w-[240px] h-full flex flex-col overflow-hidden">
+  const body = (
+    <>
         {/* Header */}
         <div className={`flex items-center gap-2 px-4 py-3 border-b ${border} flex-shrink-0`}>
           <LayoutList className={`w-3.5 h-3.5 ${mutedText}`} />
@@ -185,6 +182,58 @@ export default function LeftSidebar({ open, onZoomToGroup }: LeftSidebarProps) {
             );
           })}
         </div>
+    </>
+  );
+
+  if (overlay) {
+    return (
+      <>
+        <AnimatePresence>
+          {open && (
+            <motion.button
+              key="ls-backdrop"
+              type="button"
+              aria-label="Close table of contents"
+              onClick={onToggle}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              className="absolute inset-0 z-40 bg-black/30 backdrop-blur-[1px]"
+            />
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {open && (
+            <motion.div
+              key="ls-drawer"
+              initial={{ x: "-100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "-100%" }}
+              transition={{ type: "spring", damping: 30, stiffness: 320 }}
+              className={`absolute left-0 top-0 bottom-0 z-50 border-r shadow-2xl ${border}`}
+              style={{ backgroundColor: surface, width: "min(280px, 86vw)" }}
+            >
+              <div className="w-full h-full flex flex-col overflow-hidden">
+                {body}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </>
+    );
+  }
+
+  return (
+    <motion.div
+      animate={{ width: open ? 240 : 0 }}
+      transition={{ type: "spring", damping: 28, stiffness: 300 }}
+      className={`flex-shrink-0 relative z-40 overflow-hidden border-r ${border}`}
+      style={{ backgroundColor: surface }}
+    >
+      <div className="w-[240px] h-full flex flex-col overflow-hidden">
+        {body}
       </div>
     </motion.div>
   );

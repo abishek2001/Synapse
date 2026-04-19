@@ -30,7 +30,7 @@ export default function CanvasContextMenu({
   onExpandModule,
 }: CanvasContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
-  const { groups, elements, addElement, ungroupElements } = useCanvasStore();
+  const { groups, elements, addUserAnnotation, ungroupElements } = useCanvasStore();
   const { openDoubtPopup, darkMode } = useUIStore();
 
   const group = targetModuleId ? groups.find((g) => g.id === targetModuleId) : null;
@@ -126,7 +126,7 @@ export default function CanvasContextMenu({
             label="Add sticky note"
             onClick={() => {
               const color = STICKY_COLORS[Math.floor(Math.random() * STICKY_COLORS.length)];
-              addElement({
+              addUserAnnotation({
                 id: `el-sticky-${Date.now()}`,
                 type: "sticky",
                 x: worldX, y: worldY,

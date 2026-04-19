@@ -99,6 +99,7 @@
    - Each URL is fetched via `POST /api/fetch-url` → Jina Reader converts to clean markdown.
    - Collected docs merged with any uploaded files → `setDocuments(collectedDocs)`.
    - `POST /api/extract-title` extracts a short topic title → sets `canvasTitle`.
+   - When the study plan resolves, its `plan.topic` is used as the canvas title if no document-extracted title was set (covers the no-files case where the user just typed a topic).
 8. After documents are committed, H1/H2 headings are extracted from all doc text via regex and stored in `useSessionStore.docHeadings`. `LeftSidebar` immediately shows them as a "Document" outline (visible before any AI chat groups exist).
 9. `BridgeScreen` exits. AI has full `documentContext` from the fetched URL content.
 10. Canvas title shows the extracted topic (e.g. "Photosynthesis: Light Reactions").
@@ -132,21 +133,28 @@
 
 ---
 
-## Flow 3e — Delayed Speech, Captions & Chips
+## Flow 3e — Replayable Speech, Sentence Captions & Voice Picker
 
 **Entry point**: Workspace, after AI response arrives
 
 1. AI turn completes: `done` SSE event fires. `addModule(label, artifacts, undefined, writtenText)` runs — `label` is the AI's `moduleTitle` (or truncated user query as fallback).
-2. `speakReady = true` in session store.
+2. The tutor message was appended to the transcript at `tutor_response` time with both `content: writtenText` AND `spokenText` attached on the message itself (so it can be replayed any time, even on a fresh page load — `spokenText` rides along through Zustand persistence).
 3. **Synapse bubble** appears in `CanvasInputBar`'s column (between the mode picker slot and the chips), showing `latestTutor.content`. Inline Speak (`Volume2`) and Dismiss (`X`) controls in the bubble header.
 4. **Speak button** also appears in the input pill (`Volume2`) to the left of Send.
-5. Up to 2 tier-1 (violet) follow-up chips appear above the input pill.
-6. User clicks **Speak** → `speakLatest()` → TTS reads `spokenText` aloud (not `writtenText`).
-7. While speaking: `isSpeaking = true`. RightSidebar auto-opens (its own effect). A **YouTube-style caption pill** also renders at fixed `bottom-28 left-1/2` over the canvas — dark translucent background, white 17px text — independent of any sidebar.
-8. `speak()` fires `SpeechSynthesisUtterance.onboundary` on each word → word-boundary callback calls `setLiveCaption(word)` → both the RightSidebar caption strip and the canvas caption pill update word-by-word in real time.
-9. Speaking ends → `setSpeaking(false)` + `setLiveCaption("")` → both caption surfaces fade out.
-10. User clicks a **chip** → `sendMessage(chip text)` → new turn. Chips disappear immediately.
-11. User clicks the bubble's **X** → `setBubbleDismissed(true)` → bubble hides until the next tutor message arrives (a `useEffect` watching `latestTutor.id` re-shows it).
+5. **Per-message Speak buttons** appear on every tutor row in `RightSidebar`'s transcript (visible on row hover; locked visible while that specific row is playing).
+6. Up to 2 tier-1 (violet) follow-up chips appear above the input pill.
+7. User clicks any **Speak** button → `usePlayback.toggleMessage(msg)`:
+   - If nothing is playing, TTS starts using `spokenText` (falling back to `content` for older messages).
+   - If that exact message is already playing, TTS stops.
+   - If a different message is playing, the current playback is stopped and the new one starts.
+   - `playingMessageId` is set on the session store; every speaker button across the app swaps to a `VolumeX` (stop) icon if it matches.
+8. While speaking: `isSpeaking = true`. RightSidebar auto-opens (its own effect). A **YouTube-style caption pill** renders at fixed `bottom-28 left-1/2` over the canvas — dark translucent background, white 17px text, wraps to two lines, max-width 640px. The RightSidebar caption strip mirrors the same text.
+9. The TTS layer fires `onSentence(sentence, index)` at each sentence boundary. ElevenLabs estimates boundaries from sentence character-length proportions of `audio.duration`; Kokoro fires per-sentence chunk; Web Speech fires from `utt.onstart`. The callback calls `setLiveCaption(sentence)` → both caption surfaces update sentence-by-sentence (was per-word before, which flickered and only worked on Web Speech).
+10. Speaking ends → `usePlayback`'s `onEnd` clears `isSpeaking`, `playingMessageId`, and `liveCaption` → both caption surfaces fade out, all speaker buttons swap back to play icons.
+11. User can click the same Speak button again to **replay** — there is no one-shot `speakReady` gate any more.
+12. **Voice picker (right-click / long-press)**: right-click any speaker button (or 500ms long-press on touch) → `VoicePickerPopover` opens anchored to the button. Picking a voice updates `useSessionStore.persona` and immediately replays the bubble's message (or that row's message, in the transcript) with the new voice via `usePlayback.playMessage(msg, { voiceId })`.
+13. User clicks a **chip** → `sendMessage(chip text)` → new turn. Chips disappear immediately. Sending a new message also stops any in-flight TTS via `usePlayback.stop()`.
+14. User clicks the bubble's **X** → `setBubbleDismissed(true)` → bubble hides until the next tutor message arrives (a `useEffect` watching `latestTutor.id` re-shows it).
 
 ---
 
@@ -174,11 +182,27 @@
 2. User draws a freehand stroke on the canvas (e.g., an arrow pointing at a formula).
 3. On pointer up, `handleStrokeComplete` fires:
    - Bounding box computed from stroke points
-   - `addElement({ type: "stroke", stroke: { points, color, width, height } })` called
+   - `addUserAnnotation({ type: "stroke", stroke: { points, color, width, height } })` called — the stroke is added to the canvas AND pushed onto `annotationHistory` so Cmd/Ctrl+Z (or the toolbar Undo button) can take it back.
 4. `StrokeElement` renders the stroke as an SVG path with quadratic bezier smoothing.
 5. Stroke is always rendered above all artifact elements (`zIndex: 9000 + element.zIndex`).
-6. In **Select** mode, user can click the stroke to select it, drag via grip handle to reposition, or delete via the `X` button.
+6. In **Select** mode, user can click the stroke to select it, drag via grip handle to reposition, or delete via `SelectionBar → Trash`.
 7. Stroke can be grouped with artifact elements via `SelectionBar → Group`.
+
+---
+
+## Flow 5b — Erase Annotations & Undo
+
+**Entry point**: Workspace with user-added annotations on canvas (strokes, text, sticky notes)
+
+1. User presses `E` to switch to the **Eraser** tool, or clicks the eraser icon in the bottom-left toolbar.
+2. The native cursor is hidden and replaced by a pink halo (constant 18 screen-pixel radius regardless of canvas zoom).
+3. User presses and drags over annotations they want to remove. On every pointer sample, `InfiniteCanvas` fires `onEraseAt(worldX, worldY, radius)`.
+4. `ArtifactCanvas → handleEraseAt` reverse-iterates `elements`, picks the topmost match for which `isUserAnnotation(el) === true` AND whose bounding box (inflated by `radius`) contains the cursor, and calls `removeUserAnnotation(id)`.
+   - **AI-generated artifacts are skipped** — they aren't user annotations and aren't eligible for erasure.
+   - Each erase pushes a `{ kind: "remove", element }` entry onto `annotationHistory`.
+5. To undo: user presses **`Cmd/Ctrl + Z`** (or clicks the toolbar Undo button next to the tool palette). `InfiniteCanvas` calls `onUndoAnnotation` → `useCanvasStore().undoLastUserAction()` pops the last history entry and reverses it (re-adds the erased annotation, or removes a just-added one).
+6. The same Cmd/Ctrl+Z shortcut also reverses the most recent **add** of a user annotation (a freshly drawn stroke, a click-placed text, a click-placed sticky note, including stickies added via `CanvasContextMenu → Add sticky note`).
+7. The undo stack holds up to 50 entries (oldest dropped). Cleared by `clearCanvas`.
 
 ---
 
@@ -196,7 +220,28 @@
 
 ---
 
-## Flow 7 — Mock Demo
+## Flow 7 — Hands-Free (AFK) Navigation — Gestures + Voice
+
+**Entry point**: Workspace with at least one group on canvas
+
+1. User clicks the camera/hand icon in `InfiniteCanvas`'s bottom-right zoom toolbar → `setHandTrackingEnabled(true)` → `HandTrackingOverlay` requests camera access and lazy-loads MediaPipe Hand Landmarker.
+2. The mirrored camera preview appears anchored top-right of the canvas. A small chip below it labels the currently detected gesture; a glowing cursor begins tracking the user's index/pinch tip on the canvas.
+3. **Discoverability**: user clicks the `?` button on the camera badge OR says "**help**" / "**show gestures**" → `dispatchCanvasCommand({type: "show_help"})` → `synapse:show_help` event → `HandTrackingOverlay` toggles the gesture cheatsheet popover. The popover lists every gesture with a colored swatch.
+4. User makes a **point** with one hand → `cursor` events fire every frame → `ArtifactCanvas` hit-tests the world point against `groups` → `hoveredGroupId` updates → the matching `GroupBoundary` highlights with a purple border.
+5. User **pinches** (thumb + index) on top of an element → `grab_start` → `ArtifactCanvas` hit-tests the world point, finds the element, snapshots all sibling group positions. As the user moves the pinched hand, `grab_move` events update the element's position (the whole group moves uniformly if the element is grouped). Releasing the pinch fires `grab_end`. A short pinch-and-release on empty canvas clears selection; a short pinch on an element selects it (single-click semantics).
+6. User makes a **fist** and moves their hand → `pan` events with `dx/dy` per frame → `panBy(dx × 1.4, dy × 1.4)`. The gain is tuned so a comfortable hand range covers the viewport without forcing the user to swing their arm.
+7. User makes a **peace** sign and moves their hand vertically → `zoom` events with `factor = 1 + scaledDeltaY` and the cursor as pivot → `InfiniteCanvasHandle.zoomAt(factor, cx, cy)`. Or: user pinches with **both hands** simultaneously → distance change between the two pinch points = zoom factor, midpoint translation = pan-while-zoom; the chip shows `· 2H`.
+8. User says "**next**" → `lib/voice/commands.ts → classifyCommand` matches the navigation pattern → `dispatchCanvasCommand({type: "next_module"})` → `ArtifactCanvas` reads `useCanvasStore().groups`, increments `activeModuleIdxRef`, and calls `zoomToRect(...)` on the next group's bounds. "**previous**" walks the other way; "**module 3**" / "**go to module three**" jumps directly and resyncs the index.
+9. User says "**zoom in**" / "**zoom out**" / "**fit all**" / "**reset zoom**" → `classifyCommand` returns the matching command → `ArtifactCanvas`'s window listener calls `zoomAt` / `fitAll` from the viewport center. Pan ("pan up", "scroll left") moves ~280px in that direction.
+10. User says "**stop**" while TTS is playing → `dispatchCanvasCommand({type: "stop_speaking"})` → `stopSpeaking()`. "**replay**" / "**say that again**" → `synapse:replay` event → `CanvasInputBar`'s listener calls `toggleMessage(latestTutor)`.
+11. User says anything that doesn't match a strict navigation pattern (e.g. "explain entanglement again") → `classifyCommand` returns `null` → the transcript falls through to `sendMessage` and starts a normal tutor turn. Wake words `synapse` / `canvas` / `hey synapse` and a leading `please` are stripped before matching, so "synapse, zoom in" works.
+12. User clicks the camera icon again to disable hand tracking. The MediaPipe stream is torn down; voice commands continue working.
+
+This is the AFK story end-to-end: gestures handle direct manipulation (pan / zoom / drag / click / hover), voice handles higher-level navigation (next / fit / module N) and TTS control. They share the same canvas primitives, so anything the keyboard/mouse can do is reachable hands-free.
+
+---
+
+## Flow 8 — Mock Demo
 
 **Entry point**: Workspace (fresh session required — set one via `InputBar` or `initSession` first, then `WorkspaceView` will not bounce you back to `/`)
 

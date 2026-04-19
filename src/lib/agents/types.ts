@@ -56,7 +56,16 @@ export type StreamEvent =
   | { type: "thinking"; message: string }
   | { type: "artifact_pending"; pendingId: string; artifactType: string; title: string }
   | { type: "artifact_done"; pendingId: string; artifact: CanvasArtifact }
-  | { type: "artifact_error"; pendingId: string; artifactType: string; reason: string }
+  | {
+      type: "artifact_error";
+      pendingId: string;
+      artifactType: string;
+      reason: string;
+      /** Categorised cause — populated for known recoverable failures so the UI
+       *  can show a friendlier label than the raw upstream message. */
+      code?: "rate_limit" | "timeout" | "unknown";
+      retryAfterMs?: number;
+    }
   | {
       type: "tutor_response";
       moduleTitle: string;    // 3-6 word topic label for the group heading
@@ -67,4 +76,12 @@ export type StreamEvent =
   | { type: "follow_up"; questions: string[] }  // chips tier 2 — strategy suggestions
   | { type: "pause_for_input" }
   | { type: "done"; contextPatch: SessionContextPatch }
-  | { type: "error"; message: string };
+  | {
+      type: "error";
+      message: string;
+      /** Categorised cause — `rate_limit` and `timeout` are recoverable and the
+       *  client renders a side banner with a retry button instead of injecting
+       *  a "something went wrong" tutor message into the transcript. */
+      code?: "rate_limit" | "timeout" | "unknown";
+      retryAfterMs?: number;
+    };

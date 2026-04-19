@@ -24,7 +24,7 @@ export default function MockButton() {
       onClick={handleClick}
       whileHover={{ scale: 1.04 }}
       whileTap={{ scale: 0.96 }}
-      className={`absolute bottom-20 right-4 z-40 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[10px] font-mono transition-all ${
+      className={`absolute right-4 bottom-20 z-40 hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[10px] font-mono transition-all ${
         isMockMode
           ? "bg-amber-500/10 border-amber-500/25 text-amber-500"
           : darkMode

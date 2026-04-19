@@ -28,7 +28,7 @@ class CardErrorBoundary extends Component<EBProps, EBState> {
 }
 import { X, GripHorizontal, RefreshCw, Lightbulb, MessageCircle, Send } from "lucide-react";
 import { AnimatePresence } from "framer-motion";
-import { useCanvasStore, type CanvasElement } from "@/store/canvas";
+import { useCanvasStore, type CanvasElement, ARTIFACT_DEFAULT_FRAME_H, ELEM_WIDTHS, visualCounterScale } from "@/store/canvas";
 import { useUIStore } from "@/store/ui";
 import { useSessionStore } from "@/store/session";
 import VisualCard from "../canvas/VisualCard";
@@ -53,19 +53,25 @@ interface Props {
 }
 
 /**
- * Counter-scale: only activates when zoomed IN beyond birthScale.
- * - canvasScale ≤ birthScale → return 1 (element shrinks naturally with canvas,
- *   world-space footprint = logical width — group bounds and layout stay correct)
- * - canvasScale > birthScale → return birthScale/canvasScale (caps visual size at
- *   the element's natural CSS dimensions so it stays usable when zoomed way in)
+ * Counter-scale wrapper. Delegates to the shared `visualCounterScale` helper
+ * in `@/store/canvas` so `ElementCard` and `GroupBoundary` always agree on
+ * where the artifact-size cap kicks in (`VISUAL_SCALE_CAP = 1.5`).
+ *
+ * - canvasScale ≤ max(birthScale, cap) → return 1 (element scales with the canvas)
+ * - canvasScale > cap → return cap/canvasScale (caps visual size at 1.5× natural)
  */
 function computeCounterScale(canvasScale: number, birthScale: number): number {
-  if (canvasScale <= birthScale) return 1;
-  return birthScale / canvasScale;
+  return visualCounterScale(canvasScale, birthScale);
 }
 
 export default function ElementCard({ element, isSelected, onSelect, canvasScale, currentTool, onGroupHover }: Props) {
-  const { moveElement, removeElement, updateElementText, updateStickyContent, setElementHeight } = useCanvasStore();
+  const { moveElement, removeElement, removeUserAnnotation, updateElementText, updateStickyContent, setElementHeight, resizeArtifact } = useCanvasStore();
+  // Text and sticky deletes go through the user-annotation path so they
+  // land on the undo stack (Cmd/Ctrl+Z reverses them). Artifact deletes use
+  // the plain remove path (AI artifacts don't participate in undo).
+  const deleteSelf = element.type === "text" || element.type === "sticky"
+    ? () => removeUserAnnotation(element.id)
+    : () => removeElement(element.id);
   const { darkMode } = useUIStore();
   const setPendingVoiceText = useSessionStore((s) => s.setPendingVoiceText);
 
@@ -237,7 +243,7 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
           >
             <GripHorizontal className="w-3 h-3" style={{ color: darkMode ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.3)" }} />
           </div>
-          <button onClick={(e) => { e.stopPropagation(); removeElement(element.id); }}
+          <button onClick={(e) => { e.stopPropagation(); deleteSelf(); }}
             className="w-5 h-5 flex items-center justify-center rounded-md"
             style={{ backgroundColor: darkMode ? "rgba(20,20,40,0.8)" : "rgba(255,255,255,0.9)", backdropFilter: "blur(8px)" }}>
             <X className="w-3 h-3" style={{ color: darkMode ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.3)" }} />
@@ -295,7 +301,7 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
               onPointerCancel={onRootUp}>
               <GripHorizontal className="w-3 h-3 text-black/20" />
             </div>
-            <button onClick={(e) => { e.stopPropagation(); removeElement(element.id); }}
+            <button onClick={(e) => { e.stopPropagation(); deleteSelf(); }}
               className="p-1 text-black/20 hover:text-black/50 transition-colors opacity-0 group-hover:opacity-100">
               <X className="w-2.5 h-2.5" />
             </button>
@@ -321,6 +327,50 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
       </div>
     );
   }
+
+  // ── Corner resize handle (sim / render3d only — iframe artifacts whose
+  //    intrinsic content can be much bigger than our default box) ──────────────
+  const resizable = element.artifact?.type === "simulation" || element.artifact?.type === "render3d";
+  const resizeRef = useRef<{
+    active: boolean;
+    startX: number; startY: number;
+    origW: number; origH: number;
+  }>({ active: false, startX: 0, startY: 0, origW: 0, origH: 0 });
+
+  const onResizeDown = useCallback((e: React.PointerEvent) => {
+    if (!element.artifact) return;
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const startFrameH = element.frameH ?? ARTIFACT_DEFAULT_FRAME_H[element.artifact.type] ?? 440;
+    resizeRef.current = {
+      active: true,
+      startX: e.clientX, startY: e.clientY,
+      origW: element.w,
+      origH: startFrameH,
+    };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }, [element.artifact, element.frameH, element.w]);
+
+  const onResizeMove = useCallback((e: React.PointerEvent) => {
+    const r = resizeRef.current;
+    if (!r.active) return;
+    e.stopPropagation();
+    const dx = (e.clientX - r.startX) / canvasScale;
+    const dy = (e.clientY - r.startY) / canvasScale;
+    // Floor at the type's stock width/height so users can't shrink the iframe
+    // to nothing. Ceiling at something generous; canvas pan handles the rest.
+    const minW = ELEM_WIDTHS[element.artifact?.type ?? ""] ?? 320;
+    const nextW = Math.max(minW, Math.min(2000, r.origW + dx));
+    const nextH = Math.max(220, Math.min(1600, r.origH + dy));
+    resizeArtifact(element.id, nextW, nextH);
+  }, [canvasScale, element.artifact, element.id, resizeArtifact]);
+
+  const onResizeUp = useCallback((e: React.PointerEvent) => {
+    if (!resizeRef.current.active) return;
+    e.stopPropagation();
+    resizeRef.current.active = false;
+  }, []);
 
   // ── Pending (skeleton) element ───────────────────────────────────────────────
 
@@ -462,6 +512,36 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
         )}
       </AnimatePresence>
 
+      {/* Corner resize handle — sim / render3d only. Drag to resize the iframe;
+          width grows the element box and height grows the iframe via element.frameH. */}
+      {resizable && (
+        <div
+          onPointerDown={onResizeDown}
+          onPointerMove={onResizeMove}
+          onPointerUp={onResizeUp}
+          onPointerCancel={onResizeUp}
+          className="absolute z-20 opacity-0 group-hover:opacity-100 transition-opacity"
+          style={{
+            right: -2,
+            bottom: -2,
+            width: 18,
+            height: 18,
+            cursor: "nwse-resize",
+            touchAction: "none",
+          }}
+          title="Drag to resize"
+        >
+          <svg viewBox="0 0 18 18" width="18" height="18" style={{ display: "block" }}>
+            <path
+              d="M16 6 L6 16 M16 11 L11 16 M16 16 L16 16"
+              stroke={darkMode ? "rgba(255,255,255,0.55)" : "rgba(0,0,0,0.45)"}
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            />
+          </svg>
+        </div>
+      )}
+
       {/* Entrance animation wrapper */}
       <motion.div
         initial={{ opacity: 0, scale: 0.94, y: 8 }}
@@ -489,8 +569,8 @@ export default function ElementCard({ element, isSelected, onSelect, canvasScale
             {artifact.type === "graph"      && <CardErrorBoundary type="graph"><GraphCard artifact={artifact} /></CardErrorBoundary>}
             {artifact.type === "notation"   && <CardErrorBoundary type="notation"><NotationCard artifact={artifact} dark={darkMode} /></CardErrorBoundary>}
             {artifact.type === "lookup"     && <CardErrorBoundary type="lookup"><LookupCard artifact={artifact} /></CardErrorBoundary>}
-            {artifact.type === "simulation" && <CardErrorBoundary type="simulation"><SimulationCard artifact={artifact} expanded /></CardErrorBoundary>}
-            {artifact.type === "render3d"   && <CardErrorBoundary type="render3d"><Render3DCard artifact={artifact} /></CardErrorBoundary>}
+            {artifact.type === "simulation" && <CardErrorBoundary type="simulation"><SimulationCard artifact={artifact} expanded height={element.frameH} /></CardErrorBoundary>}
+            {artifact.type === "render3d"   && <CardErrorBoundary type="render3d"><Render3DCard artifact={artifact} height={element.frameH} /></CardErrorBoundary>}
             <div className="px-3">
               <CitationChips citations={artifact.citations} dark={darkMode} />
             </div>

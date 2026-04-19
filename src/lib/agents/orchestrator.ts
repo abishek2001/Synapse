@@ -15,6 +15,7 @@ import type {
   SessionContextPatch,
   StreamEvent,
 } from "./types";
+import { classifyError } from "./error-classify";
 const MODEL = process.env.OPENAI_MODEL ?? "gpt-4o";
 
 export async function runOrchestrator(
@@ -307,8 +308,9 @@ The pedagogical layer matched this concept against six characteristics (does it 
         });
       } catch (toolErr) {
         // One bad tool call shouldn't sink the whole turn — clean up the skeleton and tell the model.
-        const errMsg = toolErr instanceof Error ? toolErr.message : "tool execution failed";
-        console.error(`Tool ${fnName} failed:`, errMsg);
+        const classified = classifyError(toolErr);
+        const errMsg = classified.message || "tool execution failed";
+        console.error(`Tool ${fnName} failed [${classified.code}]:`, errMsg);
         const pendingId = pendingIdMap.get(toolCall.id);
         if (pendingId) {
           // Tell the client to drop the skeleton entirely. Earlier we fabricated a
@@ -323,6 +325,8 @@ The pedagogical layer matched this concept against six characteristics (does it 
             pendingId,
             artifactType,
             reason: errMsg,
+            code: classified.code,
+            retryAfterMs: classified.retryAfterMs,
           });
           pendingIdMap.delete(toolCall.id);
         }

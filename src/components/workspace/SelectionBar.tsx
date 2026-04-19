@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 import { X, HelpCircle, Group, Ungroup, Trash2 } from "lucide-react";
-import { useCanvasStore } from "@/store/canvas";
+import { useCanvasStore, isUserAnnotation } from "@/store/canvas";
 import { useUIStore } from "@/store/ui";
 
 export default function SelectionBar() {
@@ -12,6 +12,7 @@ export default function SelectionBar() {
     groups,
     clearSelection,
     removeElement,
+    removeUserAnnotation,
     groupSelected,
     ungroupElements,
   } = useCanvasStore();
@@ -49,7 +50,14 @@ export default function SelectionBar() {
   };
 
   const handleDelete = () => {
-    selectedElementIds.forEach((id) => removeElement(id));
+    // Route user-annotation deletes through `removeUserAnnotation` so each
+    // one lands on the annotation undo stack. Other element types (AI
+    // artifacts) don't participate in undo and use the plain remove path.
+    selectedElementIds.forEach((id) => {
+      const el = elements.find((e) => e.id === id);
+      if (el && isUserAnnotation(el)) removeUserAnnotation(id);
+      else removeElement(id);
+    });
     clearSelection();
   };
 

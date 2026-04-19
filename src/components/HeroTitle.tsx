@@ -11,7 +11,7 @@ export default function HeroTitle() {
       className="text-center"
     >
       <h1
-        className="text-6xl md:text-8xl font-bold tracking-tight"
+        className="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-bold tracking-tight"
         style={{ fontFamily: "Georgia, 'Times New Roman', serif" }}
       >
         <span className="bg-gradient-to-br from-violet-700 via-violet-600 to-purple-500 bg-clip-text text-transparent">
@@ -22,7 +22,7 @@ export default function HeroTitle() {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: 0.3, duration: 0.6 }}
-        className="mt-3 text-sm tracking-[0.15em] uppercase text-text-muted"
+        className="mt-3 text-xs sm:text-sm tracking-[0.15em] uppercase text-text-muted"
       >
         Think inside ideas
       </motion.p>

@@ -19,16 +19,28 @@ import {
   StickyNote,
   ScanEye,
   Pencil,
+  Eraser,
+  Undo2,
 } from "lucide-react";
 import type { CanvasStroke } from "@/store/canvas";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Transform { x: number; y: number; scale: number }
-export type CanvasTool = "interaction" | "select" | "hand" | "text" | "sticky" | "pen";
+export type CanvasTool = "interaction" | "select" | "hand" | "text" | "sticky" | "pen" | "eraser";
 
-const MIN_ZOOM  = 0.1;
-const MAX_ZOOM  = 4;
+/** Eraser radius in screen pixels — points along the eraser drag path within
+ *  this distance of an annotation's bounding box hit-test it. */
+const ERASER_RADIUS = 18;
+
+const MIN_ZOOM  = 0.05;
+// The canvas is intentionally an "infinite" whiteboard, so the zoom cap is
+// generous — set high enough that you'd never realistically hit it. Artifact
+// pixel size is capped separately by `VISUAL_SCALE_CAP` (per-element
+// counter-transform in `ElementCard`) so zooming past the artifact cap just
+// scales the whitespace between groups while artifact content stays the same
+// readable size.
+const MAX_ZOOM  = 8;
 const ZOOM_STEP = 0.12;
 const DOT_SIZE  = 1;
 const DOT_GAP   = 24;
@@ -50,12 +62,23 @@ interface InfiniteCanvasProps {
   onStrokeComplete?: (stroke: CanvasStroke) => void;
   strokeColor?: string;
   onTransformChange?: (t: Transform) => void;
+  /** Called once per pointer sample while the eraser tool is active. The
+   *  parent should hit-test annotations under (worldX, worldY) and remove
+   *  any it finds. `radius` is supplied in world units so the parent can
+   *  match the eraser's screen-pixel footprint at the current zoom. */
+  onEraseAt?: (worldX: number, worldY: number, radius: number) => void;
+  /** Called when the user presses Cmd/Ctrl+Z (or hits the toolbar undo).
+   *  Parent should pop its annotation history and reverse the last action. */
+  onUndoAnnotation?: () => void;
 }
 
 export interface InfiniteCanvasHandle {
   getContainerRef: () => HTMLDivElement | null;
   getTransform: () => Transform;
   panBy: (dx: number, dy: number) => void;
+  /** Multiplicative zoom around a screen-pixel pivot (clamped to [MIN_ZOOM, MAX_ZOOM]).
+   *  `factor` is the desired scale ratio (e.g. 1.05 = zoom in 5%, 0.95 = zoom out). */
+  zoomAt: (factor: number, screenX: number, screenY: number) => void;
   screenToWorld: (screenX: number, screenY: number) => { x: number; y: number };
   worldToScreen: (worldX: number, worldY: number) => { x: number; y: number };
   zoomToRect: (x: number, y: number, w: number, h: number, padding?: number, minScale?: number) => void;
@@ -90,6 +113,8 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
       onStrokeComplete,
       strokeColor = "#7c3aed",
       onTransformChange,
+      onEraseAt,
+      onUndoAnnotation,
     },
     ref,
   ) {
@@ -119,6 +144,18 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
     useEffect(() => { onStrokeCompleteRef.current = onStrokeComplete; }, [onStrokeComplete]);
     const strokeColorRef = useRef(strokeColor);
     useEffect(() => { strokeColorRef.current = strokeColor; }, [strokeColor]);
+
+    // ── Eraser state ──────────────────────────────────────────────────────────
+    // Active while the user holds the pointer down with the eraser tool. Each
+    // pointermove sample fires `onEraseAt` so the parent can hit-test and
+    // remove user annotations along the swept path. A small live cursor halo
+    // is drawn so the user can see the eraser's footprint.
+    const isErasing      = useRef(false);
+    const eraserHaloRef  = useRef<HTMLDivElement>(null);
+    const onEraseAtRef   = useRef(onEraseAt);
+    useEffect(() => { onEraseAtRef.current = onEraseAt; }, [onEraseAt]);
+    const onUndoAnnotationRef = useRef(onUndoAnnotation);
+    useEffect(() => { onUndoAnnotationRef.current = onUndoAnnotation; }, [onUndoAnnotation]);
 
     // ── Pan state ─────────────────────────────────────────────────────────────
     const panState = useRef({
@@ -155,6 +192,17 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
       getContainerRef: () => containerRef.current,
       getTransform: () => transformRef.current,
       panBy: (dx, dy) => setTransform((t) => ({ ...t, x: t.x + dx, y: t.y + dy })),
+      zoomAt: (factor, screenX, screenY) => {
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const cx = screenX - rect.left;
+        const cy = screenY - rect.top;
+        setTransform((t) => {
+          const ns = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, t.scale * factor));
+          const r = ns / t.scale;
+          return { scale: ns, x: cx - (cx - t.x) * r, y: cy - (cy - t.y) * r };
+        });
+      },
       screenToWorld: (sx, sy) => {
         const rect = containerRef.current?.getBoundingClientRect();
         if (!rect) return { x: 0, y: 0 };
@@ -220,6 +268,11 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
     useEffect(() => {
       panState.current = { active: false, pending: false, startX: 0, startY: 0, originTx: 0, originTy: 0 };
       setIsPanning(false);
+      // Hide the eraser cursor halo whenever the tool isn't the eraser.
+      if (tool !== "eraser" && eraserHaloRef.current) {
+        eraserHaloRef.current.style.display = "none";
+      }
+      isErasing.current = false;
     }, [tool]);
 
     // ── All pointer logic via native events ───────────────────────────────────
@@ -260,9 +313,25 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
         // Interaction mode: let all events pass through to artifact content
         if (t === "interaction") return;
 
-        // Non-pen: if the click landed on an element, let the element's own
-        // native listeners handle it. Don't start rubber-band or pan.
-        if (t !== "pen" && target.closest("[data-element-id]")) return;
+        // Non-pen / non-eraser: if the click landed on an element, let the
+        // element's own native listeners handle it. Don't start rubber-band
+        // or pan. Eraser explicitly DOES want to handle clicks over elements
+        // (that's how you erase them), so it's exempted.
+        if (t !== "pen" && t !== "eraser" && target.closest("[data-element-id]")) return;
+
+        // ── Eraser ───────────────────────────────────────────────────────────
+        if (t === "eraser") {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          el.setPointerCapture(e.pointerId);
+          isErasing.current = true;
+          const rect = el.getBoundingClientRect();
+          const tr = transformRef.current;
+          const wx = (e.clientX - rect.left - tr.x) / tr.scale;
+          const wy = (e.clientY - rect.top  - tr.y) / tr.scale;
+          onEraseAtRef.current?.(wx, wy, ERASER_RADIUS / tr.scale);
+          return;
+        }
 
         // ── Pen ──────────────────────────────────────────────────────────────
         if (t === "pen") {
@@ -372,6 +441,24 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
           return;
         }
 
+        // ── Eraser ───────────────────────────────────────────────────────────
+        if (toolRef.current === "eraser") {
+          // Always update the cursor halo position (even when not pressing).
+          const rect = el.getBoundingClientRect();
+          const halo = eraserHaloRef.current;
+          if (halo) {
+            halo.style.left = `${e.clientX - rect.left}px`;
+            halo.style.top  = `${e.clientY - rect.top}px`;
+            halo.style.display = "block";
+          }
+          if (!isErasing.current) return;
+          const tr = transformRef.current;
+          const wx = (e.clientX - rect.left - tr.x) / tr.scale;
+          const wy = (e.clientY - rect.top  - tr.y) / tr.scale;
+          onEraseAtRef.current?.(wx, wy, ERASER_RADIUS / tr.scale);
+          return;
+        }
+
         const rb = rbState.current;
         if (rb?.active) {
           rb.ex = e.clientX;
@@ -413,6 +500,12 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
         // If we were in a pinch gesture, end it without firing click events
         if (lastPinchRef.current !== null) {
           if (pointerMapRef.current.size < 2) lastPinchRef.current = null;
+          return;
+        }
+
+        // ── Eraser ───────────────────────────────────────────────────────────
+        if (toolRef.current === "eraser") {
+          isErasing.current = false;
           return;
         }
 
@@ -560,6 +653,15 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
         const tag = (e.target as HTMLElement).tagName;
         if (tag === "INPUT" || tag === "TEXTAREA") return;
 
+        // Cmd/Ctrl+Z → undo last user annotation (add or erase)
+        if ((e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
+          if (onUndoAnnotationRef.current) {
+            e.preventDefault();
+            onUndoAnnotationRef.current();
+          }
+          return;
+        }
+
         // Space → temporary hand/pan mode (held down)
         if (e.key === " " && !spaceActiveRef.current) {
           e.preventDefault();
@@ -574,6 +676,7 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
         if (e.key === "v" || e.key === "V") setTool("select");
         if (e.key === "h" || e.key === "H") setTool("hand");
         if (e.key === "p" || e.key === "P") setTool("pen");
+        if (e.key === "e" || e.key === "E") setTool("eraser");
         if (e.key === "t" || e.key === "T") setTool("text");
         if (e.key === "n" || e.key === "N") setTool("sticky");
       };
@@ -609,6 +712,7 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
     const cursorStyle = isPanning           ? "grabbing"
       : tool === "hand"        ? "grab"
       : tool === "pen"         ? "crosshair"
+      : tool === "eraser"      ? "none" // we draw our own halo cursor
       : tool === "text"        ? "text"
       : tool === "sticky"      ? "crosshair"
       : tool === "interaction" ? "default"
@@ -627,6 +731,7 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
       { id: "select",      icon: SelectionRectIcon, label: "Select",   shortcut: "V" },
       { id: "hand",        icon: Hand,              label: "Pan",      shortcut: "H" },
       { id: "pen",         icon: Pencil,            label: "Draw",     shortcut: "P", color: "rgba(124,58,237,0.75)" },
+      { id: "eraser",      icon: Eraser,            label: "Erase",    shortcut: "E", color: "rgba(244,114,182,0.85)" },
       { id: "text",        icon: Type,              label: "Text",     shortcut: "T", color: "rgba(59,130,246,0.8)" },
       { id: "sticky",      icon: StickyNote,        label: "Sticky",   shortcut: "N", color: "rgba(234,179,8,0.85)" },
     ];
@@ -660,12 +765,14 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
 
         </div>
 
-        {/* Pen-mode intercept overlay — sits above all world content so pointer
-            events always reach the container handler, even over artifact cards. */}
-        {tool === "pen" && (
+        {/* Pen / eraser intercept overlay — sits above all world content so
+            pointer events always reach the container handler, even over
+            artifact cards. The eraser uses the same intercept so it can
+            sweep over annotations without their own listeners blocking it. */}
+        {(tool === "pen" || tool === "eraser") && (
           <div
             className="absolute inset-0"
-            style={{ zIndex: 15, cursor: "crosshair" }}
+            style={{ zIndex: 15, cursor: tool === "eraser" ? "none" : "crosshair" }}
           />
         )}
 
@@ -674,6 +781,24 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
           ref={liveCanvasRef}
           className="absolute inset-0 pointer-events-none"
           style={{ zIndex: 23, width: "100%", height: "100%" }}
+        />
+
+        {/* ── Eraser cursor halo (only visible while eraser tool is active) ── */}
+        <div
+          ref={eraserHaloRef}
+          className="absolute pointer-events-none"
+          style={{
+            display: "none",
+            zIndex: 24,
+            width: ERASER_RADIUS * 2,
+            height: ERASER_RADIUS * 2,
+            marginLeft: -ERASER_RADIUS,
+            marginTop:  -ERASER_RADIUS,
+            borderRadius: "50%",
+            border: `1.5px solid ${darkMode ? "rgba(244,114,182,0.8)" : "rgba(244,114,182,0.7)"}`,
+            backgroundColor: darkMode ? "rgba(244,114,182,0.10)" : "rgba(244,114,182,0.08)",
+            boxShadow: "0 0 0 1px rgba(255,255,255,0.35) inset",
+          }}
         />
 
         {/* Rubber-band selection rect */}
@@ -721,6 +846,26 @@ const InfiniteCanvas = forwardRef<InfiniteCanvasHandle, InfiniteCanvasProps>(
                   );
                 })}
               </div>
+
+              {/* Undo last annotation (also Cmd/Ctrl+Z). Always rendered;
+                  parent's handler is a no-op when there's nothing to undo. */}
+              {onUndoAnnotation && (
+                <div className={`flex items-center ${toolbarBg} rounded-xl border ${toolbarBorder} shadow-sm overflow-hidden`}>
+                  <button
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={() => onUndoAnnotation()}
+                    className={`w-9 h-9 flex items-center justify-center transition-all relative group ${toolbarText}`}
+                    title="Undo annotation (⌘Z)"
+                  >
+                    <Undo2 className="w-3.5 h-3.5" />
+                    <div className={`absolute -top-8 left-1/2 -translate-x-1/2 ${
+                      darkMode ? "bg-white/10 text-white/80" : "bg-black/80 text-white"
+                    } text-[9px] rounded px-1.5 py-0.5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap`}>
+                      Undo (⌘Z)
+                    </div>
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Bottom-right: zoom controls */}

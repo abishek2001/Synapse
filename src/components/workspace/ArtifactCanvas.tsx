@@ -1,6 +1,6 @@
 "use client";
 
-import { useCanvasStore, type CanvasElement, type CanvasStroke, ELEM_WIDTHS, estimateElemH } from "@/store/canvas";
+import { useCanvasStore, type CanvasElement, type CanvasStroke, ELEM_WIDTHS, estimateElemH, isUserAnnotation } from "@/store/canvas";
 import { useUIStore } from "@/store/ui";
 import { useSessionStore } from "@/store/session";
 import { AnimatePresence, motion } from "framer-motion";
@@ -13,6 +13,8 @@ import HandTrackingOverlay, { type HandGestureEvent } from "./HandTrackingOverla
 import DoubtPopup from "./DoubtPopup";
 import SelectionBar from "./SelectionBar";
 import CanvasContextMenu from "./CanvasContextMenu";
+import { CANVAS_COMMAND_EVENT, type CanvasCommand } from "@/lib/voice/commands";
+import { stopSpeaking } from "@/lib/voice/speech";
 
 export interface ArtifactCanvasHandle {
   zoomToGroup: (groupId: string) => void;
@@ -32,11 +34,13 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
     elements,
     groups,
     connections,
-    toasts,
     selectedElementIds,
     pendingModule,
     removeElement,
     addElement,
+    addUserAnnotation,
+    removeUserAnnotation,
+    undoLastUserAction,
     moveElement,
     selectElements,
     toggleElementSelected,
@@ -47,7 +51,6 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
     doubtPopup,
     contextMenu,
     darkMode,
-    moduleTimelineExpanded,
     openDoubtPopup,
     closeDoubtPopup,
     openContextMenu,
@@ -119,60 +122,11 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
     else clearSelection();
   }, [elements, selectElements, clearSelection]);
 
-  // ── Hand tracking ────────────────────────────────────────────────────────────
-
-  const handDragTarget = useRef<{ id: string; offsetX: number; offsetY: number } | null>(null);
-  const [handHighlight, setHandHighlight] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
-  const highlightStart = useRef<{ x: number; y: number } | null>(null);
-
-  const handleGesture = useCallback((event: HandGestureEvent) => {
-    const handle = canvasHandleRef.current;
-    if (!handle) return;
-
-    switch (event.type) {
-      case "pinch_start": {
-        const world = handle.screenToWorld(event.screenX, event.screenY);
-        const hit = elements.find((el) => {
-          const elH = 300; // approximate
-          return world.x >= el.x && world.x <= el.x + el.w &&
-                 world.y >= el.y && world.y <= el.y + elH;
-        });
-        if (hit) {
-          handDragTarget.current = { id: hit.id, offsetX: world.x - hit.x, offsetY: world.y - hit.y };
-        } else {
-          highlightStart.current = world;
-          setHandHighlight({ x: world.x, y: world.y, w: 0, h: 0 });
-        }
-        break;
-      }
-      case "pinch_move": {
-        const world = handle.screenToWorld(event.screenX, event.screenY);
-        if (handDragTarget.current) {
-          const { id, offsetX, offsetY } = handDragTarget.current;
-          moveElement(id, world.x - offsetX, world.y - offsetY);
-        } else if (highlightStart.current) {
-          const sx = highlightStart.current.x, sy = highlightStart.current.y;
-          setHandHighlight({ x: Math.min(sx, world.x), y: Math.min(sy, world.y), w: Math.abs(world.x - sx), h: Math.abs(world.y - sy) });
-        }
-        break;
-      }
-      case "pinch_end":
-        handDragTarget.current = null;
-        highlightStart.current = null;
-        setHandHighlight(null);
-        break;
-      case "pan":
-        if (event.deltaX !== undefined && event.deltaY !== undefined) {
-          handle.panBy(event.deltaX * 0.7, event.deltaY * 0.7);
-        }
-        break;
-      default: break;
-    }
-  }, [elements, moveElement]);
-
   // ── Hit-testing ──────────────────────────────────────────────────────────────
 
-  // Convert a completed CanvasStroke into a first-class CanvasElement
+  // Convert a completed CanvasStroke into a first-class CanvasElement.
+  // Routed through `addUserAnnotation` so the stroke joins the annotation
+  // undo stack and Cmd/Ctrl+Z (or the toolbar undo) can take it back.
   const handleStrokeComplete = useCallback((stroke: CanvasStroke) => {
     if (stroke.points.length < 2) return;
     const xs = stroke.points.map((p) => p[0]);
@@ -183,7 +137,7 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
     const elX = minX - pad, elY = minY - pad;
     const elW = Math.max(maxX - minX + pad * 2, 4);
     const elH = Math.max(maxY - minY + pad * 2, 4);
-    addElement({
+    addUserAnnotation({
       id: stroke.id,
       type: "stroke",
       x: elX, y: elY, w: elW,
@@ -196,7 +150,23 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
         height: elH,
       },
     });
-  }, [addElement]);
+  }, [addUserAnnotation]);
+
+  // Eraser sweep — find any user annotation whose bounding box (inflated by
+  // `radius`) contains the cursor, and remove it. Strokes already have a
+  // tight bounding box (they're sized to their drawn extent + a small pad)
+  // so this gives reasonably accurate erase behaviour without needing
+  // per-segment distance math.
+  const handleEraseAt = useCallback((worldX: number, worldY: number, radius: number) => {
+    const all = useCanvasStore.getState().elements;
+    const hit = [...all].reverse().find((el) => {
+      if (!isUserAnnotation(el)) return false;
+      const elH = el.h ?? el.stroke?.height ?? estimateElemH(el.type);
+      return worldX >= el.x - radius && worldX <= el.x + el.w + radius &&
+             worldY >= el.y - radius && worldY <= el.y + elH + radius;
+    });
+    if (hit) removeUserAnnotation(hit.id);
+  }, [removeUserAnnotation]);
 
   /** Find the element under a world coordinate. Uses measured height when available. */
   const hitTestElement = useCallback((worldX: number, worldY: number) => {
@@ -219,6 +189,124 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
     }
     return null;
   }, [groups, elements, canvasScale]);
+
+  // ── Hand tracking ────────────────────────────────────────────────────────────
+  // Event model (see HandTrackingOverlay for the producer side):
+  //   cursor      — every frame; hover-highlight what the user is aiming at
+  //   grab_start  — pinch began; hit-test under cursor and remember either an
+  //                 element-drag target or "canvas-drag" mode
+  //   grab_move   — element-drag updates the element; canvas-drag pans
+  //   grab_end    — wasClick=true short pinches act like a left click (select
+  //                 element, or clear selection)
+  //   pan         — fist drag; pans the canvas with a small gain so small hand
+  //                 motion still moves the world
+  //   zoom        — peace sign or two-hand pinch; pivots on the supplied point
+
+  /** While pinch is held: either a target element (drag mode) or the screen
+   *  position where the pinch began (canvas-drag/pan mode). */
+  const handDragRef = useRef<
+    | { kind: "element"; id: string; offsetX: number; offsetY: number; movedGroupSnapshot?: Map<string, { x: number; y: number }>; groupId?: string }
+    | { kind: "canvas" }
+    | null
+  >(null);
+
+  const handleGesture = useCallback((event: HandGestureEvent) => {
+    const handle = canvasHandleRef.current;
+    if (!handle) return;
+
+    switch (event.type) {
+      case "cursor": {
+        if (event.gesture === "point" || event.gesture === "openPalm") {
+          const w = handle.screenToWorld(event.screenX, event.screenY);
+          const grp = hitTestGroup(w.x, w.y);
+          setHoveredGroupId(grp?.id ?? null);
+        }
+        break;
+      }
+
+      case "grab_start": {
+        const world = handle.screenToWorld(event.screenX, event.screenY);
+        const hitEl = hitTestElement(world.x, world.y);
+        if (hitEl) {
+          // Snapshot all sibling group positions so the entire group moves
+          // together (matches the mouse drag model in ElementCard).
+          const groupId = hitEl.groupId;
+          const snapshot = new Map<string, { x: number; y: number }>();
+          if (groupId) {
+            for (const sibling of useCanvasStore.getState().elements) {
+              if (sibling.groupId === groupId) snapshot.set(sibling.id, { x: sibling.x, y: sibling.y });
+            }
+          }
+          handDragRef.current = {
+            kind: "element",
+            id: hitEl.id,
+            offsetX: world.x - hitEl.x,
+            offsetY: world.y - hitEl.y,
+            movedGroupSnapshot: snapshot.size > 1 ? snapshot : undefined,
+            groupId,
+          };
+        } else {
+          handDragRef.current = { kind: "canvas" };
+        }
+        break;
+      }
+
+      case "grab_move": {
+        const drag = handDragRef.current;
+        if (!drag) return;
+        if (drag.kind === "element") {
+          const world = handle.screenToWorld(event.screenX, event.screenY);
+          const targetX = world.x - drag.offsetX;
+          const targetY = world.y - drag.offsetY;
+          if (drag.movedGroupSnapshot) {
+            const anchor = drag.movedGroupSnapshot.get(drag.id);
+            if (anchor) {
+              const dxw = targetX - anchor.x;
+              const dyw = targetY - anchor.y;
+              for (const [id, pos] of drag.movedGroupSnapshot) {
+                moveElement(id, pos.x + dxw, pos.y + dyw);
+              }
+            } else {
+              moveElement(drag.id, targetX, targetY);
+            }
+          } else {
+            moveElement(drag.id, targetX, targetY);
+          }
+        } else {
+          handle.panBy(event.dx, event.dy);
+        }
+        break;
+      }
+
+      case "grab_end": {
+        const drag = handDragRef.current;
+        handDragRef.current = null;
+        if (event.wasClick) {
+          // Short pinch = click — select element or clear selection
+          const world = handle.screenToWorld(event.screenX, event.screenY);
+          const hitEl = hitTestElement(world.x, world.y);
+          if (hitEl) handleElementSelect(hitEl.id, false);
+          else if (drag?.kind === "canvas") clearSelection();
+        }
+        break;
+      }
+
+      case "pan": {
+        // Fist drag — small gain so a comfortable hand range covers the viewport
+        const GAIN = 1.4;
+        handle.panBy(event.dx * GAIN, event.dy * GAIN);
+        break;
+      }
+
+      case "zoom": {
+        handle.zoomAt(event.factor, event.cx, event.cy);
+        if (event.dx !== undefined && event.dy !== undefined) {
+          handle.panBy(event.dx, event.dy);
+        }
+        break;
+      }
+    }
+  }, [hitTestElement, hitTestGroup, handleElementSelect, moveElement, clearSelection]);
 
   // ── Canvas event handlers ────────────────────────────────────────────────────
 
@@ -262,7 +350,7 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
 
   const handleCanvasClick = useCallback((worldX: number, worldY: number, clickTool: CanvasTool) => {
     if (clickTool === "text") {
-      addElement({
+      addUserAnnotation({
         id: `el-text-${Date.now()}`,
         type: "text",
         x: worldX, y: worldY,
@@ -274,7 +362,7 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
       setTool("select");
     } else if (clickTool === "sticky") {
       const color = STICKY_COLORS[Math.floor(Math.random() * STICKY_COLORS.length)];
-      addElement({
+      addUserAnnotation({
         id: `el-sticky-${Date.now()}`,
         type: "sticky",
         x: worldX, y: worldY,
@@ -288,7 +376,100 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
       // Select tool — click on empty canvas clears selection
       clearSelection();
     }
-  }, [addElement, clearSelection, elements.length]);
+  }, [addUserAnnotation, clearSelection, elements.length]);
+
+  // ── Voice / external canvas commands ─────────────────────────────────────────
+  // Listens for `synapse:canvas-command` events dispatched by `lib/voice/commands.ts`
+  // (CanvasInputBar intercepts navigation phrases from the speech-to-text result
+  // before they reach the chat orchestrator). Module navigation tracks an
+  // "active module index" so "next/previous" can walk through groups in the
+  // order they were created. The index is also resynced when the user
+  // explicitly jumps to a module by number.
+  const activeModuleIdxRef = useRef(0);
+
+  const zoomToGroupAtIndex = useCallback((idx: number) => {
+    const gs = useCanvasStore.getState().groups;
+    const els = useCanvasStore.getState().elements;
+    if (gs.length === 0 || idx < 0 || idx >= gs.length) return;
+    activeModuleIdxRef.current = idx;
+    const bounds = computeGroupBounds(gs[idx].id, els, canvasScale);
+    if (bounds) canvasHandleRef.current?.zoomToRect(bounds.x, bounds.y, bounds.w, bounds.h, 60, 1.0);
+  }, [canvasScale]);
+
+  useEffect(() => {
+    const handler = (raw: Event) => {
+      const cmd = (raw as CustomEvent<CanvasCommand>).detail;
+      const handle = canvasHandleRef.current;
+      if (!handle) return;
+      const rect = canvasContainerRef.current?.getBoundingClientRect();
+      const cx = (rect?.left ?? 0) + (rect?.width ?? 0) / 2;
+      const cy = (rect?.top  ?? 0) + (rect?.height ?? 0) / 2;
+
+      switch (cmd.type) {
+        case "zoom_in":     handle.zoomAt(cmd.amount ?? 1.25, cx, cy); break;
+        case "zoom_out":    handle.zoomAt(cmd.amount ?? 0.8,  cx, cy); break;
+        case "zoom_reset":  {
+          const t = handle.getTransform();
+          // Reset to 100% centred on viewport — use zoomAt to land smoothly
+          const factor = 1 / Math.max(t.scale, 1e-6);
+          handle.zoomAt(factor, cx, cy);
+          break;
+        }
+        case "fit_all": {
+          const els = useCanvasStore.getState().elements;
+          if (els.length === 0) return;
+          let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+          for (const el of els) {
+            const elH = el.h ?? el.stroke?.height ?? estimateElemH(el.type);
+            minX = Math.min(minX, el.x); minY = Math.min(minY, el.y);
+            maxX = Math.max(maxX, el.x + el.w); maxY = Math.max(maxY, el.y + elH);
+          }
+          handle.fitAll({ x: minX - 60, y: minY - 60, w: maxX - minX + 120, h: maxY - minY + 120 });
+          break;
+        }
+        case "next_module": {
+          const total = useCanvasStore.getState().groups.length;
+          if (total === 0) return;
+          const next = Math.min(total - 1, activeModuleIdxRef.current + 1);
+          zoomToGroupAtIndex(next);
+          break;
+        }
+        case "prev_module": {
+          const total = useCanvasStore.getState().groups.length;
+          if (total === 0) return;
+          const prev = Math.max(0, activeModuleIdxRef.current - 1);
+          zoomToGroupAtIndex(prev);
+          break;
+        }
+        case "goto_module": {
+          zoomToGroupAtIndex(cmd.index - 1);
+          break;
+        }
+        case "pan":           handle.panBy(cmd.dx, cmd.dy); break;
+        case "stop_speaking": stopSpeaking(); break;
+        case "undo":          undoLastUserAction(); break;
+        case "clear_selection": clearSelection(); break;
+        case "select_all":    selectElements(useCanvasStore.getState().elements.map((e) => e.id)); break;
+        case "open_doubt": {
+          const t = handle.getTransform();
+          const wx = (cx - (rect?.left ?? 0) - t.x) / t.scale;
+          const wy = (cy - (rect?.top  ?? 0) - t.y) / t.scale;
+          openDoubtPopup(wx, wy);
+          (window as unknown as Record<string, unknown>).__doubtScreenX = cx;
+          (window as unknown as Record<string, unknown>).__doubtScreenY = cy;
+          break;
+        }
+        // `replay` and `show_help` are forwarded as well-known events that
+        // CanvasInputBar / HandTrackingOverlay listen for separately.
+        case "replay":
+        case "show_help":
+          window.dispatchEvent(new CustomEvent(`synapse:${cmd.type}`));
+          break;
+      }
+    };
+    window.addEventListener(CANVAS_COMMAND_EVENT, handler as EventListener);
+    return () => window.removeEventListener(CANVAS_COMMAND_EVENT, handler as EventListener);
+  }, [zoomToGroupAtIndex, undoLastUserAction, clearSelection, selectElements, openDoubtPopup]);
 
   // ── Zoom when groups change ──────────────────────────────────────────────────
 
@@ -353,6 +534,8 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
           darkMode={darkMode}
           onStrokeComplete={handleStrokeComplete}
           strokeColor={penColor}
+          onEraseAt={handleEraseAt}
+          onUndoAnnotation={undoLastUserAction}
           onTransformChange={(t) => { setCanvasScale(t.scale); setGlobalCanvasScale(t.scale); }}
         >
           {intro && <CanvasIntroText intro={intro} dark={darkMode} />}
@@ -429,19 +612,13 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
               />
             ))}
 
-          {/* Hand-tracking selection highlight */}
-          {handHighlight && handHighlight.w > 5 && (
-            <div
-              className="absolute border-2 border-dashed border-indigo-400/50 bg-indigo-400/5 rounded-lg pointer-events-none"
-              style={{ left: handHighlight.x, top: handHighlight.y, width: handHighlight.w, height: handHighlight.h }}
-            />
-          )}
         </InfiniteCanvas>
 
         <HandTrackingOverlay
           enabled={handTrackingEnabled}
           onGesture={handleGesture}
           containerRef={canvasContainerRef}
+          darkMode={darkMode}
         />
 
         {/* Selection bar */}
@@ -478,41 +655,6 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
           )}
         </AnimatePresence>
       </div>
-
-      {/* Artifact toasts — slide below the ModuleTimeline when it's expanded so they don't overlap. */}
-      <motion.div
-        className="absolute left-1/2 -translate-x-1/2 z-40 flex flex-col gap-2 pointer-events-none"
-        animate={{ top: moduleTimelineExpanded ? 280 : 56 }}
-        transition={{ type: "spring", damping: 28, stiffness: 260 }}
-      >
-        <AnimatePresence>
-          {toasts.map((toast) => (
-            <motion.div
-              key={toast.id}
-              initial={{ opacity: 0, y: -12, scale: 0.95 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -8, scale: 0.95 }}
-              className="rounded-xl px-4 py-2.5 shadow-xl flex items-center gap-3"
-              style={{
-                backgroundColor: darkMode ? "rgba(20,20,40,0.94)" : "rgba(255,255,255,0.96)",
-                border: `1px solid ${darkMode ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.08)"}`,
-                backdropFilter: "blur(12px)",
-              }}
-            >
-              <div className={`w-2 h-2 rounded-full flex-shrink-0 ${toast.status === "done" ? "bg-green-400" : "bg-amber-400 animate-pulse"}`} />
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[9px] font-semibold tracking-wider uppercase text-green-500">CANVAS</span>
-                  <span className={`text-[12px] font-medium ${darkMode ? "text-white/80" : "text-black/75"}`}>{toast.title}</span>
-                </div>
-                <span className={`text-[10px] ${darkMode ? "text-white/40" : "text-black/35"}`}>
-                  {toast.status === "preparing" ? "Generating..." : toast.status === "adding" ? "Adding to canvas" : "Added ✓"}
-                </span>
-              </div>
-            </motion.div>
-          ))}
-        </AnimatePresence>
-      </motion.div>
 
       {/* Undo toasts */}
       <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-40 flex flex-col gap-2">

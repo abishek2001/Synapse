@@ -17,11 +17,14 @@ const PROJECTILE_GOLD_HTML = `<!DOCTYPE html>
   body { background: #060d1a; overflow: hidden; }
   canvas { display: block; }
   #info { position: absolute; top: 10px; left: 10px; color: #94a3b8; font: 11px monospace; pointer-events: none; line-height: 1.5; }
+  #hint { position: absolute; bottom: 8px; right: 10px; color: rgba(255,255,255,0.18); font: 10px system-ui, sans-serif; pointer-events: none; user-select: none; letter-spacing: 0.03em; }
 </style>
 </head>
 <body>
 <div id="info"></div>
+<div id="hint">drag · rotate &nbsp;|&nbsp; scroll · zoom &nbsp;|&nbsp; right-drag · pan</div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script>
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x060d1a);
@@ -33,6 +36,15 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
+
+// CONTROLS — drag-rotate, scroll-zoom, right-drag-pan. Always include these so
+// the student can explore the scene from any angle.
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.enablePan = true;
+controls.minDistance = 0.5;
+controls.maxDistance = 200;
 
 // LIGHTS
 scene.add(new THREE.AmbientLight(0xffffff, 0.55));
@@ -66,7 +78,8 @@ function buildScene() {
   const cx = xMax / 2;
 
   camera.position.set(cx, yMax * 0.8 + 2.5, Math.max(xMax * 0.9, 12));
-  camera.lookAt(cx, yMax * 0.25, 0);
+  controls.target.set(cx, yMax * 0.25, 0);
+  controls.update();
 
   // Ground plane (catches shadows so the scene feels grounded)
   ground = new THREE.Mesh(
@@ -182,6 +195,7 @@ function animate() {
     'Range: ' + phys.xMax.toFixed(1) + ' m   •   Apex: ' + phys.yMax.toFixed(1) + ' m\\n' +
     'Position: (' + bx.toFixed(1) + ', ' + by.toFixed(1) + ')   •   Speed: ' + speed.toFixed(1) + ' m/s';
 
+  controls.update();
   renderer.render(scene, camera);
 }
 animate();
@@ -230,17 +244,19 @@ ${PROJECTILE_GOLD_HTML}
 - ❌ HUD that only shows time + position — show structural facts (range, period, energy) AND live state.
 - ❌ Pure black 0x000000 ground — disappears against dark bg. Use 0x1a2d50 or 0x12172a.
 - ❌ Wireframe-only scenes — they look like 1995.
+- ❌ Fixed camera with no OrbitControls — the student can't explore the scene. Always wire OrbitControls per the gold standard.
+- ❌ Camera framed too tight — the orbit / trajectory / lattice gets clipped at the iframe edges. When in doubt, zoom out.
 - ❌ Markdown fences around your output. Output ONLY raw HTML.
 
 ═══════════════════════════════════════════════════════════════════════════════
 ## TECHNICAL CONSTRAINTS (the iframe has tight rules)
 
-1. ONLY use Three.js r128 from the CDN script tag shown in the gold standard. No imports, no modules, no React.
+1. ONLY use Three.js r128 + OrbitControls from the two CDN script tags shown in the gold standard. No imports, no modules, no React, no other libraries.
 2. DO NOT use fetch, XMLHttpRequest, eval, Function, or any network APIs.
-3. DO NOT use any libraries beyond Three.js r128.
-4. ALWAYS include the mouse orbit controls pattern (or use the gold standard's camera setup if the scene is mostly 2D-in-3D like projectile motion).
-5. ALWAYS include the parameter postMessage init handshake on window load.
-6. ALWAYS include the resize listener.
+3. ALWAYS instantiate \`THREE.OrbitControls(camera, renderer.domElement)\` exactly as shown in the gold standard. The student MUST be able to drag-rotate, scroll-zoom, and right-drag-pan every scene — even "2D in 3D" scenes like projectile motion. Set \`controls.target\` (not \`camera.lookAt\`) so the orbit pivot stays sensible, and call \`controls.update()\` once per frame inside your animate loop.
+4. ALWAYS include the parameter postMessage init handshake on window load.
+5. ALWAYS include the resize listener.
+6. ALWAYS frame the camera so the entire scene is visible at the iframe's default aspect ratio (the iframe is roughly 1:1, often less than 600×500). Pull the camera back further than feels necessary — clipped orbits / cut-off labels are the most common bug. Prefer wider FOV (55–65°) and larger camera distance over a tight crop.
 7. The simulation must be scientifically / conceptually accurate.
 
 ═══════════════════════════════════════════════════════════════════════════════

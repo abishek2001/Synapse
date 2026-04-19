@@ -161,8 +161,16 @@ export default function BridgeScreen({
         }}
       />
 
-      {/* Whiteboard canvas animation */}
-      <div className="relative w-full max-w-[980px] h-[520px] mx-auto">
+      {/* Whiteboard canvas animation — sized via aspect-ratio so it scales
+          fluidly on tiny screens instead of bursting out of the viewport. */}
+      <div
+        className="relative mx-auto px-4"
+        style={{
+          width: "min(980px, 92vw)",
+          aspectRatio: "980 / 520",
+          maxHeight: "60vh",
+        }}
+      >
         <svg
           className="absolute inset-0 w-full h-full"
           viewBox="0 0 980 520"
@@ -268,11 +276,11 @@ export default function BridgeScreen({
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.3, duration: 0.5 }}
-        className="absolute bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center gap-3"
+        className="absolute bottom-6 sm:bottom-10 left-1/2 -translate-x-1/2 flex flex-col items-center gap-3 w-[min(420px,92vw)] px-4"
       >
         {/* Progress bar with % */}
-        <div className="flex items-center gap-3">
-          <div className="w-48 h-[2px] rounded-full bg-black/[0.06] overflow-hidden">
+        <div className="flex items-center gap-3 w-full justify-center">
+          <div className="w-48 max-w-[60vw] h-[2px] rounded-full bg-black/[0.06] overflow-hidden">
             <motion.div
               className="h-full rounded-full bg-violet-500"
               animate={{ width: `${pct}%` }}
@@ -312,7 +320,7 @@ export default function BridgeScreen({
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.6 }}
-              className="text-[11px] text-black/25 max-w-[300px] text-center truncate"
+              className="text-[11px] text-black/25 max-w-[min(300px,86vw)] text-center truncate"
             >
               {query}
             </motion.p>

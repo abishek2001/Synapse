@@ -22,8 +22,12 @@ export const ELEM_WIDTHS: Record<string, number> = {
   notation:   360,
   visual:     380,
   lookup:     360,
-  simulation: 400,
-  render3d:   380,
+  // 3D iframes need real estate to fit the scene — orbit/lattice/trajectory at
+  // 400px gets clipped (see Render3DCard / SimulationCard for the matching
+  // default heights). Bumped from 400/380 → 560/540 after a Kepler sim shipped
+  // with a clipped orbit and overflowing HUD labels.
+  simulation: 560,
+  render3d:   540,
   diagram:    520,
   text:       480,
   sticky:     220,
@@ -36,11 +40,19 @@ const ELEM_H_EST: Record<string, number> = {
   notation:   180,
   visual:     270,
   lookup:     210,
-  simulation: 400,
-  render3d:   440,
+  simulation: 460,
+  render3d:   480,
   diagram:    320,
   text:       140,  // Tutor explanations are multi-line; 480px wide → ~3-4 lines @ 14px
   sticky:     170,
+};
+
+// Default iframe heights for 3D artifacts when the user hasn't manually
+// resized them. Read by SimulationCard / Render3DCard. Kept here so the
+// layout estimates above stay in sync with the rendered iframe height.
+export const ARTIFACT_DEFAULT_FRAME_H: Record<string, number> = {
+  simulation: 440,
+  render3d:   460,
 };
 
 export function estimateElemH(type: string): number {
@@ -73,6 +85,65 @@ export function resolveArtifactHeight(art: CanvasArtifact): number {
 
 const ELEM_GAP = 24; // px gap between elements in the same group
 const MAX_COLS  = 2; // max columns per group row
+
+// ─── Visual scale cap ─────────────────────────────────────────────────────────
+//
+// The canvas itself is infinite — `MAX_ZOOM` is large so the user can scale
+// the whole whiteboard up or down freely. Artifacts, however, cap their on-
+// screen pixel size at `VISUAL_SCALE_CAP × natural` via the birth-scale
+// counter-transform in `ElementCard`. Past this cap the artifact's world-
+// space footprint shrinks (counter-scale < 1) so its screen size stays
+// constant while the rest of the canvas keeps zooming.
+//
+// `GroupBoundary` reads the same constant and counter-scales its padding so
+// the violet wrapper doesn't keep inflating around frozen-size content.
+export const VISUAL_SCALE_CAP = 1.5;
+
+/** Counter-scale formula shared by `ElementCard` and `GroupBoundary`.
+ *  - canvasScale ≤ cap → 1 (natural growth, content scales with the canvas)
+ *  - canvasScale > cap → cap / canvasScale (caps the visual pixel size)
+ *  `cap = max(birthScale, VISUAL_SCALE_CAP)` so legacy elements with a higher
+ *  birthScale aren't shrunk below their birth size. */
+export function visualCounterScale(canvasScale: number, birthScale = 1): number {
+  const cap = Math.max(birthScale, VISUAL_SCALE_CAP);
+  if (canvasScale <= cap) return 1;
+  return cap / canvasScale;
+}
+
+// Minimum width for the tutor explanation text element. The actual width
+// matches the wider of this and the underlying artifact-row width so the
+// paragraph spans the same horizontal extent as the diagrams below it.
+const TEXT_MIN_W = 480;
+const TEXT_MAX_W = 1100; // wider than this and lines get hard to read
+
+// Typography of the rendered text element (kept in sync with ElementCard's
+// "body" style — fontSize 15, lineHeight 1.45). Used purely to estimate the
+// rendered height up-front so the artifact row below doesn't get placed on
+// top of the still-flowing paragraph.
+const TEXT_FONT_PX  = 15;
+const TEXT_LINE_PX  = Math.round(TEXT_FONT_PX * 1.45); // ≈ 22
+const TEXT_AVG_GLYPH = 6.6; // Inter at 15px, conservative
+const TEXT_MIN_H = TEXT_LINE_PX + 8;
+
+/** Conservative height estimator for a body text element. Slightly over-
+ *  estimates so the diagram below is never placed on top of the last line.
+ *  ResizeObserver later corrects to the exact measured value and the layout
+ *  is reflowed by `setElementHeight`. */
+export function estimateTextHeight(content: string, width: number): number {
+  if (!content) return TEXT_MIN_H;
+  const usable = Math.max(120, width - 4); // text element has ~no internal padding
+  const charsPerLine = Math.max(20, Math.floor(usable / TEXT_AVG_GLYPH));
+  // Count hard line breaks plus wrapped lines per paragraph.
+  const paragraphs = content.split(/\n+/);
+  let lines = 0;
+  for (const p of paragraphs) {
+    if (!p.trim()) { lines += 1; continue; }
+    lines += Math.max(1, Math.ceil(p.length / charsPerLine));
+  }
+  // Add one line worth of safety padding so descenders / over-long words
+  // (URLs, equations) don't push into the artifact row.
+  return Math.max(TEXT_MIN_H, Math.ceil(lines * TEXT_LINE_PX + TEXT_LINE_PX * 0.4));
+}
 
 const GROUP_COLORS = [
   "rgba(124,58,237,0.055)",
@@ -115,6 +186,20 @@ export interface CanvasElement {
   y: number;
   w: number;
   h?: number;       // measured pixel height — set by ElementCard via ResizeObserver
+  /** When the user manually drags the corner-resize handle, store the chosen
+   *  iframe height here. Sim / render3d cards read this to size their iframe;
+   *  unset = use ARTIFACT_DEFAULT_FRAME_H. Kept separate from `h` so the
+   *  ResizeObserver-measured outer card height doesn't fight the user's choice. */
+  frameH?: number;
+  /** True once the user has manually resized this element. Locks `w` against
+   *  any future ELEM_WIDTHS-based reset. */
+  userResized?: boolean;
+  /** True if this element was placed by `layoutArtifacts` and the user hasn't
+   *  dragged it yet. The auto-reflow in `setElementHeight` (kicked off when
+   *  the text element above measures itself differently from the estimate)
+   *  only shifts elements that still carry this flag, so manual placements
+   *  are never clobbered. Cleared on `moveElement`. */
+  autoLaidOut?: boolean;
   groupId?: string;
   zIndex: number;
   createdAt: number;
@@ -144,20 +229,27 @@ export interface ModuleConnection {
   label?: string;
 }
 
+/** Activity-feed event surfaced in `RightSidebar` → "Activity" section.
+ *
+ *  This is the single source of truth for "what is the AI doing right now"
+ *  signal in the UI — there's intentionally no separate canvas toast layer.
+ *  Anything the user might want to see streaming live (thinking, per-artifact
+ *  generation, errors, module finalization) lands here. */
 export interface CanvasUpdateEvent {
   id: string;
-  type: "module_added" | "doubt_answered" | "selection_asked" | "ai_note";
+  type:
+    | "module_added"
+    | "doubt_answered"
+    | "selection_asked"
+    | "ai_note"
+    | "thinking"             // AI started a turn
+    | "artifact_generating"  // a single artifact's tool call is in flight
+    | "artifact_added"       // a single artifact resolved onto the canvas
+    | "error";               // anything that failed (tool / stream / abort)
   title: string;
   detail: string;
   timestamp: number;
   moduleId?: string;
-}
-
-export interface ArtifactToast {
-  id: string;
-  artifactType: string;
-  title: string;
-  status: "preparing" | "adding" | "done";
 }
 
 export interface CanvasStroke {
@@ -174,6 +266,30 @@ export interface Crumb {
   content: string;
   collapsed: boolean;
 }
+
+/** Element types that count as "user-added annotations" — text labels,
+ *  sticky notes, and pen strokes. These are the only things the eraser tool
+ *  removes and the only things tracked in the annotation undo history. */
+export const ANNOTATION_TYPES: ReadonlySet<ElementType> = new Set<ElementType>([
+  "text",
+  "sticky",
+  "stroke",
+]);
+
+export function isUserAnnotation(el: { type: ElementType }): boolean {
+  return ANNOTATION_TYPES.has(el.type);
+}
+
+/** A reversible step in the annotation undo stack. `kind: "add"` means the
+ *  user just added the element (undo = remove); `kind: "remove"` means the
+ *  user just deleted it (undo = re-add). Snapshots the full element so the
+ *  stroke geometry / text content / position survive across the round-trip. */
+export interface AnnotationHistoryEntry {
+  kind: "add" | "remove";
+  element: CanvasElement;
+}
+
+const MAX_ANNOTATION_HISTORY = 50;
 
 // ─── State interface ──────────────────────────────────────────────────────────
 
@@ -192,11 +308,14 @@ interface CanvasState {
   groups: CanvasGroup[];
   connections: ModuleConnection[];
   strokes: CanvasStroke[];
-  toasts: ArtifactToast[];
   updates: CanvasUpdateEvent[];
   selectedElementIds: string[];
   isMockMode: boolean;
   pendingModule: PendingModule | null;
+  /** Reversible annotation actions (text / sticky / stroke). The eraser tool,
+   *  the pen-stroke commit path, and the explicit "add text/sticky" paths
+   *  push entries here so Cmd/Ctrl+Z can roll them back. */
+  annotationHistory: AnnotationHistoryEntry[];
 
   // Element actions
   addElement: (el: CanvasElement) => void;
@@ -205,8 +324,20 @@ interface CanvasState {
   moveElement: (id: string, x: number, y: number) => void;
   removeElement: (id: string) => void;
   setElementHeight: (id: string, h: number) => void;
+  /** Manually resize an artifact element. Sets `w` + `frameH` and marks
+   *  `userResized` so future logic respects the override. */
+  resizeArtifact: (id: string, w: number, frameH: number) => void;
   updateElementText: (id: string, content: string) => void;
   updateStickyContent: (id: string, content: string) => void;
+
+  // ── User annotation actions (text / sticky / stroke) ─────────────────────
+  /** Add a user-authored annotation and push it onto the undo stack. */
+  addUserAnnotation: (el: CanvasElement) => void;
+  /** Remove a user-authored annotation by id and push it onto the undo stack.
+   *  No-op if the element isn't an annotation type. */
+  removeUserAnnotation: (id: string) => void;
+  /** Reverse the most recent annotation action (Cmd/Ctrl+Z). */
+  undoLastUserAction: () => void;
 
   // Group actions
   groupSelected: (name: string) => void;
@@ -235,12 +366,7 @@ interface CanvasState {
   addStroke: (stroke: CanvasStroke) => void;
   clearStrokes: () => void;
 
-  // Toasts
-  addToast: (toast: ArtifactToast) => void;
-  updateToast: (id: string, status: ArtifactToast["status"]) => void;
-  removeToast: (id: string) => void;
-
-  // Updates feed
+  // Activity feed (RightSidebar → "Activity")
   addUpdate: (event: CanvasUpdateEvent) => void;
 
   // Mock
@@ -275,18 +401,22 @@ function nextGroupStartX(elements: CanvasElement[]): number {
 
 const CANVAS_START_Y = 200; // all groups sit on the same horizontal baseline
 
-/** Layout artifacts for a new group starting at (startX, startY). */
+/** Layout artifacts for a new group starting at (startX, startY).
+ *  Also returns the total bounding box so callers (addModule) can size the
+ *  text element above to match the artifact row width. */
 function layoutArtifacts(
   artifacts: CanvasArtifact[],
   groupId: string,
   startX: number,
   startY: number,
   zBase: number,
-): CanvasElement[] {
+): { elements: CanvasElement[]; totalW: number; totalH: number } {
   const result: CanvasElement[] = [];
   let rowX = startX;
   let rowY = startY;
   let rowMaxH = 0;
+  let rowMaxRight = startX; // rightmost edge in the current row
+  let totalW = 0;           // widest row so far
   let col = 0;
   const birthScale = getBirthScale();
 
@@ -306,22 +436,27 @@ function layoutArtifacts(
       createdAt: Date.now() + i,
       artifact: art,
       birthScale,
+      autoLaidOut: true,
     });
 
     rowMaxH = Math.max(rowMaxH, h);
+    rowMaxRight = Math.max(rowMaxRight, rowX + w);
+    totalW = Math.max(totalW, rowMaxRight - startX);
     col++;
     if (col >= MAX_COLS) {
       // wrap to next row
       rowX = startX;
       rowY += rowMaxH + ELEM_GAP;
       rowMaxH = 0;
+      rowMaxRight = startX;
       col = 0;
     } else {
       rowX += w + ELEM_GAP;
     }
   }
 
-  return result;
+  const totalH = rowY - startY + rowMaxH;
+  return { elements: result, totalW, totalH };
 }
 
 // ─── Mock data ────────────────────────────────────────────────────────────────
@@ -1245,11 +1380,11 @@ export const useCanvasStore = create<CanvasState>()(
   groups: [],
   connections: [],
   strokes: [],
-  toasts: [],
   updates: [],
   selectedElementIds: [],
   isMockMode: false,
   pendingModule: null,
+  annotationHistory: [],
 
   // ── Element actions ─────────────────────────────────────────────────────────
 
@@ -1282,11 +1417,53 @@ export const useCanvasStore = create<CanvasState>()(
     })),
 
   moveElement: (id, x, y) =>
-    set((s) => ({ elements: s.elements.map((e) => e.id === id ? { ...e, x, y } : e) })),
+    set((s) => ({
+      elements: s.elements.map((e) =>
+        e.id === id ? { ...e, x, y, autoLaidOut: false } : e,
+      ),
+    })),
 
   setElementHeight: (id, h) =>
+    set((s) => {
+      const target = s.elements.find((e) => e.id === id);
+      if (!target || target.h === h) return s;
+
+      // Default: just record the measured height.
+      let next = s.elements.map((e) => (e.id === id ? { ...e, h } : e));
+
+      // Reflow path — only when a text element inside a group settles to a
+      // height different from the estimate used by `addModule`. We shift any
+      // sibling artifacts that still have `autoLaidOut === true` (i.e. the
+      // user hasn't dragged them) so they sit just below the actual text.
+      // Manually-moved siblings keep their position.
+      if (target.type === "text" && target.groupId) {
+        const groupId = target.groupId;
+        const desiredArtifactTop =
+          target.y + h + Math.round(ELEM_GAP * 1.5);
+
+        const siblings = next.filter(
+          (e) => e.groupId === groupId && e.id !== id && e.autoLaidOut && e.y > target.y,
+        );
+        if (siblings.length > 0) {
+          const currentTop = Math.min(...siblings.map((e) => e.y));
+          const delta = desiredArtifactTop - currentTop;
+          if (Math.abs(delta) > 0.5) {
+            const siblingIds = new Set(siblings.map((e) => e.id));
+            next = next.map((e) =>
+              siblingIds.has(e.id) ? { ...e, y: e.y + delta } : e,
+            );
+          }
+        }
+      }
+
+      return { elements: next };
+    }),
+
+  resizeArtifact: (id, w, frameH) =>
     set((s) => ({
-      elements: s.elements.map((e) => e.id === id && e.h !== h ? { ...e, h } : e),
+      elements: s.elements.map((e) =>
+        e.id === id ? { ...e, w, frameH, userResized: true } : e,
+      ),
     })),
 
   removeElement: (id) =>
@@ -1308,6 +1485,57 @@ export const useCanvasStore = create<CanvasState>()(
         e.id === id && e.sticky ? { ...e, sticky: { ...e.sticky, content } } : e,
       ),
     })),
+
+  // ── User annotation actions (drives Cmd/Ctrl+Z + eraser tool) ───────────────
+
+  addUserAnnotation: (el) =>
+    set((s) => {
+      const stamped: CanvasElement = { birthScale: getBirthScale(), ...el };
+      return {
+        elements: [...s.elements, stamped],
+        annotationHistory: [
+          ...s.annotationHistory.slice(-(MAX_ANNOTATION_HISTORY - 1)),
+          { kind: "add", element: stamped },
+        ],
+      };
+    }),
+
+  removeUserAnnotation: (id) =>
+    set((s) => {
+      const target = s.elements.find((e) => e.id === id);
+      if (!target || !isUserAnnotation(target)) return s;
+      return {
+        elements: s.elements.filter((e) => e.id !== id),
+        selectedElementIds: s.selectedElementIds.filter((i) => i !== id),
+        annotationHistory: [
+          ...s.annotationHistory.slice(-(MAX_ANNOTATION_HISTORY - 1)),
+          { kind: "remove", element: target },
+        ],
+      };
+    }),
+
+  undoLastUserAction: () =>
+    set((s) => {
+      const last = s.annotationHistory[s.annotationHistory.length - 1];
+      if (!last) return s;
+      const rest = s.annotationHistory.slice(0, -1);
+      if (last.kind === "add") {
+        // Undo an add → remove the element if it's still around.
+        return {
+          elements: s.elements.filter((e) => e.id !== last.element.id),
+          selectedElementIds: s.selectedElementIds.filter((i) => i !== last.element.id),
+          annotationHistory: rest,
+        };
+      }
+      // Undo a remove → put the element back if it isn't already present.
+      if (s.elements.some((e) => e.id === last.element.id)) {
+        return { annotationHistory: rest };
+      }
+      return {
+        elements: [...s.elements, last.element],
+        annotationHistory: rest,
+      };
+    }),
 
   // ── Group actions ────────────────────────────────────────────────────────────
 
@@ -1373,28 +1601,46 @@ export const useCanvasStore = create<CanvasState>()(
       const startX = nextGroupStartX(s.elements);
       const zBase = groupIdx * 100;
 
-      // Text element at top of group (tutor's written explanation)
+      // ── Pass 1: lay out the artifacts at a placeholder Y so we know how
+      //          wide the row(s) end up. The text element above is sized to
+      //          match this width so paragraph + diagram share the same
+      //          horizontal extent (no narrow column above a wide flowchart).
+      const probe = layoutArtifacts(artifacts, groupId, startX, 0, zBase + 1);
+      const artifactRowW = probe.totalW;
+
+      // ── Text element at top of group (tutor's written explanation) ──────
+      const textW = writtenText
+        ? Math.min(TEXT_MAX_W, Math.max(TEXT_MIN_W, artifactRowW || TEXT_MIN_W))
+        : TEXT_MIN_W;
+      const textH = writtenText ? estimateTextHeight(writtenText, textW) : 0;
+
       const textEl: CanvasElement | null = writtenText
         ? {
             id: `el-txt-${uid()}`,
             type: "text",
             x: startX,
             y: CANVAS_START_Y,
-            w: Math.max(ELEM_WIDTHS.text ?? 480, (ELEM_WIDTHS[artifacts[0]?.type] ?? 360) * Math.min(artifacts.length, 2) + ELEM_GAP * (Math.min(artifacts.length, 2) - 1)),
+            w: textW,
+            h: textH,
             groupId,
             zIndex: zBase,
             createdAt: Date.now(),
             text: { content: writtenText, style: "body" },
             birthScale: getBirthScale(),
+            autoLaidOut: true,
           }
         : null;
 
-      // Lay out artifacts below the text element
+      // ── Pass 2: re-place the artifacts at the proper Y now that we know
+      //          how tall the (estimated) text actually is. Extra breathing
+      //          room (1.5× ELEM_GAP) so the diagram never touches the last
+      //          line of the paragraph.
       const artifactStartY = textEl
-        ? CANVAS_START_Y + (ELEM_H_EST.text ?? 52) + ELEM_GAP
+        ? CANVAS_START_Y + textH + Math.round(ELEM_GAP * 1.5)
         : CANVAS_START_Y;
-
-      const newEls = layoutArtifacts(artifacts, groupId, startX, artifactStartY, zBase + 1);
+      const { elements: newEls } = layoutArtifacts(
+        artifacts, groupId, startX, artifactStartY, zBase + 1,
+      );
 
       // Connect to previous group
       const prevGroup = s.groups[groupIdx - 1];
@@ -1452,14 +1698,7 @@ export const useCanvasStore = create<CanvasState>()(
   addStroke: (stroke) => set((s) => ({ strokes: [...s.strokes, stroke] })),
   clearStrokes: () => set({ strokes: [] }),
 
-  // ── Toasts ───────────────────────────────────────────────────────────────────
-
-  addToast: (toast) => set((s) => ({ toasts: [...s.toasts, toast] })),
-  updateToast: (id, status) =>
-    set((s) => ({ toasts: s.toasts.map((t) => t.id === id ? { ...t, status } : t) })),
-  removeToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
-
-  // ── Updates feed ─────────────────────────────────────────────────────────────
+  // ── Activity feed ────────────────────────────────────────────────────────────
 
   addUpdate: (event) =>
     set((s) => ({ updates: [...s.updates.slice(-49), event] })),
@@ -1491,7 +1730,7 @@ export const useCanvasStore = create<CanvasState>()(
   // ── Reset ────────────────────────────────────────────────────────────────────
 
   clearCanvas: () =>
-    set({ elements: [], groups: [], connections: [], updates: [], selectedElementIds: [], strokes: [], pendingModule: null }),
+    set({ elements: [], groups: [], connections: [], updates: [], selectedElementIds: [], strokes: [], pendingModule: null, annotationHistory: [] }),
     }),
     {
       name: "synapse-canvas",

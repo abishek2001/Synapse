@@ -6,6 +6,8 @@ import {
   computeDiagramLayout,
   diagramEdgePath,
   NODE_W,
+  MAX_LABEL_LINES,
+  MAX_DESC_LINES,
 } from "@/lib/diagram-layout";
 
 // ─── Colors ────────────────────────────────────────────────────────────────────
@@ -193,44 +195,72 @@ export default function DiagramCard({ artifact }: Props) {
                   />
                 )}
 
-                {/* Color accent dot */}
+                {/* Color accent dot — anchored to top-left of the node box */}
                 <circle
-                  cx={(x ?? 0) + 10} cy={(pos.y ?? 0) - (hasDesc ? 10 : 0)}
+                  cx={x + 10}
+                  cy={y + 10}
                   r={3}
                   fill={color}
-                  opacity={0.8}
+                  opacity={0.85}
                 />
 
-                {/* Label */}
-                <text
-                  x={pos.x + 4}
-                  y={pos.y + (hasDesc ? -8 : 1)}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fontSize={12}
-                  fontWeight={600}
-                  fontFamily="Inter, system-ui, sans-serif"
-                  fill={isHov ? "rgba(255,255,255,0.92)" : "rgba(255,255,255,0.72)"}
-                  style={{ transition: "fill 0.15s", pointerEvents: "none", userSelect: "none" }}
-                >
-                  {node.label}
-                </text>
-
-                {/* Description */}
-                {hasDesc && (
-                  <text
-                    x={pos.x + 4}
-                    y={pos.y + 10}
-                    textAnchor="middle"
-                    dominantBaseline="middle"
-                    fontSize={9.5}
-                    fontFamily="Inter, system-ui, sans-serif"
-                    fill={isHov ? color : "rgba(255,255,255,0.32)"}
-                    style={{ transition: "fill 0.15s", pointerEvents: "none", userSelect: "none" }}
+                {/* Label + description rendered as wrapped HTML so long text
+                    clips cleanly inside the node box instead of overflowing. */}
+                <foreignObject x={x} y={y} width={NODE_W} height={h}>
+                  <div
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      padding: "10px 12px",
+                      boxSizing: "border-box",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: hasDesc ? 4 : 0,
+                      pointerEvents: "none",
+                      userSelect: "none",
+                      fontFamily: "Inter, system-ui, sans-serif",
+                      textAlign: "center",
+                      overflow: "hidden",
+                    }}
                   >
-                    {node.description}
-                  </text>
-                )}
+                    <div
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        lineHeight: "15px",
+                        color: isHov ? "rgba(255,255,255,0.92)" : "rgba(255,255,255,0.78)",
+                        transition: "color 0.15s",
+                        display: "-webkit-box",
+                        WebkitLineClamp: MAX_LABEL_LINES,
+                        WebkitBoxOrient: "vertical",
+                        overflow: "hidden",
+                        wordBreak: "break-word",
+                      }}
+                    >
+                      {node.label}
+                    </div>
+                    {hasDesc && (
+                      <div
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 400,
+                          lineHeight: "13px",
+                          color: isHov ? color : "rgba(255,255,255,0.42)",
+                          transition: "color 0.15s",
+                          display: "-webkit-box",
+                          WebkitLineClamp: MAX_DESC_LINES,
+                          WebkitBoxOrient: "vertical",
+                          overflow: "hidden",
+                          wordBreak: "break-word",
+                        }}
+                      >
+                        {node.description}
+                      </div>
+                    )}
+                  </div>
+                </foreignObject>
               </g>
             );
           })}

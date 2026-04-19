@@ -2,19 +2,20 @@
 
 import { useState, useRef, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Send, Mic, MicOff, Square, Volume2, X, Sparkles, BookOpen, Wand2 } from "lucide-react";
+import { Send, Mic, MicOff, Square, Volume2, VolumeX, ChevronUp, ChevronDown, Sparkles, BookOpen, Wand2 } from "lucide-react";
 import { useSessionStore } from "@/store/session";
 import { useUIStore } from "@/store/ui";
 import { useGroundingStore } from "@/store/grounding";
 import { useAIChat } from "@/hooks/useAIChat";
 import { startListening, stopListening, isRecognitionSupported } from "@/lib/voice/speech";
+import { classifyCommand, dispatchCanvasCommand } from "@/lib/voice/commands";
+import VoicePickerPopover from "./VoicePickerPopover";
 
 export default function CanvasInputBar() {
   const {
     voiceMode,
     liveCaption,
     isSpeaking,
-    speakReady,
     followUpQuestions,
     learningMode,
     messages,
@@ -31,20 +32,56 @@ export default function CanvasInputBar() {
   } = useSessionStore();
 
   const { darkMode } = useUIStore();
-  const { sendMessage, stop, speakLatest, isStreaming, latestTutor } = useAIChat();
+  const { sendMessage, stop, toggleMessage, playingMessageId, isStreaming, latestTutor } = useAIChat();
   const [input, setInput] = useState("");
-  const [bubbleDismissed, setBubbleDismissed] = useState(false);
+  const [bubbleExpanded, setBubbleExpanded] = useState(false);
+  const [voicePickerAnchor, setVoicePickerAnchor] = useState<DOMRect | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const recognitionOk = useRef(false);
   const lastShownTutorId = useRef<string | null>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Latest playable tutor message — derived once, used in multiple places.
+  const playableTutor = latestTutor && (latestTutor.spokenText || latestTutor.content)
+    ? latestTutor
+    : null;
+  const isPlayingLatest = !!playableTutor && playingMessageId === playableTutor.id;
+
+  const openVoicePicker = (e: React.MouseEvent | React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setVoicePickerAnchor(rect);
+  };
+
+  // Long-press support so touch users can also reach the voice picker.
+  const startLongPress = (e: React.PointerEvent) => {
+    if (e.pointerType !== "touch") return;
+    const target = e.currentTarget as HTMLElement;
+    longPressTimerRef.current = setTimeout(() => {
+      setVoicePickerAnchor(target.getBoundingClientRect());
+    }, 500);
+  };
+  const cancelLongPress = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const handleSpeakerClick = () => {
+    if (!playableTutor) return;
+    toggleMessage(playableTutor);
+  };
 
   useEffect(() => { recognitionOk.current = isRecognitionSupported(); }, []);
 
-  // Auto-resurface the bubble when a new tutor message arrives
+  // Reset the bubble to its collapsed state whenever a new tutor message
+  // arrives — keeps the canvas un-cluttered until the user opts in to read.
   useEffect(() => {
     if (latestTutor && latestTutor.id !== lastShownTutorId.current) {
       lastShownTutorId.current = latestTutor.id;
-      setBubbleDismissed(false);
+      setBubbleExpanded(false);
     }
   }, [latestTutor]);
 
@@ -77,12 +114,31 @@ export default function CanvasInputBar() {
   };
 
   // Handle pending voice text (single-shot)
+  // Intercepts short navigation phrases ("zoom in", "next module", "fit all")
+  // and dispatches them as CanvasCommand events instead of sending to the
+  // tutor — see lib/voice/commands.ts. Anything that doesn't classify as a
+  // command falls through to the chat as a normal question.
   useEffect(() => {
     if (pendingVoiceText && !isStreaming) {
+      const cmd = classifyCommand(pendingVoiceText);
+      if (cmd) {
+        dispatchCanvasCommand(cmd);
+        setPendingVoiceText(null);
+        return;
+      }
       sendMessage(pendingVoiceText);
       setPendingVoiceText(null);
     }
   }, [pendingVoiceText, isStreaming, sendMessage, setPendingVoiceText]);
+
+  // Voice "replay" / "say that again" — replay the last tutor message.
+  // Lives here (not in usePlayback) because we need access to `latestTutor`
+  // and `toggleMessage`, which are bound to the chat hook.
+  useEffect(() => {
+    const onReplay = () => { if (playableTutor) toggleMessage(playableTutor); };
+    window.addEventListener("synapse:replay", onReplay);
+    return () => window.removeEventListener("synapse:replay", onReplay);
+  }, [playableTutor, toggleMessage]);
 
   // Full-workflow queue: fire next module prompt as soon as the previous turn finishes
   useEffect(() => {
@@ -156,7 +212,7 @@ export default function CanvasInputBar() {
               initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 4 }}
-              className="px-4 py-2 rounded-full text-[12px] max-w-[300px] truncate shadow-sm"
+              className="px-4 py-2 rounded-full text-[12px] max-w-[min(300px,84vw)] truncate shadow-sm"
               style={{
                 backgroundColor: barBg,
                 border: `1px solid ${barBorder}`,
@@ -189,32 +245,66 @@ export default function CanvasInputBar() {
 
   return (
     <>
-      {/* YouTube-style live captions — fixed bottom center, shown while AI is speaking */}
+      {/* YouTube-style live captions — fixed bottom center, shown while AI is
+          speaking. Now sentence-level (was per-word) — text wraps to two lines
+          and stays put while a sentence is being read. */}
       <AnimatePresence>
         {isSpeaking && liveCaption && (
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
-            transition={{ duration: 0.15 }}
-            className="fixed bottom-28 left-1/2 -translate-x-1/2 z-50 pointer-events-none px-6 py-2 rounded-lg max-w-2xl text-center"
+            transition={{ duration: 0.18 }}
+            className="fixed bottom-28 left-1/2 -translate-x-1/2 z-50 pointer-events-none px-5 py-2.5 rounded-xl text-center w-[min(640px,92vw)]"
             style={{
-              backgroundColor: "rgba(0,0,0,0.75)",
-              backdropFilter: "blur(4px)",
+              backgroundColor: "rgba(0,0,0,0.78)",
+              backdropFilter: "blur(6px)",
+              boxShadow: "0 4px 24px rgba(0,0,0,0.25)",
             }}
           >
-            <span
-              className="text-white font-medium leading-relaxed"
-              style={{ fontSize: 17 }}
+            <p
+              className="text-white font-medium leading-snug"
+              style={{
+                fontSize: 17,
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+              }}
             >
               {liveCaption}
-            </span>
+            </p>
           </motion.div>
         )}
       </AnimatePresence>
 
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 w-full max-w-xl px-4 pointer-events-none">
-        <div className="pointer-events-auto flex flex-col gap-2">
+      {/* Voice picker popover — anchored to whichever speaker button opened it.
+          Picking a voice replays the latest tutor message so the user can
+          immediately hear the difference. */}
+      <AnimatePresence>
+        {voicePickerAnchor && (
+          <VoicePickerPopover
+            anchor={voicePickerAnchor}
+            onClose={() => setVoicePickerAnchor(null)}
+            replayMessage={playableTutor ?? undefined}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Position:
+            - <lg (≤1024px): input pill stacks ABOVE the canvas tool palette /
+              zoom controls so it never collides with them, and is full-width
+              with side padding.
+            - ≥lg: classic centered pill at the very bottom.
+          The outer container is intentionally wider than the input pill so
+          the follow-up question chips can stretch past the pill's edges
+          (otherwise long suggestions wrap onto multiple cramped lines). The
+          mode-picker / tutor-bubble / input-pill children clamp themselves
+          back down to `max-w-xl`. */}
+      <div
+        className="absolute left-1/2 -translate-x-1/2 z-30 w-full px-3 sm:px-4 pointer-events-none bottom-16 lg:bottom-4 max-w-3xl"
+      >
+        <div className="pointer-events-auto flex flex-col items-center gap-2">
 
           {/* ── Mode picker (one-time, on session start) ────────────────────── */}
           <AnimatePresence>
@@ -225,7 +315,7 @@ export default function CanvasInputBar() {
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: 8, scale: 0.96 }}
                 transition={{ type: "spring", damping: 26, stiffness: 320 }}
-                className="rounded-2xl shadow-xl p-4 mb-1"
+                className="rounded-2xl shadow-xl p-4 mb-1 w-full max-w-xl"
                 style={{
                   backgroundColor: barBg,
                   border: `1px solid ${barBorder}`,
@@ -255,7 +345,7 @@ export default function CanvasInputBar() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <button
                     onClick={() => handlePickMode("guided")}
                     className="text-left p-3 rounded-xl transition-all hover:scale-[1.02] active:scale-[0.98]"
@@ -310,54 +400,113 @@ export default function CanvasInputBar() {
             )}
           </AnimatePresence>
 
-          {/* ── Latest tutor response — compact, scrollable, dismissible ─────── */}
+          {/* ── Latest tutor response — collapsed by default, expands on click ── */}
           <AnimatePresence mode="wait">
-            {latestTutor && !showModePicker && !bubbleDismissed && (
+            {latestTutor && !showModePicker && (
               <motion.div
                 key={latestTutor.id}
                 initial={{ opacity: 0, y: 12, scale: 0.97 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: -8, scale: 0.97 }}
                 transition={{ type: "spring", damping: 25, stiffness: 350 }}
-                className="rounded-2xl shadow-xl overflow-hidden"
+                className="rounded-2xl shadow-xl overflow-hidden w-full max-w-xl"
                 style={{
-                  backgroundColor: darkMode ? "rgba(28,28,30,0.92)" : "rgba(28,28,30,0.92)",
+                  backgroundColor: "rgba(28,28,30,0.92)",
                   backdropFilter: "blur(24px)",
                 }}
               >
-                <div className="flex items-center gap-2 px-4 pt-3 pb-1">
+                {/* Header — always visible. The whole row is clickable when
+                    collapsed (acts as the expand affordance); when expanded,
+                    only the chevron toggles, so the collapse target is precise
+                    and doesn't compete with the message content for clicks. */}
+                <div
+                  role={!bubbleExpanded ? "button" : undefined}
+                  tabIndex={!bubbleExpanded ? 0 : undefined}
+                  onClick={!bubbleExpanded ? () => setBubbleExpanded(true) : undefined}
+                  onKeyDown={(e) => {
+                    if (!bubbleExpanded && (e.key === "Enter" || e.key === " ")) {
+                      e.preventDefault();
+                      setBubbleExpanded(true);
+                    }
+                  }}
+                  className={`flex items-center gap-2 px-4 ${bubbleExpanded ? "pt-3 pb-1" : "py-2.5"} ${
+                    !bubbleExpanded ? "cursor-pointer hover:bg-white/[0.03] transition-colors" : ""
+                  }`}
+                >
                   <div className="w-5 h-5 rounded-full bg-white/[0.08] flex items-center justify-center flex-shrink-0">
                     <Sparkles className="w-2.5 h-2.5 text-white/50" />
                   </div>
-                  <span className="text-[11px] text-white/30 font-medium flex-1">Synapse</span>
-                  {speakReady && !isSpeaking && (
+                  {bubbleExpanded ? (
+                    <span className="text-[11px] text-white/30 font-medium flex-1">Synapse</span>
+                  ) : (
+                    /* Collapsed: show one truncated line of the response next
+                       to the Synapse mark so the user knows what's hidden. */
+                    <p className="text-[12.5px] text-white/75 flex-1 truncate min-w-0">
+                      {latestTutor.content.replace(/\s+/g, " ").trim()}
+                    </p>
+                  )}
+                  {playableTutor && (
                     <button
-                      onClick={speakLatest}
-                      className="w-6 h-6 rounded-full bg-white/[0.06] flex items-center justify-center flex-shrink-0 text-white/40 hover:text-white/80 hover:bg-white/[0.12] transition-all"
-                      title="Listen"
+                      onClick={(e) => { e.stopPropagation(); handleSpeakerClick(); }}
+                      onContextMenu={openVoicePicker}
+                      onPointerDown={(e) => { e.stopPropagation(); startLongPress(e); }}
+                      onPointerUp={cancelLongPress}
+                      onPointerLeave={cancelLongPress}
+                      onPointerCancel={cancelLongPress}
+                      className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 transition-all ${
+                        isPlayingLatest
+                          ? "bg-violet-500/30 text-violet-200 hover:bg-violet-500/45"
+                          : "bg-white/[0.06] text-white/40 hover:text-white/80 hover:bg-white/[0.12]"
+                      }`}
+                      title={isPlayingLatest ? "Stop (right-click for voices)" : "Listen (right-click for voices)"}
                     >
-                      <Volume2 className="w-2.5 h-2.5" />
+                      {isPlayingLatest
+                        ? <VolumeX className="w-2.5 h-2.5" />
+                        : <Volume2 className="w-2.5 h-2.5" />}
                     </button>
                   )}
                   <button
-                    onClick={() => setBubbleDismissed(true)}
+                    onClick={(e) => { e.stopPropagation(); setBubbleExpanded((v) => !v); }}
                     className="w-6 h-6 rounded-full bg-white/[0.06] flex items-center justify-center flex-shrink-0 text-white/25 hover:text-white/60 hover:bg-white/[0.12] transition-all"
-                    title="Dismiss"
+                    title={bubbleExpanded ? "Collapse" : "Expand"}
+                    aria-label={bubbleExpanded ? "Collapse response" : "Expand response"}
+                    aria-expanded={bubbleExpanded}
                   >
-                    <X className="w-2.5 h-2.5" />
+                    {bubbleExpanded
+                      ? <ChevronDown className="w-2.5 h-2.5" />
+                      : <ChevronUp className="w-2.5 h-2.5" />}
                   </button>
                 </div>
 
-                <div className="max-h-[30vh] overflow-y-auto px-4 pb-3 scrollbar-dark">
-                  <p className="text-[13px] leading-relaxed text-white/90 whitespace-pre-wrap">
-                    {latestTutor.content}
-                  </p>
-                </div>
+                {/* Body — animates open/closed. AnimatePresence lets it tween
+                    height + opacity smoothly without stretching the header. */}
+                <AnimatePresence initial={false}>
+                  {bubbleExpanded && (
+                    <motion.div
+                      key="bubble-body"
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                      className="overflow-hidden"
+                    >
+                      <div className="max-h-[30vh] overflow-y-auto px-4 pb-3 scrollbar-dark">
+                        <p className="text-[13px] leading-relaxed text-white/90 whitespace-pre-wrap">
+                          {latestTutor.content}
+                        </p>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </motion.div>
             )}
           </AnimatePresence>
 
-          {/* Follow-up chips — max 2, tier 1 only */}
+          {/* Follow-up chips — max 2, tier 1 only.
+              Spans the full container width (`max-w-3xl`, wider than the
+              input pill above) so long suggestions like "Do you want to
+              start with forces or with field lines?" can sit on one line
+              instead of wrapping inside the narrow input column. */}
           <AnimatePresence>
             {followUpQuestions.length > 0 && !isStreaming && !showModePicker && (
               <motion.div
@@ -365,7 +514,7 @@ export default function CanvasInputBar() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 4 }}
                 transition={{ duration: 0.18 }}
-                className="flex flex-wrap gap-1.5"
+                className="flex flex-wrap gap-1.5 justify-center w-full"
               >
                 {followUpQuestions.slice(0, 2).map((q, i) => (
                   <motion.button
@@ -386,7 +535,7 @@ export default function CanvasInputBar() {
 
           {/* Single-line input pill */}
           <div
-            className="flex items-center gap-1.5 rounded-full px-3 py-1.5 shadow-md"
+            className="flex items-center gap-1.5 rounded-full px-3 py-1.5 shadow-md w-full max-w-xl"
             style={{
               backgroundColor: barBg,
               border: `1px solid ${barBorder}`,
@@ -417,18 +566,31 @@ export default function CanvasInputBar() {
               </motion.button>
             ) : (
               <>
-                {/* Speak button — appears when AI response is ready for TTS */}
+                {/* Speak button — always available while there's a tutor message
+                    to play. Toggles between play and stop. Right-click (or
+                    long-press on touch) opens the voice picker. */}
                 <AnimatePresence>
-                  {speakReady && (
+                  {playableTutor && (
                     <motion.button
                       initial={{ opacity: 0, scale: 0.8 }}
                       animate={{ opacity: 1, scale: 1 }}
                       exit={{ opacity: 0, scale: 0.8 }}
-                      onClick={speakLatest}
-                      className="w-7 h-7 rounded-full flex items-center justify-center transition-all flex-shrink-0 bg-violet-500/20 hover:bg-violet-500/35"
-                      title="Speak response"
+                      onClick={handleSpeakerClick}
+                      onContextMenu={openVoicePicker}
+                      onPointerDown={startLongPress}
+                      onPointerUp={cancelLongPress}
+                      onPointerLeave={cancelLongPress}
+                      onPointerCancel={cancelLongPress}
+                      className={`w-7 h-7 rounded-full flex items-center justify-center transition-all flex-shrink-0 ${
+                        isPlayingLatest
+                          ? "bg-violet-500/40 hover:bg-violet-500/55"
+                          : "bg-violet-500/20 hover:bg-violet-500/35"
+                      }`}
+                      title={isPlayingLatest ? "Stop speaking (right-click for voices)" : "Speak response (right-click for voices)"}
                     >
-                      <Volume2 className="w-3.5 h-3.5 text-violet-400" />
+                      {isPlayingLatest
+                        ? <VolumeX className="w-3.5 h-3.5 text-violet-200" />
+                        : <Volume2 className="w-3.5 h-3.5 text-violet-400" />}
                     </motion.button>
                   )}
                 </AnimatePresence>

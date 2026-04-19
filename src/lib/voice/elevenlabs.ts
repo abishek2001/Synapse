@@ -30,6 +30,8 @@ export async function speakElevenLabs(
     onStart?: () => void;
     onEnd?: () => void;
     onWordBoundary?: (word: string) => void;
+    /** Fires once per sentence at the estimated start of that sentence (used for captions). */
+    onSentence?: (sentence: string, index: number) => void;
   } = {},
 ): Promise<boolean> {
   if (elevenLabsAvailable === false) return false;
@@ -77,30 +79,55 @@ export async function speakElevenLabs(
   const audio = new Audio(url);
   activeAudio = audio;
 
-  // Approximate word-boundary callbacks by splitting words evenly across the
-  // playback duration once we know it. Real word timestamps would need
-  // ElevenLabs' alignment API which adds a separate request.
-  let wordTimer: number | null = null;
-  const triggerWordTimers = () => {
-    if (!opts.onWordBoundary || !audio.duration || !isFinite(audio.duration)) return;
-    const words = text.trim().split(/\s+/).filter(Boolean);
-    if (words.length === 0) return;
-    const msPerWord = (audio.duration * 1000) / words.length;
-    let i = 0;
-    const fire = () => {
-      if (audio.paused || audio.ended || i >= words.length) return;
-      opts.onWordBoundary?.(words[i]);
-      i += 1;
-      wordTimer = window.setTimeout(fire, msPerWord);
-    };
-    wordTimer = window.setTimeout(fire, 0);
+  // Approximate word + sentence boundary callbacks by spreading them across the
+  // playback duration in proportion to character count once we know it. Real
+  // alignment would need ElevenLabs' separate alignment API.
+  const wordTimers: number[] = [];
+  const sentenceTimers: number[] = [];
+  const triggerTimers = () => {
+    if (!audio.duration || !isFinite(audio.duration)) return;
+    const totalMs = audio.duration * 1000;
+
+    if (opts.onSentence) {
+      const sentences = (text.match(/[^.!?\n]+[.!?]+|[^.!?\n]+$/g) ?? [text])
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const totalChars = sentences.reduce((sum, s) => sum + s.length, 0) || 1;
+      let acc = 0;
+      sentences.forEach((sentence, idx) => {
+        const startMs = (acc / totalChars) * totalMs;
+        acc += sentence.length;
+        const t = window.setTimeout(() => {
+          if (audio.paused || audio.ended) return;
+          opts.onSentence?.(sentence, idx);
+        }, startMs);
+        sentenceTimers.push(t);
+      });
+    }
+
+    if (opts.onWordBoundary) {
+      const words = text.trim().split(/\s+/).filter(Boolean);
+      if (words.length > 0) {
+        const msPerWord = totalMs / words.length;
+        words.forEach((word, i) => {
+          const t = window.setTimeout(() => {
+            if (audio.paused || audio.ended) return;
+            opts.onWordBoundary?.(word);
+          }, i * msPerWord);
+          wordTimers.push(t);
+        });
+      }
+    }
   };
 
   audio.addEventListener("playing", () => opts.onStart?.(), { once: true });
-  audio.addEventListener("loadedmetadata", triggerWordTimers, { once: true });
+  audio.addEventListener("loadedmetadata", triggerTimers, { once: true });
 
   const cleanup = () => {
-    if (wordTimer) { clearTimeout(wordTimer); wordTimer = null; }
+    for (const t of wordTimers) clearTimeout(t);
+    for (const t of sentenceTimers) clearTimeout(t);
+    wordTimers.length = 0;
+    sentenceTimers.length = 0;
     URL.revokeObjectURL(url);
     if (activeAudio === audio) activeAudio = null;
   };

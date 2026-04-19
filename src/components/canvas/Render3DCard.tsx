@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useRef } from "react";
 import type { Render3DArtifact } from "@/lib/tools/types";
+import { ARTIFACT_DEFAULT_FRAME_H } from "@/store/canvas";
 import { Box } from "lucide-react";
 
-const RENDER_HEIGHT = 420;
+const RENDER_HEIGHT = ARTIFACT_DEFAULT_FRAME_H.render3d ?? 460;
 
 // Sanitise AI code so </script> inside the code block can't break the srcdoc
 function sanitiseForScript(code: string): string {
@@ -118,9 +119,18 @@ loop(0);
 </html>`;
 }
 
-export default function Render3DCard({ artifact }: { artifact: Render3DArtifact }) {
+export default function Render3DCard({
+  artifact,
+  height,
+}: {
+  artifact: Render3DArtifact;
+  /** Per-element height override from CanvasElement.frameH (set by the
+   *  user-resize handle). Defaults to RENDER_HEIGHT when unspecified. */
+  height?: number;
+}) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const h = height ?? RENDER_HEIGHT;
 
   useEffect(() => {
     const handler = (e: MessageEvent) => {
@@ -133,7 +143,7 @@ export default function Render3DCard({ artifact }: { artifact: Render3DArtifact 
   // External embed (Sketchfab etc.) — bypass Three.js scaffold entirely
   if (artifact.embed_url) {
     return (
-      <div className="w-full rounded-xl overflow-hidden" style={{ height: RENDER_HEIGHT }}>
+      <div className="w-full rounded-xl overflow-hidden" style={{ height: h }}>
         <iframe
           src={artifact.embed_url}
           sandbox="allow-scripts allow-same-origin allow-popups"
@@ -149,7 +159,7 @@ export default function Render3DCard({ artifact }: { artifact: Render3DArtifact 
     return (
       <div
         className="w-full flex items-center justify-center rounded-xl"
-        style={{ height: RENDER_HEIGHT, background: "#0a0b14" }}
+        style={{ height: h, background: "#0a0b14" }}
       >
         <div className="text-center">
           <Box className="w-5 h-5 mx-auto mb-2" style={{ color: "rgba(255,255,255,0.15)" }} />
@@ -165,7 +175,7 @@ export default function Render3DCard({ artifact }: { artifact: Render3DArtifact 
     return (
       <div
         className="w-full flex items-center justify-center rounded-xl"
-        style={{ height: RENDER_HEIGHT, background: "#0c0d15" }}
+        style={{ height: h, background: "#0c0d15" }}
       >
         <div className="text-center max-w-xs px-4">
           <div className="text-red-400 text-sm font-medium mb-2">Render Error</div>
@@ -178,7 +188,7 @@ export default function Render3DCard({ artifact }: { artifact: Render3DArtifact 
   }
 
   return (
-    <div className="w-full rounded-xl overflow-hidden" style={{ height: RENDER_HEIGHT }}>
+    <div className="w-full rounded-xl overflow-hidden" style={{ height: h }}>
       <iframe
         ref={iframeRef}
         srcDoc={buildSrcdoc(artifact)}

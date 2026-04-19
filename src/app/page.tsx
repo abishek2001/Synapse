@@ -12,7 +12,7 @@ export default function Home() {
       <div className="fixed inset-0 grid-bg pointer-events-none" />
 
       {/* Hero */}
-      <main className="relative flex-1 flex flex-col items-center justify-center px-6 pt-20">
+      <main className="relative flex-1 flex flex-col items-center justify-center px-4 sm:px-6 pt-20 pb-12">
         <HeroTitle />
         <div className="mt-10 w-full">
           <InputBar />

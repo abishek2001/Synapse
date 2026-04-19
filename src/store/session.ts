@@ -1,6 +1,20 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { SceneConfig } from "@/lib/scene-types";
+import type { ErrorCode } from "@/lib/agents/error-classify";
+
+/** Recoverable chat-turn failure surfaced to the UI as a side banner with a
+ *  Retry button (instead of injecting a generic "something went wrong" tutor
+ *  message into the transcript). Cleared automatically when the next turn
+ *  starts so a successful retry makes the banner disappear. */
+export interface ChatError {
+  code: ErrorCode;
+  message: string;
+  /** The user prompt that should be re-sent when the user clicks Retry. */
+  retryPrompt: string;
+  retryAfterMs?: number;
+  timestamp: number;
+}
 
 export interface UploadedFile {
   name: string;
@@ -19,6 +33,10 @@ export interface Message {
   role: "tutor" | "user" | "system";
   content: string;
   timestamp: number;
+  /** TTS-friendly version of `content` — what the AI would say aloud (no markdown/equations). */
+  spokenText?: string;
+  /** ElevenLabs voice ID used the last time this message was spoken, for replay parity. */
+  voice?: string;
 }
 
 interface SessionState {
@@ -33,6 +51,10 @@ interface SessionState {
 
   messages: Message[];
   isStreaming: boolean;
+  /** Latest recoverable chat error (rate limit / model timeout). When set, the
+   *  workspace renders a small side banner with Retry instead of dropping a
+   *  generic apology message in the tutor bubble. `null` means no error. */
+  chatError: ChatError | null;
 
   sceneConfig: SceneConfig | null;
 
@@ -48,6 +70,8 @@ interface SessionState {
   liveCaption: string;
   followUpQuestions: string[];
   speakReady: boolean; // explanation is ready but TTS hasn't auto-played — user clicks Speak
+  /** ID of the message currently being played by TTS (null = nothing playing). Drives every speaker button's play/stop state. */
+  playingMessageId: string | null;
 
   docHeadings: string[];
 
@@ -61,6 +85,7 @@ interface SessionState {
   setCanvasTitle: (title: string) => void;
   addMessage: (msg: Message) => void;
   setStreaming: (v: boolean) => void;
+  setChatError: (err: ChatError | null) => void;
   setSceneConfig: (config: SceneConfig | null) => void;
   setSpeaking: (v: boolean) => void;
   setListening: (v: boolean) => void;
@@ -73,6 +98,10 @@ interface SessionState {
   setLiveCaption: (text: string) => void;
   setFollowUpQuestions: (questions: string[]) => void;
   setSpeakReady: (v: boolean) => void;
+  setPlayingMessageId: (id: string | null) => void;
+  setPersona: (persona: string) => void;
+  /** Patch fields on an existing message (used to attach spokenText / voice after-the-fact). */
+  updateMessage: (id: string, patch: Partial<Omit<Message, "id">>) => void;
   moduleQueue: string[];
   setModuleQueue: (queue: string[]) => void;
   shiftModuleQueue: () => void;
@@ -90,6 +119,7 @@ const initialState = {
   canvasTitle: null as string | null,
   messages: [] as Message[],
   isStreaming: false,
+  chatError: null as ChatError | null,
   sceneConfig: null as SceneConfig | null,
   isSpeaking: false,
   isListening: false,
@@ -102,6 +132,7 @@ const initialState = {
   liveCaption: "",
   followUpQuestions: [] as string[],
   speakReady: false,
+  playingMessageId: null as string | null,
   docHeadings: [] as string[],
   moduleQueue: [] as string[],
   learningMode: null as "guided" | "auto" | null,
@@ -127,6 +158,7 @@ export const useSessionStore = create<SessionState>()(
       followUpQuestions: [],
       moduleQueue: [],
       learningMode: null,
+      chatError: null,
       showSources: files.length > 0 || urls.length > 0,
     }),
 
@@ -151,6 +183,7 @@ export const useSessionStore = create<SessionState>()(
     }),
 
   setStreaming: (isStreaming) => set({ isStreaming }),
+  setChatError: (chatError) => set({ chatError }),
   setSceneConfig: (sceneConfig) => set({ sceneConfig }),
   setSpeaking: (isSpeaking) => set({ isSpeaking }),
   setListening: (isListening) => set({ isListening }),
@@ -163,6 +196,12 @@ export const useSessionStore = create<SessionState>()(
   setLiveCaption: (liveCaption) => set({ liveCaption }),
   setFollowUpQuestions: (followUpQuestions) => set({ followUpQuestions }),
   setSpeakReady: (speakReady) => set({ speakReady }),
+  setPlayingMessageId: (playingMessageId) => set({ playingMessageId }),
+  setPersona: (persona) => set({ persona }),
+  updateMessage: (id, patch) =>
+    set((s) => ({
+      messages: s.messages.map((m) => (m.id === id ? { ...m, ...patch } : m)),
+    })),
   setDocHeadings: (docHeadings) => set({ docHeadings }),
   setModuleQueue: (moduleQueue) => set({ moduleQueue }),
   shiftModuleQueue: () => set((s) => ({ moduleQueue: s.moduleQueue.slice(1) })),

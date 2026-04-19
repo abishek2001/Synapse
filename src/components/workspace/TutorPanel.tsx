@@ -57,7 +57,7 @@ export default function TutorPanel() {
     setPendingVoiceText,
   } = useSessionStore();
 
-  const { addModule, addElement, addToast, updateToast, removeToast, elements } = useCanvasStore();
+  const { addModule, addElement, addUpdate, elements } = useCanvasStore();
   const { studyPlan, sessionContext, updateContext } = useGroundingStore();
 
   const [input, setInput] = useState("");
@@ -112,27 +112,24 @@ export default function TutorPanel() {
       if (artifacts.length === 0) return;
 
       const types = [...new Set(artifacts.map((a) => a.type))];
-      const toastId = `toast-${Date.now()}`;
+      const turnId = `turn-${Date.now()}`;
       const label = types.map((t) => TOAST_LABELS[t] || t).join(" & ");
-      addToast({
-        id: toastId,
-        artifactType: types[0],
+      addUpdate({
+        id: `upd-prep-${turnId}`,
+        type: "artifact_generating",
         title: `Preparing ${label}`,
-        status: "preparing",
+        detail: `${artifacts.length} artifact${artifacts.length !== 1 ? "s" : ""}`,
+        timestamp: Date.now(),
       });
 
       await new Promise((r) => setTimeout(r, 800));
-      updateToast(toastId, "adding");
 
       await new Promise((r) => setTimeout(r, 600));
       const moduleTitle =
         userQuery.length > 50 ? userQuery.slice(0, 50) + "..." : userQuery;
       addModule(moduleTitle, artifacts);
-
-      updateToast(toastId, "done");
-      setTimeout(() => removeToast(toastId), 1500);
     },
-    [addModule, addToast, updateToast, removeToast],
+    [addModule, addUpdate],
   );
 
   const sendMessage = useCallback(

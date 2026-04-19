@@ -300,22 +300,26 @@ async function speakKokoro(
   sentences: string[],
   onEnd: () => void,
   onWordBoundary?: (word: string) => void,
+  onSentence?: (sentence: string, index: number) => void,
+  voice: string = "af_heart",
 ): Promise<void> {
   const tts = await loadKokoro();
+  const startIndex = sentences.length === 0 ? 0 : 0;
 
-  async function playNext(remaining: string[]): Promise<void> {
+  async function playNext(remaining: string[], idx: number): Promise<void> {
     if (!activeFlag || remaining.length === 0) {
       onEnd();
       return;
     }
 
     const sentence = remaining[0];
+    onSentence?.(sentence, idx);
     let audio: any;
     try {
-      audio = await tts.generate(sentence, { voice: "af_heart" });
+      audio = await tts.generate(sentence, { voice });
     } catch {
       // Generation failed — skip sentence, keep going
-      return playNext(remaining.slice(1));
+      return playNext(remaining.slice(1), idx + 1);
     }
 
     if (!activeFlag) { onEnd(); return; }
@@ -347,13 +351,13 @@ async function speakKokoro(
       kokoroCtx?.close();
       kokoroCtx = null;
       kokoroSource = null;
-      playNext(remaining.slice(1));
+      playNext(remaining.slice(1), idx + 1);
     };
 
     kokoroSource.start();
   }
 
-  await playNext(sentences);
+  await playNext(sentences, startIndex);
 }
 
 // ── Web Speech fallback ───────────────────────
@@ -374,9 +378,11 @@ function speakWebSpeech(
   sentences: string[],
   onEnd: () => void,
   onWordBoundary?: (word: string) => void,
+  onSentence?: (sentence: string, index: number) => void,
 ): void {
   const synth = window.speechSynthesis;
   sentenceQueue = [...sentences];
+  let sentenceIdx = 0;
 
   function speakNext() {
     if (!activeFlag || sentenceQueue.length === 0) {
@@ -386,6 +392,7 @@ function speakWebSpeech(
     }
 
     const sentence = sentenceQueue.shift()!;
+    const thisIdx = sentenceIdx++;
     const utt = new SpeechSynthesisUtterance(sentence);
     utt.lang = "en-US";
     utt.rate = 1;
@@ -394,6 +401,10 @@ function speakWebSpeech(
 
     const voice = pickVoice(synth);
     if (voice) utt.voice = voice;
+
+    utt.onstart = () => {
+      onSentence?.(sentence, thisIdx);
+    };
 
     if (onWordBoundary) {
       utt.onboundary = (event: SpeechSynthesisEvent) => {
@@ -429,9 +440,14 @@ function speakWebSpeech(
 // ── Public API ────────────────────────────────
 
 export interface SpeakOptions {
-  persona?: string;        // ElevenLabs voice mapping
+  /** Persona key — resolves to an ElevenLabs voice via PERSONA_VOICES. Ignored if `voiceId` is set. */
+  persona?: string;
+  /** Explicit ElevenLabs voice ID — overrides persona-based mapping. */
+  voiceId?: string;
   onEnd?: () => void;
   onWordBoundary?: (word: string) => void;
+  /** Fires once per sentence when that sentence starts speaking — used for sentence-level captions. */
+  onSentence?: (sentence: string, index: number) => void;
 }
 
 /**
@@ -480,11 +496,11 @@ export function speak(
     if (!activeFlag) { handleEnd(); return; }
     const kokoro = getKokoroSync();
     if (kokoro) {
-      speakKokoro(sentences, handleEnd, opts.onWordBoundary).catch(() => {
-        speakWebSpeech(sentences, handleEnd, opts.onWordBoundary);
+      speakKokoro(sentences, handleEnd, opts.onWordBoundary, opts.onSentence).catch(() => {
+        speakWebSpeech(sentences, handleEnd, opts.onWordBoundary, opts.onSentence);
       });
     } else {
-      speakWebSpeech(sentences, handleEnd, opts.onWordBoundary);
+      speakWebSpeech(sentences, handleEnd, opts.onWordBoundary, opts.onSentence);
       loadKokoro().catch(() => {});
     }
   };
@@ -493,7 +509,9 @@ export function speak(
   if (!knownElevenLabsUnavailable()) {
     speakElevenLabs(clean, {
       persona: opts.persona,
+      voiceId: opts.voiceId,
       onWordBoundary: opts.onWordBoundary,
+      onSentence: opts.onSentence,
       onEnd: handleEnd,
     }).then((ok) => {
       if (!ok && activeFlag) fallbackChain();

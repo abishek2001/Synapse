@@ -5,7 +5,8 @@ import { Check, Circle, ChevronRight, Minus, Maximize2 } from "lucide-react";
 import { useGroundingStore } from "@/store/grounding";
 import { useSessionStore } from "@/store/session";
 import { useUIStore, type ModuleTimelineDock } from "@/store/ui";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useViewport } from "@/hooks/useViewport";
 
 /**
  * Floating timeline of study-plan modules with the current step highlighted.
@@ -25,17 +26,20 @@ export default function ModuleTimeline() {
   const minimized = useUIStore((s) => s.moduleTimelineMinimized);
   const setDock = useUIStore((s) => s.setModuleTimelineDock);
   const setMinimized = useUIStore((s) => s.setModuleTimelineMinimized);
-  const setModuleTimelineExpanded = useUIStore((s) => s.setModuleTimelineExpanded);
 
   const [hovered, setHovered] = useState(false);
+  const { isCompact } = useViewport();
+  const compactInitRef = useRef(false);
 
-  // Only top-center actually overlaps with the canvas toast container — that's
-  // the one case we need to push the toasts down for.
+  // First time we hit a compact viewport, collapse the timeline to its
+  // progress ring so it doesn't dominate the navbar. Users can re-open by
+  // clicking; we don't keep forcing it.
   useEffect(() => {
-    setModuleTimelineExpanded(hovered && dock === "tc" && !minimized);
-  }, [hovered, dock, minimized, setModuleTimelineExpanded]);
-
-  useEffect(() => () => setModuleTimelineExpanded(false), [setModuleTimelineExpanded]);
+    if (isCompact && !compactInitRef.current && !minimized) {
+      compactInitRef.current = true;
+      setMinimized(true);
+    }
+  }, [isCompact, minimized, setMinimized]);
 
   if (!studyPlan || studyPlan.modules.length === 0) return null;
 
@@ -98,8 +102,9 @@ export default function ModuleTimeline() {
 
               <ChevronRight className="w-3 h-3 flex-shrink-0 opacity-40" />
 
-              {/* Step dots */}
-              <div className="flex items-center gap-1 flex-shrink-0">
+              {/* Step dots — hidden on compact viewports (where the pill is
+                  already tight) to keep the title from being truncated. */}
+              <div className={`items-center gap-1 flex-shrink-0 ${isCompact ? "hidden" : "flex"}`}>
                 {studyPlan.modules.map((m, i) => {
                   const status = i < completed ? "done" : i === completed ? "active" : "pending";
                   return (

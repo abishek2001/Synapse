@@ -1,20 +1,43 @@
 "use client";
 
-import { estimateElemH, type CanvasGroup, type CanvasElement } from "@/store/canvas";
+import {
+  estimateElemH,
+  visualCounterScale,
+  type CanvasGroup,
+  type CanvasElement,
+} from "@/store/canvas";
 import { useUIStore } from "@/store/ui";
 
+// Padding values are in screen pixels at 1× zoom. They get counter-scaled by
+// the same factor as the artifacts inside, so once the canvas zooms past
+// `VISUAL_SCALE_CAP` (artifacts stop growing) the padding shrinks in world
+// coords proportionally and the on-screen padding stays a constant ~20px.
+// Without this, zooming in past the cap kept inflating the violet wrapper
+// while the content inside stayed the same size — the "huge box around
+// frozen content" bug from the screenshots.
 const PAD_X = 20;
 const PAD_TOP = 52;
 const PAD_BOTTOM = 20;
 
 /** Visual world-space right/bottom edges of an element, accounting for counter-scale. */
 function visualEdges(el: CanvasElement, canvasScale: number): { right: number; bottom: number } {
-  const birthScale = el.birthScale ?? 1;
-  const counterScale = canvasScale > birthScale ? birthScale / canvasScale : 1;
+  const counterScale = visualCounterScale(canvasScale, el.birthScale ?? 1);
   return {
     right:  el.x + el.w * counterScale,
     bottom: el.y + (el.h ?? estimateElemH(el.type)) * counterScale,
   };
+}
+
+/** Counter-scale applied to the boundary's padding so it shrinks in world
+ *  coords once artifacts have hit their visual cap. Uses the smallest member's
+ *  birthScale (= the largest counter-scale) so the padding never lags behind
+ *  the content. */
+function paddingCounterScale(elements: CanvasElement[], canvasScale: number): number {
+  let cs = 1;
+  for (const el of elements) {
+    cs = Math.min(cs, visualCounterScale(canvasScale, el.birthScale ?? 1));
+  }
+  return cs;
 }
 
 interface Props {
@@ -39,10 +62,15 @@ export default function GroupBoundary({ group, elements, hasSelectedMember, isHo
     maxY = Math.max(maxY, bottom);
   }
 
-  const x = minX - PAD_X;
-  const y = minY - PAD_TOP;
-  const w = maxX - minX + PAD_X * 2;
-  const h = maxY - minY + PAD_TOP + PAD_BOTTOM;
+  const padCS = paddingCounterScale(elements, canvasScale);
+  const padX = PAD_X * padCS;
+  const padTop = PAD_TOP * padCS;
+  const padBottom = PAD_BOTTOM * padCS;
+
+  const x = minX - padX;
+  const y = minY - padTop;
+  const w = maxX - minX + padX * 2;
+  const h = maxY - minY + padTop + padBottom;
 
   // Counter-scale label font so it stays at natural size regardless of zoom,
   // matching the same logic ElementCard applies to artifact content.
@@ -63,14 +91,22 @@ export default function GroupBoundary({ group, elements, hasSelectedMember, isHo
 
   const labelText = darkMode ? "rgba(255,255,255,0.55)" : "rgba(0,0,0,0.45)";
 
+  // Border radius + thickness live inside the world-space transform, so
+  // they'd visually balloon at high zoom without counter-scaling. `padCS`
+  // returns 1 below the cap (design values render as-is) and `cap/canvasScale`
+  // above (radius / thickness shrink in world coords so the on-screen size
+  // stays proportional to the frozen padding).
+  const renderedRadius = 28 * padCS;
+  const renderedBorder = 1.5 * padCS;
+
   return (
     <div
       className="absolute pointer-events-none select-none"
       style={{
         left: x, top: y, width: w, height: h,
         backgroundColor: bgColor,
-        borderRadius: 28,
-        border: `1.5px solid ${borderColor}`,
+        borderRadius: renderedRadius,
+        border: `${renderedBorder}px solid ${borderColor}`,
         zIndex: 0,
         transition: "border-color 0.15s",
       }}
@@ -124,10 +160,15 @@ export function PendingGroupBoundary({
     maxY = Math.max(maxY, bottom);
   }
 
-  const x = minX - PAD_X;
-  const y = minY - PAD_TOP;
-  const w = maxX - minX + PAD_X * 2;
-  const h = maxY - minY + PAD_TOP + PAD_BOTTOM;
+  const padCS = paddingCounterScale(elements, canvasScale);
+  const padX = PAD_X * padCS;
+  const padTop = PAD_TOP * padCS;
+  const padBottom = PAD_BOTTOM * padCS;
+
+  const x = minX - padX;
+  const y = minY - padTop;
+  const w = maxX - minX + padX * 2;
+  const h = maxY - minY + padTop + padBottom;
 
   const labelCounterScale = canvasScale > 1 ? 1 / canvasScale : 1;
   const labelFontSize = 13 * labelCounterScale;
@@ -140,8 +181,8 @@ export function PendingGroupBoundary({
       style={{
         left: x, top: y, width: w, height: h,
         backgroundColor: darkMode ? "rgba(124,58,237,0.04)" : "rgba(124,58,237,0.025)",
-        borderRadius: 28,
-        border: `1.5px dashed ${darkMode ? "rgba(167,139,250,0.5)" : "rgba(124,58,237,0.4)"}`,
+        borderRadius: 28 * padCS,
+        border: `${1.5 * padCS}px dashed ${darkMode ? "rgba(167,139,250,0.5)" : "rgba(124,58,237,0.4)"}`,
         zIndex: 0,
       }}
     >
@@ -197,10 +238,15 @@ export function computeGroupBounds(groupId: string, elements: CanvasElement[], c
     maxY = Math.max(maxY, bottom);
   }
 
+  const padCS = paddingCounterScale(members, canvasScale);
+  const padX = PAD_X * padCS;
+  const padTop = PAD_TOP * padCS;
+  const padBottom = PAD_BOTTOM * padCS;
+
   return {
-    x: minX - PAD_X,
-    y: minY - PAD_TOP,
-    w: maxX - minX + PAD_X * 2,
-    h: maxY - minY + PAD_TOP + PAD_BOTTOM + 10,
+    x: minX - padX,
+    y: minY - padTop,
+    w: maxX - minX + padX * 2,
+    h: maxY - minY + padTop + padBottom + 10,
   };
 }

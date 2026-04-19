@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, X, FileText, Check, Mic, MicOff, ChevronDown, Upload, Link } from "lucide-react";
+import { Plus, X, FileText, Check, Mic, MicOff, ChevronDown, Upload, Link, ArrowRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSessionStore, type UploadedFile } from "@/store/session";
 import { useCanvasStore } from "@/store/canvas";
@@ -82,7 +82,7 @@ export default function InputBar() {
   const urlDetected = isLikelyUrl(query);
 
   return (
-    <div className="w-full max-w-2xl mx-auto">
+    <div className="w-full max-w-2xl mx-auto px-3 sm:px-0">
       <div className="relative bg-white rounded-2xl shadow-[0_2px_20px_rgba(0,0,0,0.08),0_0_0_1px_rgba(0,0,0,0.06)] overflow-hidden transition-shadow focus-within:shadow-[0_4px_28px_rgba(124,58,237,0.12),0_0_0_1px_rgba(124,58,237,0.2)]">
 
         {/* Main input row */}
@@ -119,13 +119,16 @@ export default function InputBar() {
             </button>
           )}
 
-          {/* Enter button */}
+          {/* Enter button — shrinks to a circular arrow on mobile so the
+              input row stays single-line at any width. */}
           <button
             onClick={handleEnter}
             disabled={!query.trim()}
-            className="flex-shrink-0 px-4 h-8 bg-violet-600 hover:bg-violet-700 disabled:opacity-30 rounded-xl text-[12px] font-semibold text-white transition-all"
+            title="Enter Synapse"
+            className="flex-shrink-0 h-8 w-8 sm:w-auto sm:px-4 bg-violet-600 hover:bg-violet-700 disabled:opacity-30 rounded-full sm:rounded-xl text-[12px] font-semibold text-white transition-all flex items-center justify-center"
           >
-            Enter Synapse
+            <ArrowRight className="w-3.5 h-3.5 sm:hidden" />
+            <span className="hidden sm:inline">Enter Synapse</span>
           </button>
         </div>
 

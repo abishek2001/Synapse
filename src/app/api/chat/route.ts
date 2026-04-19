@@ -3,6 +3,7 @@ import { runOrchestrator } from "@/lib/agents/orchestrator";
 import type { AgentMessage, StreamEvent } from "@/lib/agents/types";
 import type { SessionContext } from "@/lib/grounding/session-context";
 import type { StudyPlan } from "@/lib/grounding/study-plan";
+import { classifyError } from "@/lib/agents/error-classify";
 
 export const runtime = "nodejs";
 
@@ -110,9 +111,14 @@ export async function POST(req: NextRequest) {
         if (isAbort) {
           console.log(`[chat:${reqId}] aborted cleanly`);
         } else {
-          const message = err instanceof Error ? err.message : "Unknown error";
-          console.error(`[chat:${reqId}] ✖ error:`, message);
-          emit({ type: "error", message });
+          const classified = classifyError(err);
+          console.error(`[chat:${reqId}] ✖ error [${classified.code}]:`, classified.message);
+          emit({
+            type: "error",
+            message: classified.message,
+            code: classified.code,
+            retryAfterMs: classified.retryAfterMs,
+          });
         }
       } finally {
         safeClose();

@@ -290,17 +290,17 @@ BAD: "A heart." / "Some physics."`,
     function: {
       name: "canvas_generate_diagram",
       description:
-        "Generate an interactive node-edge diagram on the canvas. Each node is a separate interactive element with hover highlighting. Use this INSTEAD of canvas_generate_visual when the content has clearly defined entities and relationships: architecture diagrams, flowcharts, neural networks, process flows, state machines, concept maps with explicit connections, system hierarchies, data pipelines. Do NOT use for free-form sketches or when spatial layout isn't node-based.",
+        "Generate an interactive node-edge diagram on the canvas. Each node is a separate interactive element with hover highlighting. Use this INSTEAD of canvas_generate_visual when the content has clearly defined entities and relationships: architecture diagrams, flowcharts, neural networks, process flows, state machines, concept maps with explicit connections, system hierarchies, data pipelines. Do NOT use for free-form sketches or when spatial layout isn't node-based.\n\nTEXT BUDGET (STRICT — the renderer is a fixed-width SVG, not a paragraph layout):\n- node.label: ≤ 28 characters. A name, not a sentence. Good: 'Geocentric model', 'Input layer', 'Heliocentric'. Bad: 'Tycho's observations → Kepler's laws of planetary motion'.\n- node.description: ≤ 32 characters. A short chip like '784 neurons', '2.4 GHz', 'Sun at center'. NEVER a sentence — no commas separating clauses, no ';', no 'and'. If you have prose to convey, omit the description and let the label stand alone, or split it into more nodes.\n- edge.label: ≤ 16 characters. Examples: 'Yes', 'No', 'activates', 'inherits'.\n\nIf the topic genuinely needs sentence-length explanation per node, use canvas_generate_visual (free-form SVG) instead.",
       parameters: {
         type: "object",
         properties: {
           title: {
             type: "string",
-            description: "Short title for the diagram",
+            description: "Short title for the diagram (≤ 60 chars)",
           },
           nodes: {
             type: "array",
-            description: "List of nodes in the diagram",
+            description: "List of nodes in the diagram (typically 3–8). More than 8 usually means you should split into multiple diagrams.",
             items: {
               type: "object",
               properties: {
@@ -310,11 +310,11 @@ BAD: "A heart." / "Some physics."`,
                 },
                 label: {
                   type: "string",
-                  description: "Display text shown inside the node",
+                  description: "Display text shown inside the node. ≤ 28 characters. A NAME, not a sentence. Good: 'Geocentric model', 'Input layer'. Bad: 'Tycho's observations → Kepler's laws'.",
                 },
                 description: {
                   type: "string",
-                  description: "Optional subtitle shown below the label (e.g. '784 neurons', '2.4 GHz')",
+                  description: "Optional short chip below the label. ≤ 32 characters. Examples: '784 neurons', '2.4 GHz', 'Sun at center'. NEVER a sentence — no commas joining clauses, no ';', no 'and'. Omit if you can't express it this tersely.",
                 },
                 color: {
                   type: "string",
@@ -339,7 +339,7 @@ BAD: "A heart." / "Some physics."`,
                 to: { type: "string", description: "Target node id" },
                 label: {
                   type: "string",
-                  description: "Optional label shown on the edge (e.g. 'Yes', 'No', 'activates')",
+                  description: "Optional edge label. ≤ 16 characters. Examples: 'Yes', 'No', 'activates', 'inherits'.",
                 },
               },
               required: ["from", "to"],

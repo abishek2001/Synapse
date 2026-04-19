@@ -31,6 +31,26 @@ export const PERSONA_VOICES: Record<string, string> = {
   philosopher: "onwK4e9ZLuTAKqWW03F9",
 };
 
+/**
+ * Friendly metadata for the voice picker UI. Order here is the order shown
+ * in the popover. `personaKey` maps back to `PERSONA_VOICES` and
+ * `useSessionStore.persona`.
+ */
+export interface VoiceOption {
+  personaKey: string;
+  voiceId: string;
+  label: string;
+  blurb: string;
+}
+
+export const VOICE_OPTIONS: VoiceOption[] = [
+  { personaKey: "professor",   voiceId: PERSONA_VOICES.professor,   label: "Professor",   blurb: "Warm & scholarly" },
+  { personaKey: "engineer",    voiceId: PERSONA_VOICES.engineer,    label: "Engineer",    blurb: "Clear & methodical" },
+  { personaKey: "friend",      voiceId: PERSONA_VOICES.friend,      label: "Friend",      blurb: "Casual & relatable" },
+  { personaKey: "explorer",    voiceId: PERSONA_VOICES.explorer,    label: "Explorer",    blurb: "Curious & energetic" },
+  { personaKey: "philosopher", voiceId: PERSONA_VOICES.philosopher, label: "Philosopher", blurb: "Deep & contemplative" },
+];
+
 export const DEFAULT_VOICE_ID = PERSONA_VOICES.professor;
 
 export function isElevenLabsConfigured(): boolean {

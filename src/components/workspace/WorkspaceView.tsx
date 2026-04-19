@@ -8,6 +8,7 @@ import ArtifactCanvas, { type ArtifactCanvasHandle } from "./ArtifactCanvas";
 import SourcesPanel from "./SourcesPanel";
 import CallFriendModal from "./CallFriendModal";
 import CanvasInputBar from "./CanvasInputBar";
+import ChatErrorBanner from "./ChatErrorBanner";
 import LeftSidebar from "./LeftSidebar";
 import RightSidebar from "./RightSidebar";
 import MockButton from "./MockButton";
@@ -24,6 +25,7 @@ import { useUIStore } from "@/store/ui";
 import { useCanvasStore } from "@/store/canvas";
 import { createSessionContext } from "@/lib/grounding/session-context";
 import { preloadKokoro } from "@/lib/voice/kokoro";
+import { useViewport } from "@/hooks/useViewport";
 
 export default function WorkspaceView() {
   const router = useRouter();
@@ -48,8 +50,22 @@ export default function WorkspaceView() {
   } = useSessionStore();
 
   const { setStudyPlan, setSessionContext, setRetrievalIndexed } = useGroundingStore();
+  const studyPlanTopic = useGroundingStore((s) => s.studyPlan?.topic ?? null);
   const { darkMode, leftSidebarOpen, setLeftSidebarOpen, rightSidebarOpen, setRightSidebarOpen } = useUIStore();
   const { addUpdate } = useCanvasStore();
+  const { isCompact } = useViewport();
+  const compactInitRef = useRef(false);
+
+  // First time we detect a compact viewport, force-collapse both sidebars so
+  // the canvas isn't squeezed. We only do this once per mount so the user can
+  // re-open them manually after.
+  useEffect(() => {
+    if (isCompact && !compactInitRef.current) {
+      compactInitRef.current = true;
+      if (leftSidebarOpen)  setLeftSidebarOpen(false);
+      if (rightSidebarOpen) setRightSidebarOpen(false);
+    }
+  }, [isCompact, leftSidebarOpen, rightSidebarOpen, setLeftSidebarOpen, setRightSidebarOpen]);
 
   /* ── Canvas intro text (written on board after bridge) ── */
   const [introText] = useState("");
@@ -280,6 +296,11 @@ export default function WorkspaceView() {
               setStudyPlan(d.plan);
               setSessionContext(createSessionContext(d.plan.totalModules));
               addLog(`Study plan: ${d.plan.totalModules} modules, ~${d.plan.estimatedMinutes} min`, "success");
+              // Use the study plan's topic as the canvas title unless one was
+              // already extracted from uploaded documents.
+              if (d.plan.topic && !useSessionStore.getState().canvasTitle) {
+                setCanvasTitle(d.plan.topic);
+              }
             }
           }
         }).catch(() => {
@@ -362,7 +383,7 @@ export default function WorkspaceView() {
   }, [showBridge, files, documents, setDocuments]);
 
   const displayQuery = query;
-  const displayTitle = canvasTitle || displayQuery;
+  const displayTitle = canvasTitle || studyPlanTopic || displayQuery;
 
   return (
     <>
@@ -392,7 +413,7 @@ export default function WorkspaceView() {
           >
             {/* Navbar */}
             <WorkspaceNavbar
-              title={displayQuery}
+              title={displayTitle}
               onCallFriend={() => setShowCallFriend(true)}
               hasFiles={files.length > 0}
               showSources={showSources}
@@ -401,13 +422,16 @@ export default function WorkspaceView() {
               sidebarOpen={leftSidebarOpen}
             />
 
-            {/* Main area: sidebar + canvas */}
+            {/* Main area: sidebar + canvas. On compact viewports both sidebars
+                render as floating overlay drawers (positioned absolutely
+                inside this container) instead of pushing the canvas. */}
             <div className="flex-1 flex min-h-0 relative">
               {/* Left sidebar — Table of Contents */}
               <LeftSidebar
                 open={leftSidebarOpen}
                 onToggle={() => setLeftSidebarOpen(!leftSidebarOpen)}
                 onZoomToGroup={(groupId) => artifactCanvasRef.current?.zoomToGroup(groupId)}
+                overlay={isCompact}
               />
 
               {/* Canvas area */}
@@ -419,7 +443,7 @@ export default function WorkspaceView() {
 
                 {/* Sources panel (floating, top-right) */}
                 {showSources && files.length > 0 && (
-                  <div className="absolute top-3 right-3 z-30 pointer-events-auto">
+                  <div className="absolute top-3 right-3 z-30 pointer-events-auto max-w-[92vw]">
                     <SourcesPanel files={files} onClose={() => setShowSources(false)} />
                   </div>
                 )}
@@ -432,12 +456,18 @@ export default function WorkspaceView() {
 
                 {/* Canvas input bar */}
                 <CanvasInputBar />
+
+                {/* Recoverable chat-error banner (rate limit / model timeout)
+                    — sits above the canvas tools, replaces the old "something
+                    went wrong" tutor message for these specific failures. */}
+                <ChatErrorBanner />
               </div>
 
               {/* Right sidebar — Transcript & Updates */}
               <RightSidebar
                 open={rightSidebarOpen}
                 onToggle={() => setRightSidebarOpen(!rightSidebarOpen)}
+                overlay={isCompact}
               />
             </div>
 

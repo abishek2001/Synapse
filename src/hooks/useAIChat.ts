@@ -6,7 +6,8 @@ import { useCanvasStore, ELEM_WIDTHS, type CanvasElement } from "@/store/canvas"
 import { useGroundingStore } from "@/store/grounding";
 import type { StreamEvent } from "@/lib/agents/types";
 import type { CanvasArtifact } from "@/lib/tools/types";
-import { speak, stopSpeaking } from "@/lib/voice/speech";
+import { usePlayback } from "@/hooks/usePlayback";
+import { classifyError } from "@/lib/agents/error-classify";
 
 // ── Canvas context serializer ──────────────────────────────────────────────
 
@@ -16,6 +17,24 @@ function serializeCanvasContext(elements: CanvasElement[]): string {
   return artifacts
     .map((e) => `- [${e.artifact!.type}] "${e.artifact!.title}"`)
     .join("\n");
+}
+
+// Friendly label for an artifact type — e.g. "render3d" → "3D scene".
+// Used by activity-feed entries so the user sees natural names instead of
+// raw schema identifiers leaking from the tool layer.
+function formatArtifactType(t: string): string {
+  switch (t) {
+    case "render3d":   return "3D scene";
+    case "simulation": return "simulation";
+    case "graph":      return "graph";
+    case "notation":   return "notation";
+    case "flashcard":  return "flashcard";
+    case "diagram":    return "diagram";
+    case "lookup":     return "lookup";
+    case "visual":     return "visual";
+    case "hierarchy":  return "hierarchy";
+    default:           return t;
+  }
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────
@@ -31,9 +50,9 @@ export function useAIChat() {
     isMuted,
     addMessage,
     setStreaming,
-    setSpeaking,
     setFollowUpQuestions,
     setSpeakReady,
+    setChatError,
   } = useSessionStore();
 
   const {
@@ -45,12 +64,11 @@ export function useAIChat() {
     addToPendingModule,
     setPendingModuleTitle,
     clearPendingModule,
-    addToast,
-    updateToast,
-    removeToast,
+    addUpdate,
     elements,
   } = useCanvasStore();
   const { sessionContext, studyPlan, applyPatch } = useGroundingStore();
+  const { playMessage, toggleMessage, stop: stopPlayback, playingMessageId } = usePlayback();
 
   // pendingId → canvas element id for skeleton resolution
   const pendingMap = useRef<Map<string, string>>(new Map());
@@ -71,13 +89,14 @@ export function useAIChat() {
     async (text: string) => {
       if (!text.trim() || isStreaming) return;
 
-      if (isSpeaking) {
-        stopSpeaking();
-        useSessionStore.getState().setSpeaking(false);
-      }
+      if (isSpeaking) stopPlayback();
 
       setFollowUpQuestions([]);
       setSpeakReady(false);
+      // Clear any prior recoverable error — if this turn succeeds the banner
+      // simply disappears; if it fails again the catch / error event below
+      // will repopulate it with the fresh details.
+      setChatError(null);
 
       addMessage({
         id: crypto.randomUUID(),
@@ -97,8 +116,17 @@ export function useAIChat() {
       questionsRef.current   = [];
       startPendingModule();
 
-      const toastId = `toast-${Date.now()}`;
-      addToast({ id: toastId, artifactType: "visual", title: "Thinking…", status: "preparing" });
+      // The activity-feed entry replaces what used to be the canvas "thinking"
+      // toast. The same id is reused as the per-turn correlator (no separate
+      // toastId is needed any more, but we keep the variable name for clarity).
+      const turnId = `turn-${Date.now()}`;
+      addUpdate({
+        id: `upd-thinking-${turnId}`,
+        type: "thinking",
+        title: "Thinking…",
+        detail: text.trim().length > 80 ? `${text.trim().slice(0, 80)}…` : text.trim(),
+        timestamp: Date.now(),
+      });
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -132,9 +160,19 @@ export function useAIChat() {
           }),
         });
 
-        if (!res.ok || !res.body) throw new Error(`API error ${res.status}`);
-
-        updateToast(toastId, "adding");
+        if (!res.ok || !res.body) {
+          // Try to surface the upstream error message (route emits JSON for
+          // pre-stream failures like missing API key) so the banner shows
+          // something useful instead of "API error 500".
+          let upstream = `API error ${res.status}`;
+          try {
+            const j = await res.clone().json();
+            if (j && typeof j.error === "string") upstream = j.error;
+          } catch { /* not JSON */ }
+          const httpErr = new Error(upstream) as Error & { status?: number };
+          httpErr.status = res.status;
+          throw httpErr;
+        }
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -149,7 +187,7 @@ export function useAIChat() {
           for (const chunk of chunks) {
             const data = chunk.startsWith("data: ") ? chunk.slice(6) : chunk;
             if (!data.trim()) continue;
-            try { handleStreamEvent(JSON.parse(data) as StreamEvent, text.trim(), toastId); }
+            try { handleStreamEvent(JSON.parse(data) as StreamEvent, text.trim()); }
             catch { /* malformed SSE line */ }
           }
         }
@@ -157,7 +195,7 @@ export function useAIChat() {
         // flush tail
         if (buffer.trim()) {
           const data = buffer.startsWith("data: ") ? buffer.slice(6) : buffer;
-          try { handleStreamEvent(JSON.parse(data) as StreamEvent, text.trim(), toastId); }
+          try { handleStreamEvent(JSON.parse(data) as StreamEvent, text.trim()); }
           catch { /* ignore */ }
         }
       } catch (err) {
@@ -167,7 +205,13 @@ export function useAIChat() {
             useCanvasStore.getState().removeElement(elId);
           }
           pendingMap.current.clear();
-          removeToast(toastId);
+          addUpdate({
+            id: `upd-stopped-${turnId}`,
+            type: "error",
+            title: "Stopped",
+            detail: "Turn cancelled by user",
+            timestamp: Date.now(),
+          });
           addMessage({
             id: crypto.randomUUID(),
             role: "tutor",
@@ -176,13 +220,38 @@ export function useAIChat() {
           });
         } else {
           console.error("SSE chat error:", err);
-          addMessage({
-            id: crypto.randomUUID(),
-            role: "tutor",
-            content: "Something went wrong. Let me try again…",
+          const classified = classifyError(err);
+          const recoverable =
+            classified.code === "rate_limit" || classified.code === "timeout";
+          addUpdate({
+            id: `upd-error-${turnId}`,
+            type: "error",
+            title:
+              classified.code === "rate_limit" ? "Rate limit reached"
+              : classified.code === "timeout"  ? "Model timed out"
+              : "Stream error",
+            detail: classified.message,
             timestamp: Date.now(),
           });
-          removeToast(toastId);
+          if (recoverable) {
+            // Surface as a side banner with Retry. Skip injecting the apology
+            // tutor message into the transcript so the latest-tutor bubble
+            // doesn't suddenly say "Something went wrong" for a transient blip.
+            setChatError({
+              code: classified.code,
+              message: classified.message,
+              retryPrompt: text.trim(),
+              retryAfterMs: classified.retryAfterMs,
+              timestamp: Date.now(),
+            });
+          } else {
+            addMessage({
+              id: crypto.randomUUID(),
+              role: "tutor",
+              content: "Something went wrong. Let me try again…",
+              timestamp: Date.now(),
+            });
+          }
         }
         clearPendingModule();
       } finally {
@@ -192,17 +261,17 @@ export function useAIChat() {
     },
     [
       isStreaming, isSpeaking, isMuted, messages, persona, files, documentContext,
-      addMessage, setStreaming, setSpeaking, setFollowUpQuestions, setSpeakReady,
+      addMessage, setStreaming, setFollowUpQuestions, setSpeakReady, setChatError, stopPlayback,
       addModule, addElement, addPendingElement, resolvePendingElement,
       startPendingModule, clearPendingModule,
-      addToast, updateToast, removeToast, elements, sessionContext, studyPlan, applyPatch,
+      addUpdate, elements, sessionContext, studyPlan, applyPatch,
     ],
   );
 
   // ── Event handler ─────────────────────────────────────────────────────────
 
   const handleStreamEvent = useCallback(
-    (event: StreamEvent, userQuery: string, toastId: string) => {
+    (event: StreamEvent, userQuery: string) => {
       switch (event.type) {
 
         case "thinking":
@@ -225,6 +294,13 @@ export function useAIChat() {
             createdAt: Date.now(),
           });
           addToPendingModule(elId);
+          addUpdate({
+            id: `upd-pending-${event.pendingId}`,
+            type: "artifact_generating",
+            title: `Generating ${formatArtifactType(event.artifactType)}`,
+            detail: event.title || "preparing artifact…",
+            timestamp: Date.now(),
+          });
           break;
         }
 
@@ -235,28 +311,34 @@ export function useAIChat() {
             pendingMap.current.delete(event.pendingId);
             import("@/lib/voice/sfx").then((m) => m.playSfx("artifact-added")).catch(() => {});
           }
+          addUpdate({
+            id: `upd-done-${event.pendingId}`,
+            type: "artifact_added",
+            title: `Drew ${formatArtifactType(event.artifact.type)}`,
+            detail: event.artifact.title || "added to canvas",
+            timestamp: Date.now(),
+          });
           break;
         }
 
         case "artifact_error": {
           // Tool execution failed (timeout, model error, etc.). Drop the skeleton
           // silently — earlier we substituted a fake "lookup" artifact server-side
-          // which leaked the raw tool name onto the canvas. A short toast is enough
-          // for the user to know something didn't render; logs have the full reason.
+          // which leaked the raw tool name onto the canvas. The activity feed
+          // surfaces the failure with the upstream reason for context.
           const elId = pendingMap.current.get(event.pendingId);
           if (elId) {
             useCanvasStore.getState().removeElement(elId);
             turnElementIdsRef.current.delete(elId);
             pendingMap.current.delete(event.pendingId);
           }
-          const errToastId = `toast-err-${event.pendingId}`;
-          addToast({
-            id: errToastId,
-            artifactType: event.artifactType,
-            title: `Couldn't render ${event.artifactType}`,
-            status: "done",
+          addUpdate({
+            id: `upd-err-${event.pendingId}`,
+            type: "error",
+            title: `Couldn't render ${formatArtifactType(event.artifactType)}`,
+            detail: event.reason || "tool execution failed",
+            timestamp: Date.now(),
           });
-          setTimeout(() => removeToast(errToastId), 3500);
           break;
         }
 
@@ -271,11 +353,16 @@ export function useAIChat() {
           // user sees what's being generated while artifacts continue to stream.
           if (event.moduleTitle) setPendingModuleTitle(event.moduleTitle);
 
-          // Add to transcript (writtenText)
+          // Add to transcript. We persist `spokenText` directly on the message
+          // so every speaker button (the bubble's, the input pill's, and the
+          // per-row buttons in the transcript sidebar) can replay it later
+          // without depending on a transient ref that gets overwritten on the
+          // next turn.
           addMessage({
             id: crypto.randomUUID(),
             role: "tutor",
             content: event.writtenText,
+            spokenText: event.spokenText || undefined,
             timestamp: Date.now(),
           });
 
@@ -356,20 +443,46 @@ export function useAIChat() {
 
           turnElementIdsRef.current.clear();
           clearPendingModule();
-          updateToast(toastId, "done");
-          setTimeout(() => removeToast(toastId), 1500);
+          // `addModule` already pushes a `module_added` activity-feed entry, so
+          // there's nothing extra to log here for the happy path.
           break;
         }
 
         case "error": {
           console.error("Stream error:", event.message);
-          addMessage({
-            id: crypto.randomUUID(),
-            role: "tutor",
-            content: "Something went wrong. Let me try again…",
+          // Re-classify on the client so older payloads (without `code`) still
+          // route to the right surface. Server-emitted `code` wins when set.
+          const classified = event.code
+            ? { code: event.code, message: event.message, retryAfterMs: event.retryAfterMs }
+            : classifyError(new Error(event.message || "Unknown"));
+          const recoverable =
+            classified.code === "rate_limit" || classified.code === "timeout";
+          addUpdate({
+            id: `upd-stream-error-${Date.now()}`,
+            type: "error",
+            title:
+              classified.code === "rate_limit" ? "Rate limit reached"
+              : classified.code === "timeout"  ? "Model timed out"
+              : "Stream error",
+            detail: event.message || "Unknown",
             timestamp: Date.now(),
           });
-          removeToast(toastId);
+          if (recoverable) {
+            setChatError({
+              code: classified.code,
+              message: classified.message || event.message || "Request failed",
+              retryPrompt: userQuery,
+              retryAfterMs: classified.retryAfterMs,
+              timestamp: Date.now(),
+            });
+          } else {
+            addMessage({
+              id: crypto.randomUUID(),
+              role: "tutor",
+              content: "Something went wrong. Let me try again…",
+              timestamp: Date.now(),
+            });
+          }
           clearPendingModule();
           break;
         }
@@ -378,24 +491,21 @@ export function useAIChat() {
     [
       addMessage, addPendingElement, resolvePendingElement, addModule,
       addToPendingModule, setPendingModuleTitle, clearPendingModule,
-      removeToast, updateToast, setFollowUpQuestions, setSpeakReady,
+      addUpdate, setFollowUpQuestions, setSpeakReady, setChatError,
       applyPatch, sessionContext, isMuted,
     ],
   );
 
-  // Called when user clicks Speak button
+  // Called when user clicks the speaker button on the latest tutor bubble or
+  // input pill. Always replays the latest tutor message (looked up at call
+  // time so it's in sync with whatever's currently on screen).
   const speakLatest = useCallback(() => {
-    const text = spokenTextRef.current;
-    if (!text) return;
-    setSpeakReady(false);
-    setSpeaking(true);
-    const { setLiveCaption, persona } = useSessionStore.getState();
-    speak(text, {
-      persona,
-      onEnd: () => { setSpeaking(false); setLiveCaption(""); },
-      onWordBoundary: (word) => setLiveCaption(word),
-    });
-  }, [setSpeaking, setSpeakReady]);
+    const latest = [...useSessionStore.getState().messages]
+      .reverse()
+      .find((m) => m.role === "tutor" && (m.spokenText || m.content));
+    if (!latest) return;
+    toggleMessage(latest);
+  }, [toggleMessage]);
 
   // Cancel the in-flight chat request. Server-side OpenAI calls receive the
   // aborted signal and short-circuit; client-side we tear down skeletons +
@@ -406,12 +516,20 @@ export function useAIChat() {
       abortRef.current = null;
     }
     if (isSpeaking) {
-      stopSpeaking();
-      setSpeaking(false);
+      stopPlayback();
     }
-  }, [isSpeaking, setSpeaking]);
+  }, [isSpeaking, stopPlayback]);
 
   const latestTutor = [...messages].reverse().find((m) => m.role === "tutor");
 
-  return { sendMessage, stop, speakLatest, isStreaming, latestTutor };
+  return {
+    sendMessage,
+    stop,
+    speakLatest,
+    playMessage,
+    toggleMessage,
+    playingMessageId,
+    isStreaming,
+    latestTutor,
+  };
 }

@@ -206,7 +206,6 @@ export function restoreArchivedSession(sessionId: string): boolean {
     connections: snap.connections,
     updates: snap.updates,
     strokes: [],
-    toasts: [],
     selectedElementIds: [],
     isMockMode: false,
   });

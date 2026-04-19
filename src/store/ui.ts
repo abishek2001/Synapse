@@ -29,9 +29,6 @@ interface UIState {
   /** Source string of the citation the user just clicked — drives TOC pulse/scroll. */
   highlightedSource: string | null;
   highlightedSourceTs: number;
-  /** Whether the top-center ModuleTimeline pill is currently expanded (hovered). Other
-   *  top-anchored overlays (canvas toasts) read this and shift down to avoid overlap. */
-  moduleTimelineExpanded: boolean;
   /** Where the ModuleTimeline floats. One of six anchor positions. Persisted to localStorage. */
   moduleTimelineDock: ModuleTimelineDock;
   /** Whether the timeline is collapsed to a small circle (only the progress ring is visible). */
@@ -49,7 +46,6 @@ interface UIState {
   setCanvasScale: (v: number) => void;
   highlightSource: (source: string) => void;
   clearHighlightedSource: () => void;
-  setModuleTimelineExpanded: (v: boolean) => void;
   setModuleTimelineDock: (dock: ModuleTimelineDock) => void;
   setModuleTimelineMinimized: (v: boolean) => void;
 }
@@ -65,7 +61,6 @@ export const useUIStore = create<UIState>((set) => ({
   canvasScale: 1,
   highlightedSource: null,
   highlightedSourceTs: 0,
-  moduleTimelineExpanded: false,
   moduleTimelineDock: (typeof window !== "undefined"
     ? (localStorage.getItem("synapse:moduleTimelineDock") as ModuleTimelineDock | null)
     : null) ?? "tc",
@@ -86,7 +81,6 @@ export const useUIStore = create<UIState>((set) => ({
   setCanvasScale: (canvasScale) => set({ canvasScale }),
   highlightSource: (source) => set({ highlightedSource: source, highlightedSourceTs: Date.now() }),
   clearHighlightedSource: () => set({ highlightedSource: null }),
-  setModuleTimelineExpanded: (moduleTimelineExpanded) => set({ moduleTimelineExpanded }),
   setModuleTimelineDock: (moduleTimelineDock) => {
     if (typeof window !== "undefined") localStorage.setItem("synapse:moduleTimelineDock", moduleTimelineDock);
     set({ moduleTimelineDock });
