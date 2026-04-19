@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import WorkspaceNavbar from "./WorkspaceNavbar";
 import ArtifactCanvas, { type ArtifactCanvasHandle } from "./ArtifactCanvas";
@@ -9,7 +9,6 @@ import SourcesPanel from "./SourcesPanel";
 import CallFriendModal from "./CallFriendModal";
 import CanvasInputBar from "./CanvasInputBar";
 import ChatErrorBanner from "./ChatErrorBanner";
-import TangentReturnPill from "./TangentReturnPill";
 import LeftSidebar from "./LeftSidebar";
 import RightSidebar from "./RightSidebar";
 import MockButton from "./MockButton";
@@ -31,6 +30,7 @@ import { touchActiveSession } from "@/lib/session-archive";
 
 export default function WorkspaceView() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const parsedRef = useRef(false);
 
   const {
@@ -49,14 +49,60 @@ export default function WorkspaceView() {
     setDocuments,
     setDocHeadings,
     setCanvasTitle,
+    initSession,
+    reset: resetSession,
   } = useSessionStore();
 
   const { setStudyPlan, setSessionContext, setRetrievalIndexed } = useGroundingStore();
   const studyPlanTopic = useGroundingStore((s) => s.studyPlan?.topic ?? null);
+  const resetGrounding = useGroundingStore((s) => s.reset);
   const { darkMode, leftSidebarOpen, setLeftSidebarOpen, rightSidebarOpen, setRightSidebarOpen } = useUIStore();
-  const { addUpdate } = useCanvasStore();
+  const { addUpdate, clearCanvas } = useCanvasStore();
   const { isCompact } = useViewport();
   const compactInitRef = useRef(false);
+
+  // ── Auto-reset on `?q=` drift ───────────────────────────────────────────
+  // Entry points like SuggestedTopics, /explore, and /library navigate to
+  // `/workspace?q=<topic>&persona=<id>` without explicitly resetting the
+  // stores. Without this guard the user would see the previously-persisted
+  // canvas (e.g. organic chemistry) when they ask a new topic (e.g. neural
+  // networks). We trigger a one-shot reset whenever the URL `q` differs from
+  // the persisted session query.
+  const queryParam = searchParams.get("q");
+  const personaParam = searchParams.get("persona");
+  const urlResetRef = useRef(false);
+  useEffect(() => {
+    if (urlResetRef.current) return;
+    if (!queryParam) return;
+    const trimmedQuery = queryParam.trim();
+    if (!trimmedQuery) return;
+    if (trimmedQuery === query.trim()) {
+      // Same topic as already loaded (e.g. /library restore, browser refresh)
+      // — nothing to do, just resume the existing session.
+      urlResetRef.current = true;
+      return;
+    }
+    urlResetRef.current = true;
+    // Snapshot the previous session into the archive so it can be reopened
+    // from /library, then wipe the stores for the new topic.
+    void import("@/lib/session-archive")
+      .then(({ archiveCurrentSession }) => archiveCurrentSession())
+      .catch((err) => console.warn("[archive] snapshot failed", err));
+    clearCanvas();
+    resetGrounding();
+    initSession(trimmedQuery, personaParam ?? "professor", [], []);
+  }, [queryParam, personaParam, query, clearCanvas, resetGrounding, initSession]);
+
+  // ── "New session" handler exposed to the navbar ────────────────────────
+  const handleNewSession = useCallback(() => {
+    void import("@/lib/session-archive")
+      .then(({ archiveCurrentSession }) => archiveCurrentSession())
+      .catch((err) => console.warn("[archive] snapshot failed", err));
+    clearCanvas();
+    resetGrounding();
+    resetSession();
+    router.push("/");
+  }, [clearCanvas, resetGrounding, resetSession, router]);
 
   // First time we detect a compact viewport, force-collapse both sidebars so
   // the canvas isn't squeezed. We only do this once per mount so the user can
@@ -83,7 +129,11 @@ export default function WorkspaceView() {
     tags: [] as { label: string; color: string }[],
     status: "Starting",
   });
-  const bridgeInitRef = useRef(false);
+  // Tracks the sessionId for which we've already kicked off the bridge.
+  // Re-keying on sessionId means the bridge re-runs cleanly when the user
+  // starts a new topic (e.g. picking another SuggestedTopics card from `/`)
+  // because `initSession` mints a fresh sessionId.
+  const bridgeRanForSessionRef = useRef<string | null>(null);
   const logCounter = useRef(0);
   const artifactCanvasRef = useRef<ArtifactCanvasHandle>(null);
 
@@ -106,9 +156,13 @@ export default function WorkspaceView() {
   );
 
   useEffect(() => {
-    // No active session — send user back to landing page
+    // No active session — send user back to landing page. Skip the bounce when
+    // a `?q=` param is present in the URL: the auto-reset effect above is
+    // about to call `initSession`, which will populate the store on the next
+    // render. Bouncing here would race that hydration and kick the user out.
+    if (queryParam && queryParam.trim().length > 0) return;
     if (!sessionId || !query) router.replace("/");
-  }, [sessionId, query, router]);
+  }, [sessionId, query, queryParam, router]);
 
   // Start downloading the Kokoro TTS model in the background so it's
   // ready by the time the user clicks Speak for the first time.
@@ -133,13 +187,35 @@ export default function WorkspaceView() {
   }, []);
 
   useEffect(() => {
-    if (bridgeInitRef.current) return;
-    bridgeInitRef.current = true;
+    if (!sessionId) return;
+    // If a `?q=` is in the URL but the auto-reset effect hasn't propagated to
+    // the store yet, wait. Otherwise we'd bridge the *previous* topic that
+    // came from persisted localStorage and end up calling `setCanvasTitle`
+    // with the wrong (stale) value — which is exactly what made the navbar
+    // keep showing "Organic Chemistry" after the user picked Neural Networks.
+    if (queryParam && queryParam.trim() && queryParam.trim() !== query.trim()) return;
+    if (bridgeRanForSessionRef.current === sessionId) return;
+    const isReRun = bridgeRanForSessionRef.current !== null;
+    bridgeRanForSessionRef.current = sessionId;
+    if (isReRun) {
+      // Clean slate for the new session — show the bridge again, drop old
+      // logs/stages so we don't mix two sessions' progress in one screen.
+      setShowBridge(true);
+      setStages([]);
+      setLogs([]);
+      setLatencyMs(null);
+    }
 
-    const displayQ = query;
-    const displayP = persona;
-    const hasFiles = files.length > 0;
-    const hasUrls  = urls.length > 0;
+    // Always read the *current* slice of state. By the time this runs the
+    // store may already have been updated by `initSession`, but the closure
+    // captured the previous render's destructured values.
+    const fresh = useSessionStore.getState();
+    const displayQ = fresh.query;
+    const displayP = fresh.persona;
+    const freshFiles = fresh.files;
+    const freshUrls  = fresh.urls;
+    const hasFiles = freshFiles.length > 0;
+    const hasUrls  = freshUrls.length > 0;
     const hasSources = hasFiles || hasUrls;
     const initial = buildStages(hasSources);
     setStages(initial);
@@ -147,7 +223,7 @@ export default function WorkspaceView() {
     setContextCard({
       title: displayQ.length > 55 ? displayQ.slice(0, 55) + "..." : displayQ,
       description: hasSources
-        ? `Synapse is parsing ${files.length + urls.length} source${files.length + urls.length > 1 ? "s" : ""} and building a grounded workspace.`
+        ? `Synapse is parsing ${freshFiles.length + freshUrls.length} source${freshFiles.length + freshUrls.length > 1 ? "s" : ""} and building a grounded workspace.`
         : `Synapse is analyzing "${displayQ}" and constructing a personalized learning environment.`,
       tags: [
         { label: displayP, color: "#7c3aed" },
@@ -158,20 +234,20 @@ export default function WorkspaceView() {
     });
 
     addLog(`Session initialized — ${displayP} mode`, "info");
-    if (hasFiles) addLog(`${files.length} file${files.length > 1 ? "s" : ""} queued for parsing`, "info");
+    if (hasFiles) addLog(`${freshFiles.length} file${freshFiles.length > 1 ? "s" : ""} queued for parsing`, "info");
 
     // Seed activity feed with the initial topic
     addUpdate({
       id: `upd-session-start-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       type: "ai_note",
       title: `Started: ${displayQ.length > 40 ? displayQ.slice(0, 40) + "…" : displayQ}`,
-      detail: `Persona: ${displayP}${hasSources ? ` · ${files.length + urls.length} source(s)` : ""}`,
+      detail: `Persona: ${displayP}${hasSources ? ` · ${freshFiles.length + freshUrls.length} source(s)` : ""}`,
       timestamp: Date.now(),
     });
 
     runBridgeSequence(initial, hasSources, displayQ, displayP);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [sessionId, query, queryParam]);
 
   async function runBridgeSequence(
     initial: BridgeStage[],
@@ -179,6 +255,13 @@ export default function WorkspaceView() {
     displayQ: string,
     displayP: string,
   ) {
+    // Snapshot the session this bridge run belongs to. If the user starts a
+    // different topic mid-flight (e.g. picks another SuggestedTopics card),
+    // any straggling async writes from this run will see the mismatch and
+    // bail out instead of overwriting the new session's state.
+    const ownSessionId = useSessionStore.getState().sessionId;
+    const stillOwnsSession = () =>
+      useSessionStore.getState().sessionId === ownSessionId;
     const stageIds = initial.map((s) => s.id);
 
     for (const id of stageIds) {
@@ -267,7 +350,7 @@ export default function WorkspaceView() {
               });
               if (titleRes.ok) {
                 const { title: extracted } = await titleRes.json() as { title: string };
-                if (extracted && extracted.length < 80) {
+                if (extracted && extracted.length < 80 && stillOwnsSession()) {
                   setCanvasTitle(extracted);
                   addLog(`Topic: "${extracted}"`, "success");
                 }
@@ -291,7 +374,7 @@ export default function WorkspaceView() {
         }).then(async (r) => {
           if (r.ok) {
             const d = await r.json();
-            if (d.plan) {
+            if (d.plan && stillOwnsSession()) {
               setStudyPlan(d.plan);
               setSessionContext(createSessionContext(d.plan.totalModules));
               addLog(`Study plan: ${d.plan.totalModules} modules, ~${d.plan.estimatedMinutes} min`, "success");
@@ -303,6 +386,7 @@ export default function WorkspaceView() {
             }
           }
         }).catch(() => {
+          if (!stillOwnsSession()) return;
           setSessionContext(createSessionContext(1));
           addLog("Study plan generation skipped", "info");
         });
@@ -414,6 +498,7 @@ export default function WorkspaceView() {
             <WorkspaceNavbar
               title={displayTitle}
               onCallFriend={() => setShowCallFriend(true)}
+              onNewSession={handleNewSession}
               hasFiles={files.length > 0}
               showSources={showSources}
               onToggleSources={() => setShowSources(!showSources)}
@@ -453,13 +538,14 @@ export default function WorkspaceView() {
                 {/* Quiz Me — only renders if there are flashcards on the canvas */}
                 <QuizMeMode />
 
-                {/* Back-to-main pill (visible only while on a tangent) */}
-                <TangentReturnPill
-                  onReturn={(groupId) => artifactCanvasRef.current?.zoomToGroup(groupId)}
+                {/* Canvas input bar — also hosts the inline "Back to {main}"
+                    pill when the user is on a tangent (renders alongside the
+                    follow-up chips so it doesn't overlap the live caption). */}
+                <CanvasInputBar
+                  onReturnToGroup={(groupId) =>
+                    artifactCanvasRef.current?.zoomToGroup(groupId)
+                  }
                 />
-
-                {/* Canvas input bar */}
-                <CanvasInputBar />
 
                 {/* Recoverable chat-error banner (rate limit / model timeout)
                     — sits above the canvas tools, replaces the old "something

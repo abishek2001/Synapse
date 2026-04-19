@@ -10,8 +10,16 @@ import { useAIChat } from "@/hooks/useAIChat";
 import { startListening, stopListening, isRecognitionSupported } from "@/lib/voice/speech";
 import { classifyCommand, dispatchCanvasCommand } from "@/lib/voice/commands";
 import VoicePickerPopover from "./VoicePickerPopover";
+import TangentReturnPill from "./TangentReturnPill";
+import { useCanvasStore } from "@/store/canvas";
 
-export default function CanvasInputBar() {
+interface CanvasInputBarProps {
+  /** Pan/zoom the canvas back to a group. Forwarded to TangentReturnPill so
+   *  the "Back to ___" chip can return the user to their main module. */
+  onReturnToGroup?: (groupId: string) => void;
+}
+
+export default function CanvasInputBar({ onReturnToGroup }: CanvasInputBarProps = {}) {
   const {
     voiceMode,
     liveCaption,
@@ -33,6 +41,15 @@ export default function CanvasInputBar() {
 
   const { darkMode } = useUIStore();
   const { sendMessage, stop, toggleMessage, playingMessageId, isStreaming, latestTutor } = useAIChat();
+  // Drives the inline "Back to ___" chip in the chip row. Subscribing here
+  // (instead of only inside TangentReturnPill) so the chip-row wrapper knows
+  // to mount even when there are no follow-up suggestions.
+  const showTangentBack = useCanvasStore(
+    (s) =>
+      !!s.lastTangentGroupId &&
+      !!s.currentMainGroupId &&
+      s.lastTangentGroupId !== s.currentMainGroupId,
+  );
   const [input, setInput] = useState("");
   const [bubbleExpanded, setBubbleExpanded] = useState(false);
   const [voicePickerAnchor, setVoicePickerAnchor] = useState<DOMRect | null>(null);
@@ -502,36 +519,49 @@ export default function CanvasInputBar() {
             )}
           </AnimatePresence>
 
-          {/* Follow-up chips — max 2, tier 1 only.
+          {/* Chip row — follow-up suggestions + the "Back to {main}" pill
+              when the user is on a tangent. Both share the same flex row so
+              the back pill never floats above the live caption bubble.
               Spans the full container width (`max-w-3xl`, wider than the
               input pill above) so long suggestions like "Do you want to
               start with forces or with field lines?" can sit on one line
               instead of wrapping inside the narrow input column. */}
-          <AnimatePresence>
-            {followUpQuestions.length > 0 && !isStreaming && !showModePicker && (
-              <motion.div
-                initial={{ opacity: 0, y: 4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 4 }}
-                transition={{ duration: 0.18 }}
-                className="flex flex-wrap gap-1.5 justify-center w-full"
-              >
-                {followUpQuestions.slice(0, 2).map((q, i) => (
-                  <motion.button
-                    key={q}
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    transition={{ delay: i * 0.05, duration: 0.14 }}
-                    onClick={() => handleChipClick(q)}
-                    className={`text-[11.5px] px-3 py-1 rounded-full transition-all whitespace-nowrap ${chipTier1}`}
-                    style={{ backdropFilter: "blur(12px)" }}
-                  >
-                    {q}
-                  </motion.button>
-                ))}
-              </motion.div>
-            )}
-          </AnimatePresence>
+          {(() => {
+            const showFollowUps =
+              followUpQuestions.length > 0 && !isStreaming && !showModePicker;
+            const showBackPill = showTangentBack && !isStreaming;
+            if (!showFollowUps && !showBackPill) return null;
+            return (
+              <AnimatePresence>
+                <motion.div
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 4 }}
+                  transition={{ duration: 0.18 }}
+                  className="flex flex-nowrap gap-1.5 justify-center items-center w-full max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                >
+                  {showFollowUps &&
+                    followUpQuestions.slice(0, 2).map((q, i) => (
+                      <motion.button
+                        key={q}
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ delay: i * 0.05, duration: 0.14 }}
+                        onClick={() => handleChipClick(q)}
+                        className={`text-[11.5px] px-3 py-1 rounded-full transition-all whitespace-nowrap flex-shrink-0 max-w-[260px] truncate ${chipTier1}`}
+                        style={{ backdropFilter: "blur(12px)" }}
+                        title={q}
+                      >
+                        {q}
+                      </motion.button>
+                    ))}
+                  {showBackPill && onReturnToGroup && (
+                    <TangentReturnPill onReturn={onReturnToGroup} />
+                  )}
+                </motion.div>
+              </AnimatePresence>
+            );
+          })()}
 
           {/* Single-line input pill */}
           <div

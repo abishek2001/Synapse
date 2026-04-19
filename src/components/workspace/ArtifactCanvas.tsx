@@ -192,7 +192,10 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
 
   // ── Hand tracking ────────────────────────────────────────────────────────────
   // Event model (see HandTrackingOverlay for the producer side):
-  //   cursor      — every frame; hover-highlight what the user is aiming at
+  //   cursor      — every frame; hover-highlight what the user is aiming at,
+  //                 and (when gesture==="point") accumulate a dwell timer over
+  //                 the element under the cursor. Hold steady for DWELL_MS to
+  //                 fire a selection without needing to pinch.
   //   grab_start  — pinch began; hit-test under cursor and remember either an
   //                 element-drag target or "canvas-drag" mode
   //   grab_move   — element-drag updates the element; canvas-drag pans
@@ -210,6 +213,33 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
     | null
   >(null);
 
+  // ── Dwell-to-select (point gesture) ─────────────────────────────────────
+  // While the user holds a "point" gesture steady over an element for
+  // DWELL_MS, we treat it as a click — same effect as a quick pinch. A small
+  // ring around the cursor visualises the progress so the user knows when
+  // selection will fire and can move away to cancel.
+  const DWELL_MS = 700;
+  const DWELL_RADIUS_PX = 28;
+  const dwellStateRef = useRef<{
+    startTime: number;
+    startScreenX: number;
+    startScreenY: number;
+    targetElementId: string;
+  } | null>(null);
+  const [dwellProgress, setDwellProgress] = useState<{
+    x: number;
+    y: number;
+    pct: number;
+    elementId: string;
+  } | null>(null);
+
+  const cancelDwell = useCallback(() => {
+    if (dwellStateRef.current || dwellProgress) {
+      dwellStateRef.current = null;
+      setDwellProgress(null);
+    }
+  }, [dwellProgress]);
+
   const handleGesture = useCallback((event: HandGestureEvent) => {
     const handle = canvasHandleRef.current;
     if (!handle) return;
@@ -220,11 +250,65 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
           const w = handle.screenToWorld(event.screenX, event.screenY);
           const grp = hitTestGroup(w.x, w.y);
           setHoveredGroupId(grp?.id ?? null);
+
+          // Dwell-to-select only fires on a true "point" gesture (index out,
+          // others curled). openPalm is just an idle hover.
+          if (event.gesture !== "point") {
+            cancelDwell();
+            break;
+          }
+          const hitEl = hitTestElement(w.x, w.y);
+          if (!hitEl) {
+            cancelDwell();
+            break;
+          }
+
+          const ds = dwellStateRef.current;
+          const movedFar =
+            ds &&
+            (Math.abs(event.screenX - ds.startScreenX) > DWELL_RADIUS_PX ||
+              Math.abs(event.screenY - ds.startScreenY) > DWELL_RADIUS_PX);
+          const targetChanged = ds && ds.targetElementId !== hitEl.id;
+
+          if (!ds || movedFar || targetChanged) {
+            // Start a fresh dwell window over the new target.
+            dwellStateRef.current = {
+              startTime: performance.now(),
+              startScreenX: event.screenX,
+              startScreenY: event.screenY,
+              targetElementId: hitEl.id,
+            };
+            setDwellProgress({
+              x: event.screenX,
+              y: event.screenY,
+              pct: 0,
+              elementId: hitEl.id,
+            });
+          } else {
+            const elapsed = performance.now() - ds.startTime;
+            const pct = Math.min(1, elapsed / DWELL_MS);
+            setDwellProgress({
+              x: event.screenX,
+              y: event.screenY,
+              pct,
+              elementId: hitEl.id,
+            });
+            if (elapsed >= DWELL_MS) {
+              // Fire the same selection logic a quick-pinch click would.
+              handleElementSelect(hitEl.id, false);
+              dwellStateRef.current = null;
+              setDwellProgress(null);
+            }
+          }
+        } else {
+          // Any non-pointing/idle gesture cancels an in-flight dwell.
+          cancelDwell();
         }
         break;
       }
 
       case "grab_start": {
+        cancelDwell();
         const world = handle.screenToWorld(event.screenX, event.screenY);
         const hitEl = hitTestElement(world.x, world.y);
         if (hitEl) {
@@ -292,6 +376,7 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
       }
 
       case "pan": {
+        cancelDwell();
         // Fist drag — small gain so a comfortable hand range covers the viewport
         const GAIN = 1.4;
         handle.panBy(event.dx * GAIN, event.dy * GAIN);
@@ -299,6 +384,7 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
       }
 
       case "zoom": {
+        cancelDwell();
         handle.zoomAt(event.factor, event.cx, event.cy);
         if (event.dx !== undefined && event.dy !== undefined) {
           handle.panBy(event.dx, event.dy);
@@ -306,7 +392,7 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
         break;
       }
     }
-  }, [hitTestElement, hitTestGroup, handleElementSelect, moveElement, clearSelection]);
+  }, [hitTestElement, hitTestGroup, handleElementSelect, moveElement, clearSelection, cancelDwell]);
 
   // ── Canvas event handlers ────────────────────────────────────────────────────
 
@@ -620,6 +706,45 @@ const ArtifactCanvas = forwardRef<ArtifactCanvasHandle, ArtifactCanvasProps>(fun
           containerRef={canvasContainerRef}
           darkMode={darkMode}
         />
+
+        {/* Dwell-to-select progress ring — visualises the 700ms hold required
+            for a "point" gesture to act as a click. Sits at viewport-absolute
+            coords (same coordinate space as the cursor produced by the
+            HandTrackingOverlay) so it renders directly under the user's
+            fingertip cursor. */}
+        {handTrackingEnabled && dwellProgress && (
+          <svg
+            className="fixed pointer-events-none z-[56]"
+            width={64}
+            height={64}
+            style={{
+              left: dwellProgress.x - 32,
+              top: dwellProgress.y - 32,
+            }}
+          >
+            <circle
+              cx={32}
+              cy={32}
+              r={26}
+              fill="none"
+              stroke="rgba(99,102,241,0.18)"
+              strokeWidth={3}
+            />
+            <circle
+              cx={32}
+              cy={32}
+              r={26}
+              fill="none"
+              stroke="#6366f1"
+              strokeWidth={3}
+              strokeLinecap="round"
+              strokeDasharray={2 * Math.PI * 26}
+              strokeDashoffset={2 * Math.PI * 26 * (1 - dwellProgress.pct)}
+              transform="rotate(-90 32 32)"
+              style={{ transition: "stroke-dashoffset 80ms linear" }}
+            />
+          </svg>
+        )}
 
         {/* Selection bar */}
         <AnimatePresence>

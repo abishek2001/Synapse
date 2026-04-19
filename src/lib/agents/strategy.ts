@@ -110,7 +110,7 @@ Before defaulting to diagram, ask: **"Is the thing I'm explaining a real, tangib
 
 1. Student says "show me" / "draw" / "diagram" / "visualize" / "can I see" → action = "visualize"
 2. Student says "quiz me" / "test me" / "flashcards" → action = "quiz"
-3. Student says "next" / "move on" / "I get it" / "got it" → action = "advance"
+3. Student says "next" / "move on" / "continue" / "carry on" / "let's continue" / "I get it" / "got it" / "understood" / "makes sense" / "okay" / "sounds good" / "ready for the next" → action = "advance". Brief acknowledgements followed by ANY forward word ("understood, next", "okay continue", "makes sense, what's next") are also "advance".
 4. Student says "why" / "how exactly" / "go deeper" / "explain in depth" → action = "deep_dive"
 5. Confusion signals > 2 → action = "simplify"
 6. After 3+ explanation exchanges without confusion → action = "quiz"
@@ -128,9 +128,13 @@ The student's canvas is a graph of modules connected by arrows. When a list of F
 
 Heuristics:
 - If the student "marked" or selected a specific module (isExplicitFocus / isFromSelection in candidates) AND their question is a follow-up about it → isTangent: true, anchorGroupId: that candidate.
-- If the question is just "next" / "continue" / "what's next" → isTangent: false, anchorGroupId: null.
+- If the question is just forward progression — "next", "continue", "what's next", "got it", "understood", "okay continue", "makes sense", "ready for the next", or any short acknowledgement that ends with a forward verb — → isTangent: false, anchorGroupId: null. The new module becomes the new main thread, NOT a side branch off the previous one.
 - If you're unsure, prefer isTangent: true with the explicit/selected candidate, since attaching the answer near what the student was looking at is rarely wrong.
 - When there are zero candidates, set both to null/false.
+
+HARD CONSTRAINT — anchor/tangent must be consistent with action:
+- action === "advance" → isTangent MUST be false AND anchorGroupId MUST be null. The student is moving forward; do NOT branch off any candidate.
+- action === "deep_dive" + an explicit/selected candidate → isTangent MUST be true with that candidate as anchorGroupId.
 
 Output ONLY valid JSON:
 {
@@ -293,8 +297,24 @@ Decide the best action, which artifacts to produce, AND whether this turn is a t
       isTangent = !!parsed.isTangent && !!anchorGroupId;
     }
 
+    // Final guard: forward progression ("advance") MUST NOT branch. Even if
+    // the LLM (or the explicit-signal override above) tried to anchor this
+    // turn to a candidate, "Understood, next" / "got it, continue" should
+    // always extend the main thread so the back pill goes away.
+    const action = parsed.action || "explain";
+    if (action === "advance") {
+      if (anchorGroupId || isTangent) {
+        console.warn(
+          `[strategy] action="advance" forces isTangent=false / anchor=null ` +
+            `(was ${isTangent ? "tangent " : ""}${anchorGroupId ?? "null"})`,
+        );
+      }
+      anchorGroupId = null;
+      isTangent = false;
+    }
+
     return {
-      action: parsed.action || "explain",
+      action,
       reasoning: parsed.reasoning || "",
       suggestedPrompt: parsed.suggestedPrompt || "",
       suggestedArtifacts: Array.isArray(parsed.suggestedArtifacts) ? parsed.suggestedArtifacts : [],

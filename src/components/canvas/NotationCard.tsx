@@ -3,6 +3,10 @@
 import type { NotationArtifact } from "@/lib/tools/types";
 import { useEffect, useRef } from "react";
 import katex from "katex";
+// Side-effect import: registers the mhchem extension so chemistry macros like
+// \ce{C-C}, \ce{C=C}, \ce{C#C} render correctly. Without this KaTeX falls back
+// to its red error display and dumps the raw LaTeX source.
+import "katex/contrib/mhchem";
 
 function renderBlock(container: HTMLElement, latex: string) {
   try {
