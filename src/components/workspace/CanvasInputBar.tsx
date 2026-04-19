@@ -119,10 +119,21 @@ export default function CanvasInputBar({ onReturnToGroup }: CanvasInputBarProps 
         ];
         setModuleQueue(queue);
       } else {
-        // Single-shot comprehensive prompt
-        setPendingVoiceText(
-          `Give me a comprehensive walkthrough of: ${topic}. Use multiple artifacts (diagrams, equations, graphs, flashcards) so I can see everything at once.`,
-        );
+        // Plan not ready yet (backgrounded for faster first-question latency).
+        // Kick off the topic now and tail-append the remaining modules once
+        // the plan arrives. We watch the grounding store via a one-shot
+        // subscription so the rest of the queue still gets enqueued.
+        setPendingVoiceText(topic);
+        const unsubscribe = useGroundingStore.subscribe((state) => {
+          const p = state.studyPlan;
+          if (p && p.modules.length > 1) {
+            const tail = p.modules.slice(1).map((m) => `Continue with: ${m.title} — ${m.description}`);
+            setModuleQueue(tail);
+            unsubscribe();
+          }
+        });
+        // Safety: stop listening after 30s regardless.
+        setTimeout(() => unsubscribe(), 30_000);
       }
     } else {
       // Guided: just kick off with the topic, the agent will go step by step

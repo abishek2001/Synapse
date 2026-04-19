@@ -364,56 +364,57 @@ export default function WorkspaceView() {
       } else if (id === "tutor") {
         updateStage(id, "active", `Warming up ${displayP}...`);
         addLog(`Initializing ${displayP} persona`, "info");
-        const t0 = performance.now();
         const docCtx = useSessionStore.getState().documentContext;
 
-        const studyPlanPromise = fetch("/api/study-plan", {
+        // Optimistic context until the real plan resolves; the first chat turn
+        // does NOT need the study plan, so we fire it without blocking.
+        setSessionContext(createSessionContext(1));
+
+        // Fire study-plan in the background — it powers the sidebar TOC and
+        // auto-mode queue, neither of which is needed before the user types.
+        void fetch("/api/study-plan", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ topic: displayQ, documentContext: docCtx || undefined }),
         }).then(async (r) => {
-          if (r.ok) {
-            const d = await r.json();
-            if (d.plan && stillOwnsSession()) {
-              setStudyPlan(d.plan);
-              setSessionContext(createSessionContext(d.plan.totalModules));
-              addLog(`Study plan: ${d.plan.totalModules} modules, ~${d.plan.estimatedMinutes} min`, "success");
-              // Use the study plan's topic as the canvas title unless one was
-              // already extracted from uploaded documents.
-              if (d.plan.topic && !useSessionStore.getState().canvasTitle) {
-                setCanvasTitle(d.plan.topic);
-              }
+          if (!r.ok) return;
+          const d = await r.json();
+          if (d.plan && stillOwnsSession()) {
+            setStudyPlan(d.plan);
+            setSessionContext(createSessionContext(d.plan.totalModules));
+            addLog(`Study plan: ${d.plan.totalModules} modules, ~${d.plan.estimatedMinutes} min`, "success");
+            if (d.plan.topic && !useSessionStore.getState().canvasTitle) {
+              setCanvasTitle(d.plan.topic);
             }
           }
         }).catch(() => {
           if (!stillOwnsSession()) return;
-          setSessionContext(createSessionContext(1));
           addLog("Study plan generation skipped", "info");
         });
 
-        const embedPromise = docCtx
-          ? fetch("/api/embed", {
+        // Embedding only blocks if there are docs (it's needed for grounded
+        // retrieval on the very first question).
+        if (docCtx) {
+          try {
+            const r = await fetch("/api/embed", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ documentContext: docCtx }),
-            }).then(async (r) => {
-              if (r.ok) {
-                const d = await r.json();
-                setRetrievalIndexed(true, d.chunks);
-                addLog(`Retrieval index: ${d.chunks} chunks embedded`, "success");
-              }
-            }).catch(() => addLog("Embedding index skipped (keyword fallback active)", "info"))
-          : Promise.resolve();
+            });
+            if (r.ok) {
+              const d = await r.json();
+              setRetrievalIndexed(true, d.chunks);
+              addLog(`Retrieval index: ${d.chunks} chunks embedded`, "success");
+            }
+          } catch {
+            addLog("Embedding index skipped (keyword fallback active)", "info");
+          }
+        }
 
-        const t1 = performance.now();
-        await Promise.all([studyPlanPromise, embedPromise]);
-        const elapsed = Math.round(performance.now() - t1);
-        setLatencyMs(elapsed);
-
-        addLog(`AI connected in ${elapsed}ms`, "success");
+        addLog(`${displayP} ready`, "success");
         setContextCard((prev) => ({
           ...prev,
-          tags: [{ label: displayP, color: "#7c3aed" }, { label: `${elapsed}ms`, color: "#06b6d4" }, { label: "Ready", color: "#10b981" }],
+          tags: [{ label: displayP, color: "#7c3aed" }, { label: "Ready", color: "#10b981" }],
           status: "AI Ready",
         }));
         updateStage(id, "done", `${displayP} online`);
@@ -421,7 +422,6 @@ export default function WorkspaceView() {
       } else if (id === "canvas") {
         updateStage(id, "active", "Preparing workspace...");
         addLog("Initializing artifact workspace", "info");
-        await sleep(400);
         addLog("Artifact grid ready", "success");
         updateStage(id, "done", "Workspace ready");
         setContextCard((prev) => ({ ...prev, status: "Workspace Ready" }));
@@ -429,7 +429,6 @@ export default function WorkspaceView() {
       } else if (id === "simulation") {
         updateStage(id, "active", "Warming up 3D engine...");
         addLog("3D simulation engine standing by", "info");
-        await sleep(600);
         addLog("Engine ready — simulations will generate on demand", "success");
         updateStage(id, "done", "3D engine ready");
         setContextCard((prev) => ({ ...prev, status: "Fully Loaded" }));
@@ -437,7 +436,6 @@ export default function WorkspaceView() {
     }
 
     addLog("All systems nominal — launching workspace", "success");
-    await sleep(800);
 
     // Don't auto-fire — let CanvasInputBar show the mode picker first.
     // The picker will queue the topic / module plan based on the user's choice.
